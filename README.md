@@ -1,5 +1,7 @@
 # Lodestar
 
+**▶️ [Try it live](https://uncleplants.github.io/Lodestar/)** — runs instantly in your browser, no install.
+
 A local-first battlemap display tool for game masters. Cast a map with fog of war to a second "player" screen while you control everything from a private GM panel. Lodestar runs entirely in the browser with **no build step and no dependencies** — open `index.html` and go. It's structured so it can later be wrapped as a desktop app (Electron, Tauri, or WebView2).
 
 ## Screenshots
@@ -31,7 +33,7 @@ A local-first battlemap display tool for game masters. Cast a map with fog of wa
 
 ## Run
 
-Open `index.html` in a modern browser. Load a map image, click **Open player display**, and move that window to your second screen (press **F** or double-click for fullscreen).
+Use the **[hosted version](https://uncleplants.github.io/Lodestar/)**, or download the source and open `index.html` in a modern browser — both work identically and run fully offline once loaded. Load a map image, click **Open player display**, and move that window to your second screen (press **F** or double-click for fullscreen).
 
 Use **Save map** to store the full setup in the local library and **My maps** to restore one. Use **Export** / **Import** in the GM panel to back the library up to a file.
 
