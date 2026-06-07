@@ -8,7 +8,7 @@ A local-first battlemap display tool for game masters. Cast a map with fog of wa
 
 *GM view on the left with named fog areas ("Chapel", "Library"); the player display on the right shows only what's been revealed.*
 
-> Demo map: "Chapel of the Bountiful Harvest" (#287) by [Elven Tower Adventures](https://elventower.com), licensed under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). Modified — grid and fog overlay added in Lodestar.
+> Demo map: "Chapel of the Bountiful Harvest" (#287) by [Elven Tower Adventures](https://elventower.com), licensed under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). Modified — fog-of-war overlay added in Lodestar.
 
 ## Features
 

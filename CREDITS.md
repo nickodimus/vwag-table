@@ -80,4 +80,4 @@ tool. It is credited here in accordance with its license.
 - Map: **"Chapel of the Bountiful Harvest"** (Map #287, player version)
 - Creator: **Elven Tower Adventures** — https://elventower.com
 - License: **CC BY 4.0** — https://creativecommons.org/licenses/by/4.0/
-- Changes: displayed in Lodestar with a grid and fog-of-war overlay added.
+- Changes: displayed in Lodestar with a fog-of-war overlay added.
