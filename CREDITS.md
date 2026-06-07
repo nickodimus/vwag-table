@@ -4,6 +4,8 @@ Lodestar bundles icon artwork from the following open-source projects. The icon
 paths are embedded directly in `index.html` and `app.js`. Each is used under the
 MIT License, reproduced below.
 
+Demo/screenshot artwork is credited separately at the bottom of this file.
+
 ---
 
 ## Lucide
@@ -66,3 +68,16 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
+
+---
+
+## Demo / screenshot artwork
+
+The battlemap shown in Lodestar's screenshots is **not** part of the software and
+is **not** redistributed in this repository — it is used only to demonstrate the
+tool. It is credited here in accordance with its license.
+
+- Map: **"Chapel of the Bountiful Harvest"** (Map #287, player version)
+- Creator: **Elven Tower Adventures** — https://elventower.com
+- License: **CC BY 4.0** — https://creativecommons.org/licenses/by/4.0/
+- Changes: displayed in Lodestar with a grid and fog-of-war overlay added.

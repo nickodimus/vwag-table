@@ -2,6 +2,14 @@
 
 A local-first battlemap display tool for game masters. Cast a map with fog of war to a second "player" screen while you control everything from a private GM panel. Lodestar runs entirely in the browser with **no build step and no dependencies** — open `index.html` and go. It's structured so it can later be wrapped as a desktop app (Electron, Tauri, or WebView2).
 
+## Screenshots
+
+![Lodestar — GM view (left) with named fog areas, and the player view (right) showing fog of war](screenshot.png)
+
+*GM view on the left with named fog areas ("Chapel", "Library"); the player display on the right shows only what's been revealed.*
+
+> Demo map: "Chapel of the Bountiful Harvest" (#287) by [Elven Tower Adventures](https://elventower.com), licensed under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). Modified — grid and fog overlay added in Lodestar.
+
 ## Features
 
 - **Maps** — load high-resolution map images from local disk; pan and zoom freely.
