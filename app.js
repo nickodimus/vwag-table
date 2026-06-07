@@ -1,0 +1,2200 @@
+/* Battlemap Screen and GM Streaming Tool
+ * Coordinate model:
+ *   - "native" coords are image pixels (0..imageWidth, 0..imageHeight). Fog, rooms,
+ *     tokens, pings and measures are all stored in native coords so they stay glued to
+ *     the map regardless of zoom or the "Map image size" (map.scale) slider.
+ *   - The render transform maps native -> world (x map.scale) -> screen (x view.scale,
+ *     centered on view.cx/cy). Because the view is expressed as a centered map point +
+ *     zoom, the GM and player windows frame the same thing even at different canvas sizes.
+ */
+
+const canvas = document.getElementById("battlemap");
+const ctx = canvas.getContext("2d");
+const fogCanvas = document.createElement("canvas");
+const fogCtx = fogCanvas.getContext("2d");
+const liveCanvas = document.createElement("canvas");
+const liveCtx = liveCanvas.getContext("2d");
+const shell = document.querySelector(".app-shell");
+const emptyState = document.getElementById("emptyState");
+const channel = new BroadcastChannel("fog-table-state");
+const APP_NAME = "Battlemap Screen and GM Streaming Tool";
+const LEGACY_APP_NAME = "Fog Table";
+const SAVE_FILE_VERSION = 3;
+const DB_NAME = "fog-table-library";
+const DB_VERSION = 1;
+const MAP_STORE = "maps";
+const FOG_MAX_EDGE = 4096; // cap fog raster resolution so huge maps stay within canvas/memory limits
+const HISTORY_LIMIT = 80;
+
+// Tabler stair icons (24×24), copied verbatim from tabler.io.
+// NEUTRAL = tabler/stairs · UP = tabler/stairs-up · DOWN = tabler/stairs-down.
+const STAIRS_ICON_NEUTRAL = new Path2D("M22 5h-5v5h-5v5h-5v5h-5");
+const STAIRS_ICON_UP = new Path2D("M22 6h-5v5h-5v5h-5v5h-5 M6 10v-7 M3 6l3 -3l3 3");
+const STAIRS_ICON_DOWN = new Path2D("M22 21h-5v-5h-5v-5h-5v-5h-5 M18 3v7 M15 7l3 3l3 -3");
+const FEET_PER_CELL = 5;
+const PING_DURATION = 1300;
+
+const controls = {
+  mapUpload: document.getElementById("mapUpload"),
+  splashUpload: document.getElementById("splashUpload"),
+  splashEnabled: document.getElementById("splashEnabled"),
+  blackoutEnabled: document.getElementById("blackoutEnabled"),
+  loadLibrary: document.getElementById("loadLibrary"),
+  saveSession: document.getElementById("saveSession"),
+  openPlayer: document.getElementById("openPlayer"),
+  exportLibrary: document.getElementById("exportLibrary"),
+  importLibrary: document.getElementById("importLibrary"),
+  gridEnabled: document.getElementById("gridEnabled"),
+  gridSnap: document.getElementById("gridSnap"),
+  gridSize: document.getElementById("gridSize"),
+  gridOffsetX: document.getElementById("gridOffsetX"),
+  gridOffsetY: document.getElementById("gridOffsetY"),
+  gridColor: document.getElementById("gridColor"),
+  gridOpacity: document.getElementById("gridOpacity"),
+  mapScale: document.getElementById("mapScale"),
+  brushSize: document.getElementById("brushSize"),
+  fogTint: document.getElementById("fogTint"),
+  gmFogOpacity: document.getElementById("gmFogOpacity"),
+  tokenColor: document.getElementById("tokenColor"),
+  tokenCells: document.getElementById("tokenCells"),
+  tokenLabel: document.getElementById("tokenLabel"),
+  panMode: document.getElementById("panMode"),
+  fogToggle: document.getElementById("fogToggle"),
+  fogRibbon: document.getElementById("fogRibbon"),
+  polygonMode: document.getElementById("polygonMode"),
+  namedPolygonMode: document.getElementById("namedPolygonMode"),
+  revealMode: document.getElementById("revealMode"),
+  brushMode: document.getElementById("brushMode"),
+  eraserMode: document.getElementById("eraserMode"),
+  tokenMode: document.getElementById("tokenMode"),
+  measureMode: document.getElementById("measureMode"),
+  roundShape: document.getElementById("roundShape"),
+  squareShape: document.getElementById("squareShape"),
+  clearFog: document.getElementById("clearFog"),
+  undo: document.getElementById("undoBtn"),
+  redo: document.getElementById("redoBtn"),
+  brushOptions: document.getElementById("brushOptions"),
+  tokenOptions: document.getElementById("tokenOptions"),
+  fitMap: document.getElementById("fitMap"),
+  playerMatchDM: document.getElementById("playerMatchDM"),
+  copyDMView: document.getElementById("copyDMView"),
+  playerZoom: document.getElementById("playerZoom"),
+  playerOffsetX: document.getElementById("playerOffsetX"),
+  playerOffsetY: document.getElementById("playerOffsetY"),
+  modeHint: document.getElementById("modeHint"),
+  playerFullscreen: document.getElementById("playerFullscreen"),
+  libraryDialog: document.getElementById("libraryDialog"),
+  savedMapList: document.getElementById("savedMapList"),
+  nameDialog: document.getElementById("nameDialog"),
+  roomNameInput: document.getElementById("roomNameInput"),
+  stairMode: document.getElementById("stairMode"),
+  stairDialog: document.getElementById("stairDialog"),
+  stairFloorSelect: document.getElementById("stairFloorSelect"),
+  stairLabelInput: document.getElementById("stairLabelInput"),
+  floorIndicator: document.getElementById("floorIndicator"),
+  floorName: document.getElementById("floorName"),
+  floorUp: document.getElementById("floorUp"),
+  floorDown: document.getElementById("floorDown"),
+  addFloorUp: document.getElementById("addFloorUp"),
+  addFloorDown: document.getElementById("addFloorDown"),
+  deleteFloor: document.getElementById("deleteFloor"),
+  playerFloorBadge: document.getElementById("playerFloorBadge"),
+  fitMapBtn: document.getElementById("fitMapBtn"),
+};
+
+const isPlayer = new URLSearchParams(window.location.search).get("view") === "player";
+const DEFAULT_GM_FOG_OPACITY = 0.3;
+const INITIAL_FLOOR_ID = "floor-1";
+
+// Each floor is its own map (image + fog + tokens + stairs + view). The top-level
+// imageData/fog/tokens/stairs/view fields below always mirror the CURRENT floor so the
+// render/fog/token code can stay floor-agnostic; captureCurrentFloor()/applyFloor() swap
+// them in and out of state.floors when navigating between floors.
+function makeFloor(id) {
+  return {
+    id: id || `floor-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
+    imageId: "",
+    imageData: "",
+    imageName: "",
+    imageWidth: 0,
+    imageHeight: 0,
+    mapScale: 1,
+    rooms: [],
+    strokes: [],
+    tokens: [],
+    stairs: [],
+    view: { scale: 1, cx: 0, cy: 0 },
+  };
+}
+
+const state = {
+  imageId: "",
+  imageData: "",
+  imageName: "",
+  imageWidth: 0,
+  imageHeight: 0,
+  splash: { enabled: false, imageData: "", imageName: "" },
+  blackout: false,
+  grid: { enabled: true, snap: true, size: 70, offsetX: 0, offsetY: 0, color: "#000000", opacity: 0.45 },
+  map: { scale: 1 },
+  fog: {
+    rooms: [],
+    strokes: [],
+    toolSize: 70,
+    toolShape: "round",
+    gmColor: "#080909",
+    gmOpacity: DEFAULT_GM_FOG_OPACITY,
+  },
+  tokens: [],
+  stairs: [],
+  view: { scale: 1, cx: 0, cy: 0 },
+  playerView: { matchDM: true, scale: 1, cx: 0, cy: 0 },
+  currentFloorId: INITIAL_FLOOR_ID,
+  floors: [makeFloor(INITIAL_FLOOR_ID)],
+  floorPosition: 1, // player-side display only
+  floorCount: 1, // player-side display only
+};
+
+let mapImage = new Image();
+let splashImage = new Image();
+let mode = "pan";
+let drawingRoom = [];
+let activeStroke = null;
+let isDragging = false;
+let dragStart = { x: 0, y: 0 };
+let viewStart = { cx: 0, cy: 0 };
+let draggingToken = null;
+let measureLine = null;
+let pings = [];
+let pingRaf = 0;
+let lastPointer = { clientX: 0, clientY: 0 };
+let fogResScale = 1;
+let fogDirty = true;
+let curK = 1; // last rendered view scale (screen px per world px)
+let curMs = 1; // last rendered map.scale
+let viewSyncQueued = false;
+
+const undoStack = [];
+const redoStack = [];
+
+let playerWindow = null; // handle to the popup (GM side), used as a direct postMessage fallback
+let seenMids = []; // recently handled message ids, for de-duplicating the two transports
+
+function handleMessage(message, source) {
+  if (!message || typeof message !== "object") return;
+  if (message.mid) {
+    if (seenMids.includes(message.mid)) return;
+    seenMids.push(message.mid);
+    if (seenMids.length > 60) seenMids.shift();
+  }
+  if (message.type === "assets" && isPlayer) applyAssets(message);
+  if (message.type === "sync" && isPlayer) loadSnapshot(message.state);
+  if (message.type === "view" && isPlayer) applyRemoteView(message);
+  if (message.type === "ping") addPing(message.x, message.y, message.color);
+  if (message.type === "measure" && isPlayer) {
+    measureLine = message.line;
+    render();
+  }
+  if (message.type === "player-ready" && !isPlayer) {
+    if (source) playerWindow = source;
+    broadcastAssets();
+    broadcastState();
+  }
+  if (message.type === "request-assets" && !isPlayer) broadcastAssets();
+}
+
+// Send a message over both transports. BroadcastChannel reaches any same-origin window;
+// the direct postMessage reaches the opener/popup even when BroadcastChannel does not.
+function relay(message) {
+  message.mid = uuid();
+  try {
+    channel.postMessage(message);
+  } catch {}
+  const target = isPlayer ? window.opener : playerWindow;
+  if (target && !target.closed) {
+    try {
+      target.postMessage(message, "*");
+    } catch {}
+  }
+}
+
+function setupStartScreen() {
+  const screen = document.getElementById("startScreen");
+  if (!screen) return;
+  // The player display never shows the opening menu.
+  if (isPlayer) {
+    screen.remove();
+    return;
+  }
+  const dismiss = () => {
+    screen.classList.add("hidden");
+    setTimeout(() => screen.remove(), 500);
+    window.removeEventListener("keydown", onStartKey);
+  };
+  const onStartKey = (event) => {
+    if (event.key === "Enter" || event.key === "Escape" || event.key === " ") {
+      event.preventDefault();
+      dismiss();
+    }
+  };
+  document.getElementById("startEnter")?.addEventListener("click", dismiss);
+  window.addEventListener("keydown", onStartKey);
+}
+
+function setup() {
+  shell.dataset.role = isPlayer ? "player" : "gm";
+  setupStartScreen();
+  if (isPlayer) {
+    document.title = "Player Battlemap";
+    relay({ type: "player-ready" });
+  } else {
+    bindControls();
+    syncControlsFromState();
+    refreshLibraryButtonState();
+    updateUndoButtons();
+  }
+
+  // Two transports so the link works whether or not BroadcastChannel delivers between
+  // windows (it is unreliable on file://): the BroadcastChannel and a direct
+  // window.postMessage to the opener / popup. Messages carry a "mid" so the receiver
+  // ignores the duplicate when both transports succeed.
+  channel.onmessage = (event) => handleMessage(event.data, null);
+  window.addEventListener("message", (event) => handleMessage(event.data, event.source));
+
+  watchCanvasSize();
+  window.addEventListener("keydown", onKeyDown);
+
+  canvas.addEventListener("pointerdown", onPointerDown);
+  canvas.addEventListener("pointermove", onPointerMove);
+  canvas.addEventListener("pointerup", onPointerUp);
+  canvas.addEventListener("pointercancel", onPointerUp);
+  canvas.addEventListener("dblclick", onDoubleClick);
+  canvas.addEventListener("contextmenu", onContextMenu);
+  canvas.addEventListener("wheel", onWheel, { passive: false });
+
+  if (isPlayer) {
+    controls.playerFullscreen?.addEventListener("click", toggleFullscreen);
+  }
+
+  resizeCanvas();
+  refreshFloorUI();
+  render();
+}
+
+function bindControls() {
+  controls.mapUpload.addEventListener("change", loadMapFile);
+  controls.splashUpload.addEventListener("change", loadSplashFile);
+  controls.splashEnabled.addEventListener("input", () => {
+    state.splash.enabled = controls.splashEnabled.checked;
+    if (state.splash.enabled) {
+      state.blackout = false;
+      controls.blackoutEnabled.checked = false;
+    }
+    renderAndSync();
+  });
+  controls.blackoutEnabled.addEventListener("input", () => {
+    state.blackout = controls.blackoutEnabled.checked;
+    if (state.blackout) {
+      state.splash.enabled = false;
+      controls.splashEnabled.checked = false;
+    }
+    renderAndSync();
+  });
+  controls.loadLibrary.addEventListener("click", openLibrary);
+  controls.saveSession.addEventListener("click", saveSession);
+  controls.exportLibrary?.addEventListener("click", exportLibrary);
+  controls.importLibrary?.addEventListener("change", importLibrary);
+  controls.openPlayer.addEventListener("click", openPlayerWindow);
+
+  const gridBindings = [
+    ["gridEnabled", "enabled", "checked"],
+    ["gridSnap", "snap", "checked"],
+    ["gridSize", "size", "value"],
+    ["gridOffsetX", "offsetX", "value"],
+    ["gridOffsetY", "offsetY", "value"],
+    ["gridColor", "color", "value"],
+    ["gridOpacity", "opacity", "value"],
+  ];
+  gridBindings.forEach(([controlName, stateKey, prop]) => {
+    controls[controlName].addEventListener("input", () => {
+      state.grid[stateKey] = prop === "checked" ? controls[controlName][prop] : normalizeInput(controls[controlName][prop]);
+      renderAndSync();
+    });
+  });
+
+  controls.brushSize.addEventListener("input", () => {
+    state.fog.toolSize = Number(controls.brushSize.value);
+    render();
+  });
+  controls.fogTint.addEventListener("input", () => {
+    state.fog.gmColor = controls.fogTint.value;
+    fogDirty = true;
+    render();
+  });
+  controls.gmFogOpacity.addEventListener("input", () => {
+    state.fog.gmOpacity = Number(controls.gmFogOpacity.value);
+    render();
+  });
+  controls.mapScale.addEventListener("input", () => {
+    state.map.scale = Number(controls.mapScale.value);
+    renderAndSync();
+  });
+
+  controls.panMode.addEventListener("click", () => setMode("pan"));
+  controls.fogToggle.addEventListener("click", toggleFogRibbon);
+  controls.polygonMode.addEventListener("click", () => setMode("polygon"));
+  controls.namedPolygonMode.addEventListener("click", () => setMode("namedPolygon"));
+  controls.revealMode.addEventListener("click", () => setMode("reveal"));
+  controls.brushMode.addEventListener("click", () => setMode("brush"));
+  controls.eraserMode.addEventListener("click", () => setMode("eraser"));
+  controls.tokenMode.addEventListener("click", () => setMode("token"));
+  controls.measureMode.addEventListener("click", () => setMode("measure"));
+  controls.stairMode?.addEventListener("click", () => setMode("stair"));
+
+  // Floor navigation
+  controls.floorUp?.addEventListener("click", () => goToFloor(currentFloorIndex() + 1));
+  controls.floorDown?.addEventListener("click", () => goToFloor(currentFloorIndex() - 1));
+  controls.addFloorUp?.addEventListener("click", () => addFloor("up"));
+  controls.addFloorDown?.addEventListener("click", () => addFloor("down"));
+  controls.deleteFloor?.addEventListener("click", deleteCurrentFloor);
+  controls.floorName?.addEventListener("change", () => {
+    const floor = state.floors[currentFloorIndex()];
+    if (floor) {
+      floor.name = controls.floorName.value.trim();
+      refreshFloorUI();
+      broadcastState();
+    }
+  });
+  controls.roundShape.addEventListener("click", () => setToolShape("round"));
+  controls.squareShape.addEventListener("click", () => setToolShape("square"));
+  controls.clearFog.addEventListener("click", () => {
+    clearFog();
+    closeFogRibbon();
+  });
+  controls.undo?.addEventListener("click", undo);
+  controls.redo?.addEventListener("click", redo);
+  controls.fitMap.addEventListener("click", () => fitMap(true));
+  controls.fitMapBtn?.addEventListener("click", () => fitMap(true));
+
+  // Close the fog ribbon when clicking anywhere outside it (and outside its toggle).
+  document.addEventListener("pointerdown", (event) => {
+    if (!isFogRibbonOpen()) return;
+    if (event.target.closest("#fogRibbon") || event.target.closest("#fogToggle")) return;
+    closeFogRibbon();
+  });
+
+  controls.playerMatchDM.addEventListener("input", () => {
+    state.playerView.matchDM = controls.playerMatchDM.checked;
+    if (state.playerView.matchDM) {
+      state.playerView.scale = state.view.scale;
+      state.playerView.cx = state.view.cx;
+      state.playerView.cy = state.view.cy;
+    }
+    syncPlayerViewControls();
+    renderAndSync();
+  });
+  controls.copyDMView.addEventListener("click", () => snapPlayerViewToGM(true));
+  controls.playerZoom.addEventListener("input", () => {
+    state.playerView.matchDM = false;
+    controls.playerMatchDM.checked = false;
+    state.playerView.scale = Number(controls.playerZoom.value);
+    renderAndSyncView();
+  });
+  controls.playerOffsetX.addEventListener("input", () => {
+    state.playerView.matchDM = false;
+    controls.playerMatchDM.checked = false;
+    state.playerView.cx = Number(controls.playerOffsetX.value);
+    renderAndSyncView();
+  });
+  controls.playerOffsetY.addEventListener("input", () => {
+    state.playerView.matchDM = false;
+    controls.playerMatchDM.checked = false;
+    state.playerView.cy = Number(controls.playerOffsetY.value);
+    renderAndSyncView();
+  });
+}
+
+function normalizeInput(value) {
+  const number = Number(value);
+  return Number.isNaN(number) ? value : number;
+}
+
+function uuid() {
+  return crypto.randomUUID ? crypto.randomUUID() : `id-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 9)}`;
+}
+
+function openPlayerWindow() {
+  const url = `${location.pathname}?view=player`;
+  playerWindow = window.open(url, "fog-table-player", "popup=yes,width=1280,height=720");
+  // The new window announces itself with "player-ready"; we answer with assets + state then.
+}
+
+/* ----------------------------- file loading ----------------------------- */
+
+function loadMapFile(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+
+  const reader = new FileReader();
+  reader.onerror = () => window.alert("Could not read that image file.");
+  reader.onload = () => {
+    state.imageData = reader.result;
+    state.imageName = file.name;
+    state.imageId = uuid();
+    state.map.scale = 1;
+    state.fog.rooms = [];
+    state.fog.strokes = [];
+    state.tokens = [];
+    state.stairs = [];
+    drawingRoom = [];
+    undoStack.length = 0;
+    redoStack.length = 0;
+    updateUndoButtons();
+    loadImage(state.imageData, () => {
+      state.imageWidth = mapImage.naturalWidth;
+      state.imageHeight = mapImage.naturalHeight;
+      fogDirty = true;
+      captureCurrentFloor(); // flush new image into the current floor record
+      updatePlayerSliderRanges();
+      controls.mapScale.value = state.map.scale;
+      refreshFloorUI();
+      fitMap(false);
+      broadcastAssets();
+      renderAndSync();
+    });
+  };
+  reader.readAsDataURL(file);
+}
+
+function loadSplashFile(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+
+  const reader = new FileReader();
+  reader.onerror = () => window.alert("Could not read that image file.");
+  reader.onload = () => {
+    state.splash.imageData = reader.result;
+    state.splash.imageName = file.name;
+    state.splash.enabled = true;
+    state.blackout = false;
+    controls.splashEnabled.checked = true;
+    controls.blackoutEnabled.checked = false;
+    loadSplashImage(state.splash.imageData, () => {
+      broadcastAssets();
+      renderAndSync();
+    });
+  };
+  reader.readAsDataURL(file);
+}
+
+/* ----------------------------- library / IndexedDB ----------------------------- */
+
+function saveSession() {
+  captureCurrentFloor();
+  if (!state.floors.some((floor) => floor.imageData)) {
+    window.alert("Load a map image before saving.");
+    return;
+  }
+
+  const suggestedName = state.imageName ? state.imageName.replace(/\.[^.]+$/, "") : "battlemap";
+  const enteredName = window.prompt("Save map as:", suggestedName);
+  const mapName = enteredName?.trim();
+  if (!mapName) return;
+
+  const saveData = {
+    id: makeMapId(mapName),
+    app: APP_NAME,
+    version: SAVE_FILE_VERSION,
+    name: mapName,
+    savedAt: new Date().toISOString(),
+    state: JSON.parse(JSON.stringify(state)),
+  };
+
+  saveMapRecord(saveData)
+    .then(() => {
+      window.alert(`Saved "${saveData.name}" to the local map library.`);
+      refreshLibraryButtonState();
+    })
+    .catch((error) => window.alert(`Could not save this map: ${error.message}`));
+}
+
+function makeMapId(name) {
+  return name.toLocaleLowerCase().replace(/\s+/g, " ").trim();
+}
+
+function validateSessionData(data) {
+  if (!data || ![APP_NAME, LEGACY_APP_NAME].includes(data.app) || !data.state) {
+    throw new Error("invalid or unsupported battlemap save");
+  }
+  if (!data.state.grid || !data.state.fog) {
+    throw new Error("the save file is missing required map data");
+  }
+  return migrateState(data.state, data.version || 1);
+}
+
+function migrateState(snapshot, version) {
+  // v1 -> v2: fog/room points were stored in scaled-world coords (native x map.scale).
+  if (version < 2) {
+    const scale = snapshot.map?.scale || 1;
+    if (scale !== 1 && snapshot.fog) {
+      (snapshot.fog.rooms || []).forEach((room) => {
+        room.points = (room.points || []).map((p) => ({ x: p.x / scale, y: p.y / scale }));
+      });
+      (snapshot.fog.strokes || []).forEach((stroke) => {
+        stroke.points = (stroke.points || []).map((p) => ({ x: p.x / scale, y: p.y / scale }));
+        stroke.size = stroke.size / scale;
+      });
+    }
+    snapshot._refit = true; // old view used a different model; refit on load
+  }
+  snapshot.tokens = snapshot.tokens || [];
+  if (snapshot.blackout === undefined) snapshot.blackout = false;
+
+  // v2 -> v3: a single map becomes the first (and only) floor.
+  if (!Array.isArray(snapshot.floors) || !snapshot.floors.length) {
+    snapshot.floors = [
+      {
+        id: INITIAL_FLOOR_ID,
+        imageId: snapshot.imageId || "",
+        imageData: snapshot.imageData || "",
+        imageName: snapshot.imageName || "",
+        imageWidth: snapshot.imageWidth || 0,
+        imageHeight: snapshot.imageHeight || 0,
+        mapScale: snapshot.map?.scale || 1,
+        rooms: snapshot.fog?.rooms || [],
+        strokes: snapshot.fog?.strokes || [],
+        tokens: snapshot.tokens || [],
+        stairs: [],
+        view: { ...(snapshot.view || { scale: 1, cx: 0, cy: 0 }) },
+      },
+    ];
+    snapshot.currentFloorId = INITIAL_FLOOR_ID;
+  }
+  return snapshot;
+}
+
+async function openLibrary() {
+  try {
+    const maps = await listMapRecords();
+    renderLibraryList(maps);
+    controls.libraryDialog.showModal();
+  } catch (error) {
+    window.alert(`Could not open the map library: ${error.message}`);
+  }
+}
+
+function renderLibraryList(maps) {
+  controls.savedMapList.replaceChildren();
+  if (!maps.length) {
+    const empty = document.createElement("p");
+    empty.className = "hint";
+    empty.textContent = "No saved maps yet.";
+    controls.savedMapList.appendChild(empty);
+    return;
+  }
+
+  maps
+    .sort((a, b) => new Date(b.savedAt) - new Date(a.savedAt))
+    .forEach((map) => {
+      const row = document.createElement("div");
+      row.className = "saved-map-row";
+
+      const text = document.createElement("div");
+      const name = document.createElement("strong");
+      name.textContent = map.name;
+      const meta = document.createElement("span");
+      meta.textContent = `${map.state.imageName || "Map image"} - ${new Date(map.savedAt).toLocaleString()}`;
+      text.append(name, meta);
+
+      const actions = document.createElement("div");
+      actions.className = "saved-map-actions";
+      const load = document.createElement("button");
+      load.type = "button";
+      load.textContent = "Load";
+      load.addEventListener("click", () => loadLibraryMap(map.id));
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.textContent = "Delete";
+      remove.addEventListener("click", () => deleteLibraryMap(map.id, map.name));
+      actions.append(load, remove);
+
+      row.append(text, actions);
+      controls.savedMapList.appendChild(row);
+    });
+}
+
+async function loadLibraryMap(id) {
+  try {
+    const data = await getMapRecord(id);
+    const snapshot = validateSessionData(data);
+    drawingRoom = [];
+    activeStroke = null;
+    undoStack.length = 0;
+    redoStack.length = 0;
+    updateUndoButtons();
+    loadSnapshot(snapshot);
+    syncControlsFromState();
+    broadcastAssets();
+    renderAndSync();
+    controls.libraryDialog.close();
+  } catch (error) {
+    window.alert(`Could not load this map: ${error.message}`);
+  }
+}
+
+async function deleteLibraryMap(id, name) {
+  if (!window.confirm(`Delete "${name}" from the local map library?`)) return;
+  await deleteMapRecord(id);
+  const maps = await listMapRecords();
+  renderLibraryList(maps);
+  refreshLibraryButtonState(maps);
+}
+
+async function exportLibrary() {
+  try {
+    const maps = await listMapRecords();
+    if (!maps.length) {
+      window.alert("There are no saved maps to export.");
+      return;
+    }
+    const payload = { app: APP_NAME, version: SAVE_FILE_VERSION, exportedAt: new Date().toISOString(), maps };
+    const blob = new Blob([JSON.stringify(payload)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `battlemap-library-${new Date().toISOString().slice(0, 10)}.json`;
+    link.click();
+    URL.revokeObjectURL(url);
+  } catch (error) {
+    window.alert(`Could not export the library: ${error.message}`);
+  }
+}
+
+function importLibrary(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = async () => {
+    try {
+      const parsed = JSON.parse(reader.result);
+      const maps = Array.isArray(parsed) ? parsed : parsed.maps;
+      if (!Array.isArray(maps) || !maps.length) throw new Error("no maps found in that file");
+      let imported = 0;
+      for (const record of maps) {
+        if (!record?.id || !record?.state) continue;
+        await saveMapRecord(record);
+        imported += 1;
+      }
+      window.alert(`Imported ${imported} map${imported === 1 ? "" : "s"}.`);
+      const updated = await listMapRecords();
+      renderLibraryList(updated);
+      refreshLibraryButtonState(updated);
+    } catch (error) {
+      window.alert(`Could not import that file: ${error.message}`);
+    } finally {
+      event.target.value = "";
+    }
+  };
+  reader.readAsText(file);
+}
+
+async function refreshLibraryButtonState(existingMaps) {
+  if (isPlayer) return;
+  try {
+    const maps = existingMaps || (await listMapRecords());
+    const hasMaps = maps.length > 0;
+    controls.loadLibrary.classList.toggle("empty", !hasMaps);
+    controls.loadLibrary.disabled = !hasMaps;
+    if (controls.exportLibrary) controls.exportLibrary.disabled = !hasMaps;
+  } catch {
+    controls.loadLibrary.classList.add("empty");
+    controls.loadLibrary.disabled = true;
+  }
+}
+
+function openMapDatabase() {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open(DB_NAME, DB_VERSION);
+    request.onupgradeneeded = () => {
+      const db = request.result;
+      if (!db.objectStoreNames.contains(MAP_STORE)) {
+        db.createObjectStore(MAP_STORE, { keyPath: "id" });
+      }
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+}
+
+async function withMapStore(modeName, action) {
+  const db = await openMapDatabase();
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction(MAP_STORE, modeName);
+    const store = transaction.objectStore(MAP_STORE);
+    const request = action(store);
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+    transaction.oncomplete = () => db.close();
+    transaction.onerror = () => {
+      db.close();
+      reject(transaction.error);
+    };
+  });
+}
+
+function saveMapRecord(record) {
+  return withMapStore("readwrite", (store) => store.put(record));
+}
+function listMapRecords() {
+  return withMapStore("readonly", (store) => store.getAll());
+}
+function getMapRecord(id) {
+  return withMapStore("readonly", (store) => store.get(id));
+}
+function deleteMapRecord(id) {
+  return withMapStore("readwrite", (store) => store.delete(id));
+}
+
+/* ----------------------------- snapshots / sync ----------------------------- */
+
+function loadSnapshot(snapshot) {
+  // Shared / global settings.
+  Object.assign(state.splash, snapshot.splash || { enabled: false, imageData: "", imageName: "" });
+  state.blackout = Boolean(snapshot.blackout);
+  Object.assign(state.grid, snapshot.grid);
+  if (state.grid.snap === undefined) state.grid.snap = true;
+  if (snapshot.fog) {
+    state.fog.toolSize = snapshot.fog.toolSize ?? state.fog.toolSize;
+    state.fog.toolShape = snapshot.fog.toolShape ?? state.fog.toolShape;
+    state.fog.gmColor = snapshot.fog.gmColor || "#080909";
+    state.fog.gmOpacity = snapshot.fog.gmOpacity ?? DEFAULT_GM_FOG_OPACITY;
+  }
+  Object.assign(state.playerView, snapshot.playerView || { matchDM: true, ...(snapshot.view || {}) });
+
+  if (Array.isArray(snapshot.floors) && snapshot.floors.length) {
+    // Full load (library / GM): the floor stack is authoritative.
+    state.floors = snapshot.floors;
+    state.currentFloorId = snapshot.currentFloorId || state.floors[0].id;
+    applyFloor(state.floors.find((f) => f.id === state.currentFloorId) || state.floors[0]);
+  } else {
+    // Lightweight sync (player) — only the current floor's live fields are present.
+    Object.assign(state.map, snapshot.map || { scale: 1 });
+    state.fog.rooms = snapshot.fog?.rooms || [];
+    state.fog.strokes = snapshot.fog?.strokes || [];
+    state.tokens = Array.isArray(snapshot.tokens) ? snapshot.tokens : [];
+    state.stairs = Array.isArray(snapshot.stairs) ? snapshot.stairs : [];
+    Object.assign(state.view, snapshot.view || {});
+    state.imageId = snapshot.imageId || state.imageId;
+    state.imageData = snapshot.imageData || state.imageData; // keep the image assets delivered separately
+    state.imageName = snapshot.imageName || state.imageName;
+    if (snapshot.imageWidth) state.imageWidth = snapshot.imageWidth;
+    if (snapshot.imageHeight) state.imageHeight = snapshot.imageHeight;
+    state.floorPosition = snapshot.floorPosition || 1;
+    state.floorCount = snapshot.floorCount || 1;
+  }
+  fogDirty = true;
+
+  // If a sync references a map whose image we never received (assets message missed), ask for it.
+  if (isPlayer && state.imageId && !state.imageData) {
+    relay({ type: "request-assets" });
+  }
+
+  const finish = () => {
+    if (snapshot._refit && !isPlayer) fitMap(false);
+    if (!isPlayer) {
+      updatePlayerSliderRanges();
+      syncControlsFromState();
+    }
+    refreshFloorUI();
+    render();
+  };
+
+  if (state.imageData) {
+    loadImage(state.imageData, finish);
+  } else {
+    mapImage = new Image();
+    finish();
+  }
+  if (state.splash.imageData) {
+    loadSplashImage(state.splash.imageData, render);
+  }
+}
+
+function applyAssets(message) {
+  state.imageId = message.imageId;
+  state.imageData = message.imageData;
+  state.imageName = message.imageName;
+  state.splash.imageData = message.splash?.imageData || "";
+  state.splash.imageName = message.splash?.imageName || "";
+  if (state.imageData) {
+    loadImage(state.imageData, () => {
+      state.imageWidth = mapImage.naturalWidth;
+      state.imageHeight = mapImage.naturalHeight;
+      fogDirty = true;
+      render();
+    });
+  }
+  if (state.splash.imageData) loadSplashImage(state.splash.imageData, render);
+}
+
+function applyRemoteView(message) {
+  if (message.view) Object.assign(state.view, message.view);
+  if (message.playerView) Object.assign(state.playerView, message.playerView);
+  render();
+}
+
+function syncControlsFromState() {
+  if (isPlayer) return;
+  controls.gridEnabled.checked = state.grid.enabled;
+  controls.gridSnap.checked = state.grid.snap;
+  controls.gridSize.value = state.grid.size;
+  controls.gridOffsetX.value = state.grid.offsetX;
+  controls.gridOffsetY.value = state.grid.offsetY;
+  controls.gridColor.value = state.grid.color;
+  controls.gridOpacity.value = state.grid.opacity;
+  controls.splashEnabled.checked = state.splash.enabled;
+  controls.blackoutEnabled.checked = state.blackout;
+  controls.mapScale.value = state.map.scale;
+  controls.brushSize.value = state.fog.toolSize;
+  controls.fogTint.value = state.fog.gmColor;
+  controls.gmFogOpacity.value = state.fog.gmOpacity;
+  setToolShape(state.fog.toolShape);
+  updatePlayerSliderRanges();
+  syncPlayerViewControls();
+}
+
+function updatePlayerSliderRanges() {
+  if (isPlayer) return;
+  const w = state.imageWidth || 1000;
+  const h = state.imageHeight || 1000;
+  controls.playerOffsetX.min = 0;
+  controls.playerOffsetX.max = w;
+  controls.playerOffsetY.min = 0;
+  controls.playerOffsetY.max = h;
+}
+
+function syncPlayerViewControls() {
+  controls.playerMatchDM.checked = state.playerView.matchDM;
+  const v = state.playerView.matchDM ? state.view : state.playerView;
+  controls.playerZoom.value = v.scale;
+  controls.playerOffsetX.value = v.cx;
+  controls.playerOffsetY.value = v.cy;
+}
+
+// One-shot copy of the GM's current framing onto the player view. Intentionally does
+// NOT change the "Follow GM" toggle (matchDM) — clicking the button just snaps the
+// player view once and leaves the follow mode as the user set it.
+function snapPlayerViewToGM(sync) {
+  state.playerView.scale = state.view.scale;
+  state.playerView.cx = state.view.cx;
+  state.playerView.cy = state.view.cy;
+  syncPlayerViewControls();
+  render();
+  if (sync) broadcastState();
+}
+
+/* ----------------------------- floor management ----------------------------- */
+
+// Flush active-floor mutable fields back into the floor record.
+function captureCurrentFloor() {
+  const floor = state.floors.find((f) => f.id === state.currentFloorId);
+  if (!floor) return;
+  floor.imageId = state.imageId;
+  floor.imageData = state.imageData;
+  floor.imageName = state.imageName;
+  floor.imageWidth = state.imageWidth;
+  floor.imageHeight = state.imageHeight;
+  floor.mapScale = state.map.scale;
+  floor.rooms = JSON.parse(JSON.stringify(state.fog.rooms));
+  floor.strokes = JSON.parse(JSON.stringify(state.fog.strokes));
+  floor.tokens = JSON.parse(JSON.stringify(state.tokens));
+  floor.stairs = JSON.parse(JSON.stringify(state.stairs));
+  floor.view = { ...state.view };
+}
+
+// Promote a floor record into the active state fields.
+function applyFloor(floor) {
+  state.currentFloorId = floor.id;
+  state.imageId = floor.imageId || "";
+  state.imageData = floor.imageData || "";
+  state.imageName = floor.imageName || "";
+  state.imageWidth = floor.imageWidth || 0;
+  state.imageHeight = floor.imageHeight || 0;
+  state.map.scale = floor.mapScale || 1;
+  state.fog.rooms = JSON.parse(JSON.stringify(floor.rooms || []));
+  state.fog.strokes = JSON.parse(JSON.stringify(floor.strokes || []));
+  state.tokens = JSON.parse(JSON.stringify(floor.tokens || []));
+  state.stairs = JSON.parse(JSON.stringify(floor.stairs || []));
+  Object.assign(state.view, floor.view || { scale: 1, cx: 0, cy: 0 });
+  fogDirty = true;
+  undoStack.length = 0;
+  redoStack.length = 0;
+  updateUndoButtons();
+  mapImage = new Image();
+  if (state.imageData) {
+    loadImage(state.imageData, () => {
+      fitMap(false);
+      render();
+    });
+  } else {
+    render();
+  }
+}
+
+function currentFloorIndex() {
+  return state.floors.findIndex((f) => f.id === state.currentFloorId);
+}
+
+function goToFloor(index) {
+  if (index < 0 || index >= state.floors.length) return;
+  captureCurrentFloor();
+  drawingRoom = [];
+  activeStroke = null;
+  applyFloor(state.floors[index]);
+  updatePlayerSliderRanges();
+  syncControlsFromState();
+  refreshFloorUI();
+  broadcastAssets();
+  broadcastState();
+}
+
+function addFloor(direction) {
+  captureCurrentFloor();
+  const newFloor = makeFloor();
+  const idx = currentFloorIndex();
+  if (direction === "up") {
+    state.floors.splice(idx + 1, 0, newFloor);
+    goToFloor(idx + 1);
+  } else {
+    state.floors.splice(idx, 0, newFloor);
+    goToFloor(idx);
+  }
+}
+
+function deleteCurrentFloor() {
+  if (state.floors.length <= 1) {
+    window.alert("You cannot delete the only floor.");
+    return;
+  }
+  if (!window.confirm("Delete this floor? This cannot be undone.")) return;
+  const idx = currentFloorIndex();
+  state.floors.splice(idx, 1);
+  goToFloor(Math.min(idx, state.floors.length - 1));
+}
+
+function refreshFloorUI() {
+  if (isPlayer) {
+    // Floor level is GM-only information; never reveal it on the player display.
+    if (controls.playerFloorBadge) controls.playerFloorBadge.hidden = true;
+    return;
+  }
+  const idx = currentFloorIndex();
+  const total = state.floors.length;
+  const floor = state.floors[idx];
+  if (controls.floorName) controls.floorName.value = floor.name || `Floor ${idx + 1}`;
+  if (controls.floorIndicator) {
+    controls.floorIndicator.textContent = `${idx + 1} / ${total}`;
+    controls.floorIndicator.title = floor.name || `Floor ${idx + 1}`;
+  }
+  if (controls.floorUp) controls.floorUp.disabled = idx >= total - 1;
+  if (controls.floorDown) controls.floorDown.disabled = idx <= 0;
+  if (controls.deleteFloor) controls.deleteFloor.disabled = total <= 1;
+  if (controls.mapScale) controls.mapScale.value = state.map.scale;
+}
+
+/* ----------------------------- stairs ----------------------------- */
+
+function promptStairPlacement(native) {
+  if (!controls.stairDialog) return;
+  const idx = currentFloorIndex();
+  const select = controls.stairFloorSelect;
+  if (!select) return;
+
+  // Populate the floor list (exclude the current floor).
+  select.replaceChildren();
+  state.floors.forEach((floor, i) => {
+    if (i === idx) return;
+    const opt = document.createElement("option");
+    opt.value = floor.id;
+    opt.textContent = floor.name || `Floor ${i + 1}`;
+    select.appendChild(opt);
+  });
+
+  if (!select.options.length) {
+    window.alert("Add another floor first before placing stairs.");
+    return;
+  }
+
+  if (controls.stairLabelInput) controls.stairLabelInput.value = "";
+  controls.stairDialog.returnValue = "";
+  controls.stairDialog.addEventListener(
+    "close",
+    () => {
+      if (controls.stairDialog.returnValue !== "place") return;
+      const targetId = select.value;
+      const label = controls.stairLabelInput?.value?.trim() || "";
+      pushHistory();
+      state.stairs.push({
+        id: uuid(),
+        x: native.x,
+        y: native.y,
+        targetFloorId: targetId,
+        label,
+      });
+      renderAndSync();
+    },
+    { once: true },
+  );
+  controls.stairDialog.showModal();
+}
+
+// Stair marker radius in native pixels — scales with the map as you zoom, just like tokens.
+function hitStair(native) {
+  // Square hit detection — the marker occupies exactly one grid cell.
+  const half = gridCellNative() / 2;
+  for (let i = state.stairs.length - 1; i >= 0; i--) {
+    const s = state.stairs[i];
+    if (Math.abs(native.x - s.x) <= half && Math.abs(native.y - s.y) <= half) {
+      return state.stairs[i];
+    }
+  }
+  return null;
+}
+
+function drawStairs() {
+  if (!state.stairs.length) return;
+
+  const myIdx = !isPlayer && state.floors
+    ? state.floors.findIndex((f) => f.id === state.currentFloorId)
+    : -1;
+
+  // Marker fills exactly one grid cell — scales with grid size AND zoom, just like tokens.
+  const cell = gridCellNative();
+  const half = cell / 2;
+  // Constant 2px screen line width regardless of zoom.
+  const sw = 2 / (curK * curMs);
+
+  ctx.save();
+
+  state.stairs.forEach((stair) => {
+    const { x, y } = stair;
+
+    // Determine direction: 1 = going UP (target floor has a higher index), -1 = DOWN.
+    let dir = 0;
+    if (!isPlayer && myIdx !== -1 && state.floors) {
+      const targetIdx = state.floors.findIndex((f) => f.id === stair.targetFloorId);
+      if (targetIdx !== -1) dir = targetIdx > myIdx ? 1 : -1;
+    }
+
+    // ---- grey square background with white border (token-style) ----
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(x - half, y - half, cell, cell);
+    ctx.fillStyle = "#3d4141";
+    ctx.fill();
+    ctx.strokeStyle = "#ffffff";
+    ctx.lineWidth = sw * 1.5;
+    ctx.stroke();
+    ctx.restore();
+
+    // ---- Tabler stair icon scaled to fill 80% of the cell ----
+    // The icons are defined in a 24×24 coordinate space.
+    const iconFill = cell * 0.80;
+    const iconScale = iconFill / 24;
+    const iconPad = (cell - iconFill) / 2;
+
+    ctx.save();
+    ctx.translate(x - half + iconPad, y - half + iconPad);
+    ctx.scale(iconScale, iconScale);
+    ctx.strokeStyle = "#ffffff";
+    ctx.lineWidth = 2 / (curK * curMs * iconScale); // stays 2px on screen
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    const icon = dir > 0 ? STAIRS_ICON_UP : dir < 0 ? STAIRS_ICON_DOWN : STAIRS_ICON_NEUTRAL;
+    ctx.stroke(icon);
+    ctx.restore();
+
+    // ---- optional text label below the square ----
+    if (stair.label) {
+      ctx.save();
+      ctx.font = `600 ${Math.round(half * 0.65)}px Inter, sans-serif`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "top";
+      ctx.fillStyle = "#f4e8c8";
+      ctx.fillText(stair.label, x, y + half + sw * 2);
+      ctx.restore();
+    }
+
+    // ---- hover highlight outline in stair placement mode (GM only) ----
+    if (!isPlayer && mode === "stair") {
+      const gap = sw * 3;
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(x - half - gap, y - half - gap, cell + gap * 2, cell + gap * 2);
+      ctx.strokeStyle = "rgba(177,195,1,0.50)";
+      ctx.lineWidth = sw * 1.5;
+      ctx.stroke();
+      ctx.restore();
+    }
+  });
+
+  ctx.restore();
+}
+
+function broadcastAssets() {
+  if (isPlayer) return;
+  // Only the current floor's image is sent — the player follows the GM's active floor,
+  // so it never needs the other floors' images.
+  relay({
+    type: "assets",
+    imageId: state.imageId,
+    imageData: state.imageData,
+    imageName: state.imageName,
+    splash: { imageData: state.splash.imageData, imageName: state.splash.imageName },
+  });
+}
+
+// Sent on settings/fog/token changes. The player only needs the ACTIVE floor's live
+// fields (which sit at the top level of state), so we omit the whole floor stack and
+// the current image. Omitting (not blanking) the image means this never clobbers the
+// image the player already received via the separate "assets" message.
+function sanitizedState() {
+  captureCurrentFloor();
+  const { floors, imageData, ...rest } = state;
+  const clone = JSON.parse(JSON.stringify(rest));
+  if (clone.splash) delete clone.splash.imageData;
+  return clone;
+}
+
+function broadcastState() {
+  if (isPlayer) return;
+  relay({ type: "sync", state: sanitizedState() });
+}
+
+// Lightweight view-only message, coalesced to one per frame for smooth pan/zoom.
+function broadcastView() {
+  if (isPlayer) return;
+  if (viewSyncQueued) return;
+  viewSyncQueued = true;
+  requestAnimationFrame(() => {
+    viewSyncQueued = false;
+    relay({
+      type: "view",
+      view: { ...state.view },
+      playerView: { ...state.playerView },
+    });
+  });
+}
+
+function renderAndSync() {
+  render();
+  broadcastState();
+}
+
+function renderAndSyncView() {
+  render();
+  broadcastView();
+}
+
+/* ----------------------------- modes / tools ----------------------------- */
+
+const FOG_MODES = ["polygon", "namedPolygon", "reveal", "brush", "eraser"];
+
+function isFogRibbonOpen() {
+  return controls.fogRibbon && !controls.fogRibbon.classList.contains("hidden");
+}
+function openFogRibbon() {
+  controls.fogRibbon?.classList.remove("hidden");
+}
+function closeFogRibbon() {
+  controls.fogRibbon?.classList.add("hidden");
+}
+function toggleFogRibbon() {
+  controls.fogRibbon?.classList.toggle("hidden");
+}
+
+function setMode(nextMode) {
+  mode = nextMode;
+  closeFogRibbon();
+  controls.fogToggle?.classList.toggle("active", FOG_MODES.includes(nextMode));
+  [controls.panMode, controls.polygonMode, controls.namedPolygonMode, controls.revealMode, controls.brushMode, controls.eraserMode, controls.tokenMode, controls.measureMode, controls.stairMode].forEach(
+    (button) => button?.classList.remove("active"),
+  );
+  controls[`${nextMode}Mode`]?.classList.add("active");
+  controls.modeHint.textContent = {
+    pan: "Drag to move the map. Wheel to zoom. Alt+click to ping.",
+    polygon: "Click room corners, then press Enter to place the polygon.",
+    namedPolygon: "Click corners, then press Enter to place and name the area (GM-only label).",
+    reveal: "Click a polygon fog section to reveal or hide it for players.",
+    brush: "Drag to paint fog. Alt+click to ping.",
+    eraser: "Drag over fog to erase it.",
+    token: "Click to drop a token, drag to move it, right-click to remove it.",
+    measure: "Drag to measure distance across the grid.",
+    stair: "Click to place a staircase. Right-click a stair to remove it.",
+  }[nextMode] ?? "";
+  controls.brushOptions.classList.toggle("hidden", !["brush", "eraser"].includes(nextMode));
+  controls.tokenOptions.classList.toggle("hidden", nextMode !== "token");
+  measureLine = null;
+  render();
+}
+
+function setToolShape(shape) {
+  state.fog.toolShape = shape;
+  controls.roundShape.classList.toggle("active", shape === "round");
+  controls.squareShape.classList.toggle("active", shape === "square");
+  render();
+}
+
+function clearFog() {
+  if (!state.fog.rooms.length && !state.fog.strokes.length) return;
+  pushHistory();
+  drawingRoom = [];
+  state.fog.rooms = [];
+  state.fog.strokes = [];
+  fogDirty = true;
+  renderAndSync();
+}
+
+/* ----------------------------- history ----------------------------- */
+
+function snapshotFog() {
+  return JSON.stringify({ rooms: state.fog.rooms, strokes: state.fog.strokes, tokens: state.tokens, stairs: state.stairs });
+}
+function pushHistory() {
+  undoStack.push(snapshotFog());
+  if (undoStack.length > HISTORY_LIMIT) undoStack.shift();
+  redoStack.length = 0;
+  updateUndoButtons();
+}
+function applyFogSnapshot(serialized) {
+  const data = JSON.parse(serialized);
+  state.fog.rooms = data.rooms || [];
+  state.fog.strokes = data.strokes || [];
+  state.tokens = data.tokens || [];
+  state.stairs = data.stairs || [];
+  fogDirty = true;
+}
+function undo() {
+  if (!undoStack.length) return;
+  redoStack.push(snapshotFog());
+  applyFogSnapshot(undoStack.pop());
+  drawingRoom = [];
+  activeStroke = null;
+  updateUndoButtons();
+  renderAndSync();
+}
+function redo() {
+  if (!redoStack.length) return;
+  undoStack.push(snapshotFog());
+  applyFogSnapshot(redoStack.pop());
+  updateUndoButtons();
+  renderAndSync();
+}
+function updateUndoButtons() {
+  if (isPlayer) return;
+  if (controls.undo) controls.undo.disabled = !undoStack.length;
+  if (controls.redo) controls.redo.disabled = !redoStack.length;
+}
+
+/* ----------------------------- canvas / view ----------------------------- */
+
+function resizeCanvas() {
+  const rect = canvas.getBoundingClientRect();
+  const scale = window.devicePixelRatio || 1;
+  canvas.width = Math.max(1, Math.floor(rect.width * scale));
+  canvas.height = Math.max(1, Math.floor(rect.height * scale));
+  ctx.setTransform(scale, 0, 0, scale, 0, 0);
+}
+
+// Keep the canvas backing store matched to its CSS box. A ResizeObserver catches the
+// responsive panel breakpoint and the player window being resized; the DPR watcher
+// catches the window being dragged to a monitor with different pixel density.
+function watchCanvasSize() {
+  let queued = false;
+  const onChange = () => {
+    if (queued) return;
+    queued = true;
+    requestAnimationFrame(() => {
+      queued = false;
+      resizeCanvas();
+      render();
+    });
+  };
+  if (window.ResizeObserver) {
+    new ResizeObserver(onChange).observe(canvas);
+  } else {
+    window.addEventListener("resize", onChange);
+  }
+  const watchDpr = () => {
+    matchMedia(`(resolution: ${window.devicePixelRatio}dppx)`).addEventListener(
+      "change",
+      () => {
+        onChange();
+        watchDpr();
+      },
+      { once: true },
+    );
+  };
+  watchDpr();
+}
+
+function activeView() {
+  return isPlayer && !state.playerView.matchDM ? state.playerView : state.view;
+}
+
+function worldDims() {
+  return { w: state.imageWidth * state.map.scale, h: state.imageHeight * state.map.scale };
+}
+
+function fitMap(sync) {
+  if (!state.imageWidth || !state.imageHeight) return;
+  const rect = canvas.getBoundingClientRect();
+  const { w, h } = worldDims();
+  const scale = Math.min(rect.width / w, rect.height / h) * 0.96;
+  state.view.scale = scale;
+  state.view.cx = state.imageWidth / 2;
+  state.view.cy = state.imageHeight / 2;
+  if (state.playerView.matchDM && !isPlayer) syncPlayerViewControls();
+  render();
+  if (sync) broadcastState();
+}
+
+function viewTransform() {
+  const rect = canvas.getBoundingClientRect();
+  const v = activeView();
+  const ms = state.map.scale || 1;
+  const k = v.scale;
+  return {
+    rect,
+    k,
+    ms,
+    tx: rect.width / 2 - v.cx * ms * k,
+    ty: rect.height / 2 - v.cy * ms * k,
+  };
+}
+
+function clientToCanvasPoint(point) {
+  const rect = canvas.getBoundingClientRect();
+  return { x: point.clientX - rect.left, y: point.clientY - rect.top };
+}
+
+function screenToNative(point) {
+  const t = viewTransform();
+  return {
+    x: (point.x - t.tx) / t.k / t.ms,
+    y: (point.y - t.ty) / t.k / t.ms,
+  };
+}
+
+function nativeToScreen(n) {
+  const t = viewTransform();
+  return { x: t.tx + n.x * t.ms * t.k, y: t.ty + n.y * t.ms * t.k };
+}
+
+function toNativePoint(event) {
+  return screenToNative(clientToCanvasPoint(event));
+}
+
+/* ----------------------------- render ----------------------------- */
+
+function render() {
+  const rect = canvas.getBoundingClientRect();
+  ctx.clearRect(0, 0, rect.width, rect.height);
+  ctx.fillStyle = "#080909";
+  ctx.fillRect(0, 0, rect.width, rect.height);
+
+  if (isPlayer && state.blackout) {
+    emptyState.classList.add("hidden");
+    return;
+  }
+  if (isPlayer && state.splash.enabled) {
+    renderSplash(rect);
+    return;
+  }
+
+  emptyState.classList.toggle("hidden", Boolean(state.imageData));
+  if (!state.imageData || !mapImage.complete) return;
+
+  const t = viewTransform();
+  curK = t.k;
+  curMs = t.ms;
+  const { w, h } = worldDims();
+
+  ctx.save();
+  ctx.translate(t.tx, t.ty);
+  ctx.scale(t.k, t.k);
+
+  // World block (native x map.scale)
+  ctx.drawImage(mapImage, 0, 0, w, h);
+  if (state.grid.enabled) drawGrid(w, h);
+
+  // Native block
+  ctx.save();
+  ctx.scale(t.ms, t.ms);
+  if (fogDirty) rebuildFog();
+  compositeFog();
+  if (!isPlayer) drawRoomOutlines();
+  drawTokens();
+  if (!isPlayer) drawStairs(); // stairs are a GM-only navigation aid
+  if (!isPlayer) drawDraftRoom();
+  if (measureLine) drawMeasureLine();
+  if (!isPlayer && ["brush", "eraser"].includes(mode) && state.imageData) {
+    drawToolPreview(screenToNative(clientToCanvasPoint(lastPointer)));
+  }
+  ctx.restore();
+
+  ctx.restore();
+
+  // Screen-space overlays
+  drawPings();
+  if (measureLine) drawMeasureLabel();
+  if (!isPlayer) drawRoomNames();
+}
+
+function renderSplash(rect) {
+  emptyState.classList.add("hidden");
+  if (!state.splash.imageData || !splashImage.complete) {
+    ctx.fillStyle = "#080909";
+    ctx.fillRect(0, 0, rect.width, rect.height);
+    return;
+  }
+  const scale = Math.min(rect.width / splashImage.naturalWidth, rect.height / splashImage.naturalHeight);
+  const width = splashImage.naturalWidth * scale;
+  const height = splashImage.naturalHeight * scale;
+  ctx.drawImage(splashImage, (rect.width - width) / 2, (rect.height - height) / 2, width, height);
+}
+
+function drawGrid(worldW, worldH) {
+  const size = state.grid.size;
+  if (size <= 0) return;
+  ctx.save();
+  ctx.globalAlpha = state.grid.opacity;
+  ctx.strokeStyle = state.grid.color;
+  ctx.lineWidth = 1 / curK;
+  ctx.beginPath();
+  const startX = ((state.grid.offsetX % size) + size) % size;
+  const startY = ((state.grid.offsetY % size) + size) % size;
+  for (let x = startX; x <= worldW; x += size) {
+    ctx.moveTo(x, 0);
+    ctx.lineTo(x, worldH);
+  }
+  for (let y = startY; y <= worldH; y += size) {
+    ctx.moveTo(0, y);
+    ctx.lineTo(worldW, y);
+  }
+  ctx.stroke();
+  ctx.restore();
+}
+
+/* ----------------------------- fog ----------------------------- */
+
+function resizeFogLayer() {
+  const maxEdge = Math.max(state.imageWidth, state.imageHeight) || 1;
+  fogResScale = Math.min(1, FOG_MAX_EDGE / maxEdge);
+  const w = Math.max(1, Math.round(state.imageWidth * fogResScale));
+  const h = Math.max(1, Math.round(state.imageHeight * fogResScale));
+  if (fogCanvas.width !== w || fogCanvas.height !== h) {
+    fogCanvas.width = w;
+    fogCanvas.height = h;
+    liveCanvas.width = w;
+    liveCanvas.height = h;
+  }
+}
+
+// Rebuild the committed fog bitmap from rooms + strokes. Full opacity; the GM tint /
+// opacity is applied once at composite time so overlapping fog never darkens.
+function rebuildFog() {
+  resizeFogLayer();
+  const color = isPlayer ? "#080909" : state.fog.gmColor;
+  fogCtx.setTransform(1, 0, 0, 1, 0, 0);
+  fogCtx.clearRect(0, 0, fogCanvas.width, fogCanvas.height);
+  fogCtx.save();
+  fogCtx.globalAlpha = 1;
+  fogCtx.fillStyle = color;
+  state.fog.rooms.forEach((room) => {
+    if (room.revealed) return;
+    fogCtx.fill(roomPathFog(room.points));
+  });
+  fogCtx.restore();
+  state.fog.strokes.forEach(stampStroke);
+  fogDirty = false;
+}
+
+function stampStroke(stroke) {
+  const color = isPlayer ? "#080909" : state.fog.gmColor;
+  fogCtx.save();
+  fogCtx.globalCompositeOperation = stroke.kind === "erase" ? "destination-out" : "source-over";
+  fogCtx.globalAlpha = 1;
+  fogCtx.fillStyle = color;
+  fogCtx.fill(strokePathFog(stroke));
+  fogCtx.restore();
+}
+
+function compositeFog() {
+  let source = fogCanvas;
+  if (activeStroke) {
+    liveCtx.setTransform(1, 0, 0, 1, 0, 0);
+    liveCtx.clearRect(0, 0, liveCanvas.width, liveCanvas.height);
+    liveCtx.drawImage(fogCanvas, 0, 0);
+    liveCtx.save();
+    liveCtx.globalCompositeOperation = activeStroke.kind === "erase" ? "destination-out" : "source-over";
+    liveCtx.globalAlpha = 1;
+    liveCtx.fillStyle = isPlayer ? "#080909" : state.fog.gmColor;
+    liveCtx.fill(strokePathFog(activeStroke));
+    liveCtx.restore();
+    source = liveCanvas;
+  }
+  ctx.save();
+  ctx.globalAlpha = isPlayer ? 1 : state.fog.gmOpacity;
+  ctx.imageSmoothingEnabled = true;
+  ctx.drawImage(source, 0, 0, fogCanvas.width, fogCanvas.height, 0, 0, state.imageWidth, state.imageHeight);
+  ctx.restore();
+}
+
+function roomPathFog(points) {
+  const path = new Path2D();
+  if (!points.length) return path;
+  path.moveTo(points[0].x * fogResScale, points[0].y * fogResScale);
+  points.slice(1).forEach((p) => path.lineTo(p.x * fogResScale, p.y * fogResScale));
+  path.closePath();
+  return path;
+}
+
+function strokePathFog(stroke) {
+  const path = new Path2D();
+  const radius = (stroke.size * fogResScale) / 2;
+  stroke.points.forEach((point) => {
+    const x = point.x * fogResScale;
+    const y = point.y * fogResScale;
+    if (stroke.shape === "square") {
+      path.rect(x - radius, y - radius, radius * 2, radius * 2);
+    } else {
+      path.moveTo(x + radius, y);
+      path.arc(x, y, radius, 0, Math.PI * 2);
+    }
+  });
+  return path;
+}
+
+function drawRoomOutlines() {
+  ctx.save();
+  state.fog.rooms.forEach((room) => {
+    if (room.revealed) return;
+    drawPolygon(room.points);
+    ctx.strokeStyle = "rgba(214,169,77,0.72)";
+    ctx.lineWidth = 2 / (curK * curMs);
+    ctx.stroke();
+  });
+  ctx.restore();
+}
+
+function polygonCentroid(points) {
+  let x = 0;
+  let y = 0;
+  points.forEach((p) => {
+    x += p.x;
+    y += p.y;
+  });
+  return { x: x / points.length, y: y / points.length };
+}
+
+// GM-only labels for named fog areas. Drawn in screen space so they stay readable at any
+// zoom. Players never call this, so the names are never shown on the player display.
+function drawRoomNames() {
+  const named = state.fog.rooms.filter((room) => room.name);
+  if (!named.length) return;
+  ctx.save();
+  ctx.font = "600 13px Inter, ui-sans-serif, sans-serif";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  named.forEach((room) => {
+    const screen = nativeToScreen(polygonCentroid(room.points));
+    const width = ctx.measureText(room.name).width + 14;
+    ctx.fillStyle = "rgba(8, 9, 9, 0.78)";
+    ctx.fillRect(screen.x - width / 2, screen.y - 11, width, 22);
+    ctx.fillStyle = room.revealed ? "rgba(244, 232, 200, 0.5)" : "#f4e8c8";
+    ctx.fillText(room.name, screen.x, screen.y);
+  });
+  ctx.restore();
+}
+
+function drawToolPreview(point) {
+  ctx.save();
+  ctx.globalAlpha = 1;
+  ctx.strokeStyle = mode === "eraser" ? "rgba(214,106,95,0.95)" : "rgba(127,182,166,0.95)";
+  ctx.fillStyle = mode === "eraser" ? "rgba(214,106,95,0.12)" : "rgba(127,182,166,0.12)";
+  ctx.lineWidth = 2 / (curK * curMs);
+  drawToolShapePath(point, state.fog.toolSize, state.fog.toolShape);
+  ctx.fill();
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawToolShapePath(point, size, shape) {
+  const radius = size / 2;
+  ctx.beginPath();
+  if (shape === "square") {
+    ctx.rect(point.x - radius, point.y - radius, size, size);
+  } else {
+    ctx.arc(point.x, point.y, radius, 0, Math.PI * 2);
+  }
+}
+
+function drawDraftRoom() {
+  if (!drawingRoom.length) return;
+  ctx.save();
+  ctx.fillStyle = "rgba(127, 182, 166, 0.18)";
+  ctx.strokeStyle = "rgba(127, 182, 166, 0.95)";
+  ctx.lineWidth = 2 / (curK * curMs);
+  drawPolygon(drawingRoom);
+  if (drawingRoom.length > 2) ctx.fill();
+  ctx.stroke();
+  drawingRoom.forEach((point) => {
+    ctx.beginPath();
+    ctx.arc(point.x, point.y, 4 / (curK * curMs), 0, Math.PI * 2);
+    ctx.fillStyle = "#7fb6a6";
+    ctx.fill();
+  });
+  ctx.restore();
+}
+
+function drawPolygon(points) {
+  if (!points.length) return;
+  ctx.beginPath();
+  ctx.moveTo(points[0].x, points[0].y);
+  points.slice(1).forEach((point) => ctx.lineTo(point.x, point.y));
+  ctx.closePath();
+}
+
+/* ----------------------------- tokens ----------------------------- */
+
+function gridCellNative() {
+  return (state.grid.size || 70) / (state.map.scale || 1);
+}
+
+function tokenRadius(token) {
+  return Math.max(6, ((token.cells || 1) * gridCellNative()) / 2);
+}
+
+function drawTokens() {
+  state.tokens.forEach((token) => {
+    const r = tokenRadius(token);
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(token.x, token.y, r, 0, Math.PI * 2);
+    ctx.fillStyle = token.color || "#d6a94d";
+    ctx.globalAlpha = 0.95;
+    ctx.fill();
+    ctx.globalAlpha = 1;
+    ctx.lineWidth = Math.max(1, 2 / (curK * curMs));
+    ctx.strokeStyle = "rgba(0,0,0,0.65)";
+    ctx.stroke();
+    if (token.label) {
+      ctx.fillStyle = "#0c0d0d";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.font = `700 ${Math.round(r)}px Inter, sans-serif`;
+      ctx.fillText(String(token.label).slice(0, 3), token.x, token.y);
+    }
+    ctx.restore();
+  });
+}
+
+function hitToken(native) {
+  for (let i = state.tokens.length - 1; i >= 0; i--) {
+    const token = state.tokens[i];
+    if (Math.hypot(native.x - token.x, native.y - token.y) <= tokenRadius(token)) return token;
+  }
+  return null;
+}
+
+function snapNative(native) {
+  if (!state.grid.snap) return native;
+  const ms = state.map.scale || 1;
+  const size = state.grid.size || 70;
+  const wx = native.x * ms;
+  const wy = native.y * ms;
+  const cx = Math.floor((wx - state.grid.offsetX) / size) * size + state.grid.offsetX + size / 2;
+  const cy = Math.floor((wy - state.grid.offsetY) / size) * size + state.grid.offsetY + size / 2;
+  return { x: cx / ms, y: cy / ms };
+}
+
+function addToken(native) {
+  pushHistory();
+  const pos = snapNative(native);
+  state.tokens.push({
+    id: uuid(),
+    x: pos.x,
+    y: pos.y,
+    cells: Number(controls.tokenCells?.value) || 1,
+    color: controls.tokenColor?.value || "#d6a94d",
+    label: controls.tokenLabel?.value?.trim() || "",
+  });
+  renderAndSync();
+}
+
+function deleteTokenOrRoom(native) {
+  const stair = hitStair(native);
+  if (stair) {
+    pushHistory();
+    state.stairs = state.stairs.filter((s) => s !== stair);
+    renderAndSync();
+    return true;
+  }
+  const token = hitToken(native);
+  if (token) {
+    pushHistory();
+    state.tokens = state.tokens.filter((item) => item !== token);
+    renderAndSync();
+    return true;
+  }
+  const room = [...state.fog.rooms].reverse().find((item) => pointInPolygon(native, item.points));
+  if (room) {
+    pushHistory();
+    state.fog.rooms = state.fog.rooms.filter((item) => item !== room);
+    fogDirty = true;
+    renderAndSync();
+    return true;
+  }
+  return false;
+}
+
+/* ----------------------------- ping / measure ----------------------------- */
+
+function triggerPing(native) {
+  const color = "#d6a94d";
+  addPing(native.x, native.y, color);
+  if (!isPlayer) relay({ type: "ping", x: native.x, y: native.y, color });
+}
+
+function addPing(x, y, color) {
+  pings.push({ x, y, color: color || "#d6a94d", start: performance.now() });
+  ensurePingLoop();
+}
+
+function ensurePingLoop() {
+  if (pingRaf) return;
+  const tick = () => {
+    pings = pings.filter((p) => performance.now() - p.start < PING_DURATION);
+    render();
+    if (pings.length) {
+      pingRaf = requestAnimationFrame(tick);
+    } else {
+      pingRaf = 0;
+    }
+  };
+  pingRaf = requestAnimationFrame(tick);
+}
+
+function drawPings() {
+  if (!pings.length) return;
+  const now = performance.now();
+  ctx.save();
+  pings.forEach((ping) => {
+    const t = (now - ping.start) / PING_DURATION;
+    const screen = nativeToScreen(ping);
+    const radius = 8 + t * 46;
+    ctx.globalAlpha = Math.max(0, 1 - t);
+    ctx.strokeStyle = ping.color;
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.arc(screen.x, screen.y, radius, 0, Math.PI * 2);
+    ctx.stroke();
+  });
+  ctx.restore();
+}
+
+function drawMeasureLine() {
+  ctx.save();
+  ctx.strokeStyle = "rgba(214,169,77,0.95)";
+  ctx.lineWidth = 2 / (curK * curMs);
+  ctx.setLineDash([8 / (curK * curMs), 6 / (curK * curMs)]);
+  ctx.beginPath();
+  ctx.moveTo(measureLine.start.x, measureLine.start.y);
+  ctx.lineTo(measureLine.end.x, measureLine.end.y);
+  ctx.stroke();
+  ctx.setLineDash([]);
+  [measureLine.start, measureLine.end].forEach((p) => {
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, 4 / (curK * curMs), 0, Math.PI * 2);
+    ctx.fillStyle = "#d6a94d";
+    ctx.fill();
+  });
+  ctx.restore();
+}
+
+function drawMeasureLabel() {
+  const ms = state.map.scale || 1;
+  const dx = (measureLine.end.x - measureLine.start.x) * ms;
+  const dy = (measureLine.end.y - measureLine.start.y) * ms;
+  const worldDist = Math.hypot(dx, dy);
+  const cells = state.grid.size > 0 ? worldDist / state.grid.size : 0;
+  const feet = Math.round(cells * FEET_PER_CELL);
+  const label = `${cells.toFixed(1)} cells · ${feet} ft`;
+  const mid = nativeToScreen({
+    x: (measureLine.start.x + measureLine.end.x) / 2,
+    y: (measureLine.start.y + measureLine.end.y) / 2,
+  });
+  ctx.save();
+  ctx.font = "600 13px Inter, sans-serif";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  const padding = 6;
+  const width = ctx.measureText(label).width + padding * 2;
+  ctx.fillStyle = "rgba(12,13,13,0.85)";
+  ctx.fillRect(mid.x - width / 2, mid.y - 24, width, 20);
+  ctx.fillStyle = "#f4e8c8";
+  ctx.fillText(label, mid.x, mid.y - 14);
+  ctx.restore();
+}
+
+/* ----------------------------- pointer input ----------------------------- */
+
+function onPointerDown(event) {
+  if (isPlayer) return; // floors/stairs are GM-driven; the player display is view-only
+  lastPointer = { clientX: event.clientX, clientY: event.clientY };
+  if (event.button === 2) return; // right-click handled by contextmenu
+
+  const native = toNativePoint(event);
+
+  if (event.altKey) {
+    triggerPing(native);
+    return;
+  }
+
+  if (mode === "polygon" || mode === "namedPolygon") {
+    drawingRoom.push(native);
+    render();
+    return;
+  }
+
+  if (mode === "token") {
+    const hit = hitToken(native);
+    if (hit) {
+      pushHistory();
+      draggingToken = hit;
+      isDragging = true;
+      canvas.setPointerCapture(event.pointerId);
+    } else {
+      addToken(native);
+    }
+    return;
+  }
+
+  if (mode === "stair") {
+    if (state.floors.length < 2) {
+      window.alert("Add a second floor first.");
+      return;
+    }
+    promptStairPlacement(native);
+    return;
+  }
+
+  // In Move mode: click a stair marker to jump to that floor.
+  if (mode === "pan") {
+    const stair = hitStair(native);
+    if (stair) {
+      const idx = state.floors.findIndex((f) => f.id === stair.targetFloorId);
+      if (idx !== -1) goToFloor(idx);
+      return;
+    }
+  }
+
+  if (mode === "measure") {
+    measureLine = { start: native, end: native };
+    isDragging = true;
+    canvas.setPointerCapture(event.pointerId);
+    render();
+    relay({ type: "measure", line: measureLine });
+    return;
+  }
+
+  if (mode === "brush" || mode === "eraser") {
+    pushHistory();
+    activeStroke = {
+      id: uuid(),
+      kind: mode === "eraser" ? "erase" : "paint",
+      shape: state.fog.toolShape,
+      size: state.fog.toolSize,
+      points: [native],
+    };
+    isDragging = true;
+    canvas.setPointerCapture(event.pointerId);
+    render();
+    return;
+  }
+
+  if (mode === "reveal") {
+    const room = [...state.fog.rooms].reverse().find((item) => pointInPolygon(native, item.points));
+    if (room) {
+      pushHistory();
+      room.revealed = !room.revealed;
+      fogDirty = true;
+      renderAndSync();
+    }
+    return;
+  }
+
+  // pan
+  if (!state.imageData) return;
+  isDragging = true;
+  dragStart = { x: event.clientX, y: event.clientY };
+  viewStart = { cx: state.view.cx, cy: state.view.cy };
+  canvas.setPointerCapture(event.pointerId);
+}
+
+function onPointerMove(event) {
+  lastPointer = { clientX: event.clientX, clientY: event.clientY };
+
+  if (!isDragging) {
+    if (!isPlayer && ["brush", "eraser"].includes(mode)) render(); // live tool preview
+    return;
+  }
+
+  if (activeStroke) {
+    const point = toNativePoint(event);
+    const previous = activeStroke.points[activeStroke.points.length - 1];
+    const spacing = Math.max(2, activeStroke.size / 4);
+    addInterpolatedStrokePoints(activeStroke, previous, point, spacing);
+    render();
+    return;
+  }
+
+  if (draggingToken) {
+    const native = toNativePoint(event);
+    draggingToken.x = native.x;
+    draggingToken.y = native.y;
+    render(); // local only; players get the token's final position on drop
+    return;
+  }
+
+  if (measureLine) {
+    measureLine.end = toNativePoint(event);
+    render();
+    relay({ type: "measure", line: measureLine });
+    return;
+  }
+
+  // pan
+  const t = viewTransform();
+  state.view.cx = viewStart.cx - (event.clientX - dragStart.x) / (t.k * t.ms);
+  state.view.cy = viewStart.cy - (event.clientY - dragStart.y) / (t.k * t.ms);
+  if (state.playerView.matchDM) {
+    state.playerView.cx = state.view.cx;
+    state.playerView.cy = state.view.cy;
+    syncPlayerViewControls();
+  }
+  renderAndSyncView();
+}
+
+function onPointerUp(event) {
+  if (isPlayer) {
+    isDragging = false;
+    return;
+  }
+
+  if (activeStroke) {
+    state.fog.strokes.push(activeStroke);
+    stampStroke(activeStroke); // commit incrementally; avoids a full fog rebuild
+    activeStroke = null;
+    renderAndSync();
+  }
+
+  if (draggingToken) {
+    const snapped = snapNative({ x: draggingToken.x, y: draggingToken.y });
+    draggingToken.x = snapped.x;
+    draggingToken.y = snapped.y;
+    draggingToken = null;
+    renderAndSync();
+  }
+
+  if (measureLine && mode === "measure") {
+    measureLine = null;
+    render();
+    relay({ type: "measure", line: null });
+  }
+
+  if (isDragging) {
+    canvas.releasePointerCapture?.(event.pointerId);
+    broadcastState();
+  }
+  isDragging = false;
+}
+
+function onWheel(event) {
+  if (isPlayer || !state.imageData) return;
+  event.preventDefault();
+  const p = clientToCanvasPoint(event);
+  const before = screenToNative(p);
+  const zoom = event.deltaY < 0 ? 1.08 : 0.92;
+  state.view.scale = Math.min(16, Math.max(0.02, state.view.scale * zoom));
+  const t = viewTransform();
+  state.view.cx = before.x - (p.x - t.rect.width / 2) / (t.k * t.ms);
+  state.view.cy = before.y - (p.y - t.rect.height / 2) / (t.k * t.ms);
+  if (state.playerView.matchDM) {
+    state.playerView.scale = state.view.scale;
+    state.playerView.cx = state.view.cx;
+    state.playerView.cy = state.view.cy;
+    syncPlayerViewControls();
+  }
+  renderAndSyncView();
+}
+
+function onDoubleClick(event) {
+  if (isPlayer) {
+    toggleFullscreen();
+    return;
+  }
+  if (mode === "polygon" || mode === "namedPolygon") finishRoom();
+}
+
+function onContextMenu(event) {
+  if (isPlayer) return;
+  event.preventDefault();
+  deleteTokenOrRoom(toNativePoint(event));
+}
+
+function onKeyDown(event) {
+  if (isPlayer) {
+    if (event.key === "f" || event.key === "F") toggleFullscreen();
+    return;
+  }
+
+  if (event.key === "Escape" && isFogRibbonOpen()) {
+    closeFogRibbon();
+    return;
+  }
+  if (event.target.matches("input, button, textarea, select")) return;
+
+  const ctrl = event.ctrlKey || event.metaKey;
+  if (ctrl && event.key.toLowerCase() === "z") {
+    event.preventDefault();
+    if (event.shiftKey) redo();
+    else undo();
+    return;
+  }
+  if (ctrl && event.key.toLowerCase() === "y") {
+    event.preventDefault();
+    redo();
+    return;
+  }
+
+  const drawingPolygon = mode === "polygon" || mode === "namedPolygon";
+  if (event.key === "Enter" && drawingPolygon) {
+    event.preventDefault();
+    finishRoom();
+    return;
+  }
+  if (event.key === "Escape" && drawingPolygon && drawingRoom.length) {
+    event.preventDefault();
+    drawingRoom = [];
+    render();
+    return;
+  }
+
+  const shortcuts = { v: "pan", h: "pan", p: "polygon", n: "namedPolygon", r: "reveal", b: "brush", e: "eraser", t: "token", m: "measure", s: "stair" };
+  const key = event.key.toLowerCase();
+  if (shortcuts[key]) {
+    setMode(shortcuts[key]);
+    return;
+  }
+  if (key === "f") fitMap(true);
+  if (key === "[") adjustBrush(-10);
+  if (key === "]") adjustBrush(10);
+}
+
+function adjustBrush(delta) {
+  if (!["brush", "eraser"].includes(mode)) return;
+  const next = Math.min(Number(controls.brushSize.max), Math.max(Number(controls.brushSize.min), state.fog.toolSize + delta));
+  state.fog.toolSize = next;
+  controls.brushSize.value = next;
+  render();
+}
+
+function finishRoom() {
+  if (isPlayer || drawingRoom.length < 3) return;
+  pushHistory();
+  const room = {
+    id: uuid(),
+    points: drawingRoom.map((point) => ({ ...point })),
+    revealed: false,
+    name: "",
+  };
+  state.fog.rooms.push(room);
+  drawingRoom = [];
+  fogDirty = true;
+  renderAndSync();
+  if (mode === "namedPolygon") {
+    // Defer one tick so the Enter keypress that finished the polygon can't also submit the dialog.
+    setTimeout(() => promptRoomName(room), 0);
+  }
+}
+
+// GM-only: ask for a name for a freshly placed fog area. The name rides along in state
+// (so it survives save/undo) but is only ever drawn on the GM screen.
+function promptRoomName(room) {
+  if (!controls.nameDialog || !controls.roomNameInput) return;
+  controls.roomNameInput.value = room.name || "";
+  controls.nameDialog.returnValue = "";
+  controls.nameDialog.addEventListener(
+    "close",
+    () => {
+      if (controls.nameDialog.returnValue === "save") {
+        room.name = controls.roomNameInput.value.trim();
+      }
+      render();
+      broadcastState();
+    },
+    { once: true },
+  );
+  controls.nameDialog.showModal();
+  controls.roomNameInput.focus();
+  controls.roomNameInput.select();
+}
+
+function addInterpolatedStrokePoints(stroke, from, to, spacing) {
+  const dx = to.x - from.x;
+  const dy = to.y - from.y;
+  const distance = Math.hypot(dx, dy);
+  const steps = Math.max(1, Math.floor(distance / spacing));
+  for (let index = 1; index <= steps; index++) {
+    stroke.points.push({ x: from.x + (dx * index) / steps, y: from.y + (dy * index) / steps });
+  }
+}
+
+/* ----------------------------- misc ----------------------------- */
+
+function loadImage(src, afterLoad) {
+  mapImage = new Image();
+  mapImage.onload = afterLoad;
+  mapImage.src = src;
+}
+
+function loadSplashImage(src, afterLoad) {
+  splashImage = new Image();
+  splashImage.onload = afterLoad;
+  splashImage.src = src;
+}
+
+function toggleFullscreen() {
+  if (document.fullscreenElement) {
+    document.exitFullscreen?.();
+  } else {
+    document.documentElement.requestFullscreen?.();
+  }
+}
+
+function pointInPolygon(point, polygon) {
+  let inside = false;
+  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+    const xi = polygon[i].x;
+    const yi = polygon[i].y;
+    const xj = polygon[j].x;
+    const yj = polygon[j].y;
+    const intersect = yi > point.y !== yj > point.y && point.x < ((xj - xi) * (point.y - yi)) / (yj - yi) + xi;
+    if (intersect) inside = !inside;
+  }
+  return inside;
+}
+
+setup();

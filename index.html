@@ -1,0 +1,344 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Lodestar</title>
+    <link rel="stylesheet" href="styles.css">
+  </head>
+  <body>
+    <div class="start-screen" id="startScreen">
+      <div class="start-inner">
+        <svg class="start-logo" viewBox="0 0 1164 348" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Lodestar">
+          <g transform="translate(-643 -806)">
+            <rect x="709" y="833" width="1042" height="246" fill="#06021C"/>
+            <text fill="#B1C301" font-family="Garamond, 'EB Garamond', 'Adobe Garamond Pro', Georgia, 'Times New Roman', serif" font-weight="700" font-size="165" x="742.149" y="1008">L</text>
+            <text fill="#B1C301" font-family="Garamond, 'EB Garamond', 'Adobe Garamond Pro', Georgia, 'Times New Roman', serif" font-weight="700" font-size="165" x="1068" y="1008">DESTAR</text>
+            <path class="lodestar-star" d="M857 955.5 944.595 946.047 954 858 963.405 946.047 1051 955.5 963.405 964.953 954 1053 944.595 964.953Z" fill="#B1C301" fill-rule="evenodd"/>
+            <path d="M970.124 879.081C1001.59 885.514 1025.89 910.575 1031.36 942.222" stroke="#FFFFFF" stroke-width="6.875" stroke-miterlimit="8" fill="none" fill-rule="evenodd"/>
+            <path d="M93.6243 1.58081C125.089 8.01389 149.394 33.0749 154.862 64.7217" stroke="#FFFFFF" stroke-width="6.875" stroke-miterlimit="8" fill="none" fill-rule="evenodd" transform="matrix(-1 0 0 1 1030.5 877.5)"/>
+            <path d="M936.876 1031.92C905.411 1025.49 881.106 1000.43 875.639 968.778" stroke="#FFFFFF" stroke-width="6.875" stroke-miterlimit="8" fill="none" fill-rule="evenodd"/>
+            <path d="M93.6243 1.58081C125.089 8.01389 149.394 33.0749 154.862 64.7217" stroke="#FFFFFF" stroke-width="6.875" stroke-miterlimit="8" fill="none" fill-rule="evenodd" transform="matrix(1 0 0 -1 875.5 1033.5)"/>
+          </g>
+        </svg>
+        <p class="start-tagline">A battlemap display tool for game masters.</p>
+        <button id="startEnter" class="start-enter" type="button">Enter</button>
+      </div>
+      <p class="start-credit">made by u/UnclePlants</p>
+    </div>
+    <main class="app-shell" data-role="gm">
+      <aside class="gm-panel" aria-label="Game master controls">
+        <div class="brand">
+          <img class="brand-logo" src="Lodestar.svg" alt="Lodestar">
+        </div>
+
+        <section class="control-section">
+          <div class="top-actions">
+            <label class="top-action file-loader" title="Load map image" aria-label="Load map image">
+              <input id="mapUpload" type="file" accept="image/*">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 5h6"/><path d="M19 2v6"/><path d="M21 11.5V19a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h7.5"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/><circle cx="9" cy="9" r="2"/></svg>
+            </label>
+            <button id="loadLibrary" class="top-action empty" type="button" title="My maps" aria-label="My maps">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14.106 5.553a2 2 0 0 0 1.788 0l3.659-1.83A1 1 0 0 1 21 4.619v12.764a1 1 0 0 1-.553.894l-4.553 2.277a2 2 0 0 1-1.788 0l-4.212-2.106a2 2 0 0 0-1.788 0l-3.659 1.83A1 1 0 0 1 3 19.381V6.618a1 1 0 0 1 .553-.894l4.553-2.277a2 2 0 0 1 1.788 0z"/><path d="M15 5.764v15"/><path d="M9 3.236v15"/></svg>
+            </button>
+            <button id="saveSession" class="top-action" type="button" title="Save map" aria-label="Save map">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15.2 3a2 2 0 0 1 1.4.6l3.8 3.8a2 2 0 0 1 .6 1.4V19a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"/><path d="M17 21v-7a1 1 0 0 0-1-1H8a1 1 0 0 0-1 1v7"/><path d="M7 3v4a1 1 0 0 0 1 1h7"/></svg>
+            </button>
+            <button id="openPlayer" class="top-action" type="button" title="Open player display" aria-label="Open player display">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><rect width="20" height="14" x="2" y="3" rx="2"/><line x1="8" x2="16" y1="21" y2="21"/><line x1="12" x2="12" y1="17" y2="21"/></svg>
+            </button>
+          </div>
+        </section>
+
+        <section class="control-section">
+          <div class="section-title">
+            <h2>Splash Screen</h2>
+          </div>
+          <label class="file-loader secondary-loader">
+            <input id="splashUpload" type="file" accept="image/*">
+            <span>Load splash image</span>
+          </label>
+          <p class="hint">When enabled, the player display shows the splash image instead of the map.</p>
+        </section>
+
+        <section class="control-section">
+          <div class="section-title">
+            <h2>Grid</h2>
+            <label class="switch">
+              <input id="gridEnabled" type="checkbox" checked>
+              <span></span>
+            </label>
+          </div>
+          <label>
+            Size
+            <input id="gridSize" type="range" min="20" max="200" value="70">
+          </label>
+          <label>
+            Offset X
+            <input id="gridOffsetX" type="range" min="-100" max="100" value="0">
+          </label>
+          <label>
+            Offset Y
+            <input id="gridOffsetY" type="range" min="-100" max="100" value="0">
+          </label>
+          <div class="inline-fields">
+            <label>
+              Color
+              <input id="gridColor" type="color" value="#000000">
+            </label>
+            <label>
+              Opacity
+              <input id="gridOpacity" type="range" min="0" max="1" step="0.05" value="0.45">
+            </label>
+          </div>
+          <label class="checkbox-row">
+            <input id="gridSnap" type="checkbox" checked>
+            <span>Snap tokens to grid</span>
+          </label>
+        </section>
+
+        <section class="control-section">
+          <div class="section-title">
+            <h2>View</h2>
+            <button id="fitMap" class="ghost-button" type="button">Fit</button>
+          </div>
+          <label>
+            Map image size
+            <input id="mapScale" type="range" min="0.25" max="3" step="0.01" value="1">
+          </label>
+        </section>
+
+        <section class="control-section">
+          <div class="section-title">
+            <h2>Player View</h2>
+            <label class="switch with-label">
+              Follow GM
+              <input id="playerMatchDM" type="checkbox" checked>
+              <span></span>
+            </label>
+          </div>
+          <button id="copyDMView" type="button">Match GM view</button>
+          <label>
+            Zoom
+            <input id="playerZoom" type="range" min="0.05" max="4" step="0.01" value="1">
+          </label>
+          <label>
+            Position X
+            <input id="playerOffsetX" type="range" min="0" max="2000" value="0">
+          </label>
+          <label>
+            Position Y
+            <input id="playerOffsetY" type="range" min="0" max="2000" value="0">
+          </label>
+        </section>
+
+        <section class="control-section">
+          <div class="section-title">
+            <h2>Floors</h2>
+          </div>
+          <label>
+            Floor name
+            <input id="floorName" type="text" maxlength="32" placeholder="e.g. Ground Floor" autocomplete="off">
+          </label>
+          <div class="floor-add-row">
+            <button id="addFloorUp" class="ghost-button" type="button" title="Add a floor above">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
+              Add above
+            </button>
+            <button id="addFloorDown" class="ghost-button" type="button" title="Add a floor below">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
+              Add below
+            </button>
+          </div>
+          <button id="deleteFloor" class="danger-button" type="button" disabled>Delete this floor</button>
+          <p class="hint">Use the ↑ / ↓ arrows in the map area to switch floors.</p>
+        </section>
+
+        <section class="control-section">
+          <div class="section-title">
+            <h2>Map library</h2>
+          </div>
+          <div class="inline-buttons">
+            <button id="exportLibrary" type="button" disabled>Export</button>
+            <label class="file-loader inline-loader">
+              <input id="importLibrary" type="file" accept="application/json,.json">
+              <span>Import</span>
+            </label>
+          </div>
+          <p class="hint">Export saves every map to a JSON file you can back up or move to another machine.</p>
+        </section>
+      </aside>
+
+      <section class="stage-wrap">
+        <p class="mode-hint-bar" id="modeHint">Drag to move the map. Wheel to zoom. Alt+click to ping.</p>
+        <div class="stage-controls">
+          <div class="tool-row">
+            <div class="map-tools" aria-label="Map tools">
+              <button id="panMode" class="tool-button active" type="button" title="Move (V)" aria-label="Move">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2v20"/><path d="m5 9-3 3 3 3"/><path d="m9 5 3-3 3 3"/><path d="m15 19-3 3-3-3"/><path d="m19 9 3 3-3 3"/><path d="M2 12h20"/></svg>
+              </button>
+              <button id="fogToggle" class="tool-button" type="button" title="Fog of war" aria-label="Fog of war tools" aria-haspopup="true">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 14.899A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.5 8.242"/><path d="M16 17H7"/><path d="M17 21H9"/></svg>
+              </button>
+              <button id="tokenMode" class="tool-button" type="button" title="Tokens (T)" aria-label="Tokens">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><line x1="9" y1="8.5" x2="15" y2="8.5"/><line x1="12" y1="8.5" x2="12" y2="15.5"/></svg>
+              </button>
+              <button id="measureMode" class="tool-button" type="button" title="Measure (M)" aria-label="Measure">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21.3 15.3a2.4 2.4 0 0 1 0 3.4l-2.6 2.6a2.4 2.4 0 0 1-3.4 0L2.7 8.7a2.41 2.41 0 0 1 0-3.4l2.6-2.6a2.4 2.4 0 0 1 3.4 0Z"/><path d="m14.5 12.5 2-2"/><path d="m11.5 9.5 2-2"/><path d="m8.5 6.5 2-2"/><path d="m17.5 15.5 2-2"/></svg>
+              </button>
+              <button id="stairMode" class="tool-button" type="button" title="Place stairs (S)" aria-label="Place stairs">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M22 5h-5v5h-5v5h-5v5h-5"/></svg>
+              </button>
+              <button id="fitMapBtn" class="tool-button" type="button" title="Fit to screen (F)" aria-label="Fit to screen">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" x2="14" y1="3" y2="10"/><line x1="3" x2="10" y1="21" y2="14"/></svg>
+              </button>
+              <button id="undoBtn" class="tool-button" type="button" title="Undo (Ctrl+Z)" aria-label="Undo" disabled>
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 5.5 5.5 5.5 5.5 0 0 1-5.5 5.5H11"/></svg>
+              </button>
+              <button id="redoBtn" class="tool-button" type="button" title="Redo (Ctrl+Shift+Z)" aria-label="Redo" disabled>
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 14 5-5-5-5"/><path d="M20 9H9.5A5.5 5.5 0 0 0 4 14.5 5.5 5.5 0 0 0 9.5 20H13"/></svg>
+              </button>
+            </div>
+            <div class="fog-ribbon hidden" id="fogRibbon" role="toolbar" aria-label="Fog of war tools">
+              <button id="polygonMode" class="tool-button" type="button" title="Fog area (P)" aria-label="Fog area">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10.83 2.38a2 2 0 0 1 2.34 0l8 5.74a2 2 0 0 1 .73 2.25l-3.04 9.26a2 2 0 0 1-1.9 1.37H6.04a2 2 0 0 1-1.9-1.37L1.1 10.37a2 2 0 0 1 .73-2.25z"/></svg>
+              </button>
+              <button id="namedPolygonMode" class="tool-button" type="button" title="Named fog area (N)" aria-label="Named fog area">
+                <svg viewBox="0 0 24 24" aria-hidden="true" style="overflow:visible"><path d="M10.83 2.38a2 2 0 0 1 2.34 0l8 5.74a2 2 0 0 1 .73 2.25l-3.04 9.26a2 2 0 0 1-1.9 1.37H6.04a2 2 0 0 1-1.9-1.37L1.1 10.37a2 2 0 0 1 .73-2.25z" fill="none"/><text x="12" y="15.5" text-anchor="middle" font-size="8.5" font-weight="700" fill="currentColor" stroke="none" style="font-family:Inter,sans-serif">Aa</text></svg>
+              </button>
+              <button id="revealMode" class="tool-button" type="button" title="Reveal (R)" aria-label="Reveal">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m21.64 3.64-1.28-1.28a1.21 1.21 0 0 0-1.72 0L2.36 18.64a1.21 1.21 0 0 0 0 1.72l1.28 1.28a1.2 1.2 0 0 0 1.72 0L21.64 5.36a1.2 1.2 0 0 0 0-1.72Z"/><path d="m14 7 3 3"/><path d="M5 6v4"/><path d="M19 14v4"/><path d="M10 2v2"/><path d="M7 8H3"/><path d="M21 16h-4"/><path d="M11 3H9"/></svg>
+              </button>
+              <button id="brushMode" class="tool-button" type="button" title="Paint fog (B)" aria-label="Paint fog">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9.06 11.9 8.07-8.06a2.85 2.85 0 1 1 4.03 4.03l-8.06 8.08"/><path d="M7.07 14.94c-1.66 0-3 1.35-3 3.02 0 1.33-2.5 1.52-2 2.02 1.08 1.1 2.49 2.02 4 2.02 2.2 0 4-1.8 4-4.04a3.01 3.01 0 0 0-3-3.02Z"/></svg>
+              </button>
+              <button id="eraserMode" class="tool-button" type="button" title="Erase fog (E)" aria-label="Erase fog">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 21-4.3-4.3c-1-1-1-2.5 0-3.4l9.6-9.6c1-1 2.5-1 3.4 0l5.6 5.6c1 1 1 2.5 0 3.4L13 21"/><path d="M22 21H7"/><path d="m5 11 9 9"/></svg>
+              </button>
+              <button id="clearFog" class="tool-button" type="button" title="Clear all fog" aria-label="Clear all fog">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>
+              </button>
+            </div>
+          </div>
+
+          <div class="tool-popover hidden" id="brushOptions">
+            <h2>Fog Tool</h2>
+            <label>
+              Tool size
+              <input id="brushSize" type="range" min="10" max="600" value="70">
+            </label>
+            <div class="segmented">
+              <button id="roundShape" class="active" type="button">Round</button>
+              <button id="squareShape" type="button">Square</button>
+            </div>
+            <div class="inline-fields">
+              <label>
+                GM tint
+                <input id="fogTint" type="color" value="#080909">
+              </label>
+              <label>
+                GM opacity
+                <input id="gmFogOpacity" type="range" min="0.05" max="1" step="0.05" value="0.3">
+              </label>
+            </div>
+          </div>
+
+          <div class="tool-popover hidden" id="tokenOptions">
+            <h2>Token</h2>
+            <div class="inline-fields">
+              <label>
+                Color
+                <input id="tokenColor" type="color" value="#d6a94d">
+              </label>
+              <label>
+                Size (cells)
+                <input id="tokenCells" type="range" min="1" max="4" step="1" value="1">
+              </label>
+            </div>
+            <label>
+              Label
+              <input id="tokenLabel" type="text" maxlength="3" placeholder="e.g. G1" autocomplete="off">
+            </label>
+            <p class="hint">Click to drop, drag to move, right-click to remove.</p>
+          </div>
+
+          <div class="player-toggles">
+            <label class="toggle-chip">
+              <input id="splashEnabled" type="checkbox">
+              <span>Splash</span>
+            </label>
+            <label class="toggle-chip">
+              <input id="blackoutEnabled" type="checkbox">
+              <span>Blackout</span>
+            </label>
+          </div>
+        </div>
+
+        <!-- GM floor widget top-right -->
+        <div class="floor-widget" id="floorWidget" aria-label="Floor navigation">
+          <button id="floorUp" class="floor-widget-btn" type="button" title="Go up one floor" aria-label="Go up" disabled>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m18 15-6-6-6 6"/></svg>
+          </button>
+          <span id="floorIndicator" class="floor-widget-label" title="Current floor">1 / 1</span>
+          <button id="floorDown" class="floor-widget-btn" type="button" title="Go down one floor" aria-label="Go down" disabled>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+          </button>
+        </div>
+
+        <!-- Player floor badge top-right (player display only) -->
+        <div class="player-floor-badge" id="playerFloorBadge" hidden></div>
+
+        <button id="playerFullscreen" class="player-fullscreen" type="button" title="Fullscreen (F)" aria-label="Toggle fullscreen">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M21 8V5a2 2 0 0 0-2-2h-3"/><path d="M3 16v3a2 2 0 0 0 2 2h3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/></svg>
+        </button>
+
+        <canvas id="battlemap" aria-label="Battlemap canvas"></canvas>
+        <div class="empty-state" id="emptyState">
+          <strong>No map loaded</strong>
+          <span>Load a local image from the GM panel.</span>
+        </div>
+      </section>
+    </main>
+
+    <dialog id="libraryDialog" class="library-dialog">
+      <form method="dialog">
+        <div class="dialog-head">
+          <h2>Saved Maps</h2>
+          <button value="cancel" type="submit">Close</button>
+        </div>
+        <div id="savedMapList" class="saved-map-list"></div>
+      </form>
+    </dialog>
+
+    <dialog id="nameDialog" class="name-dialog">
+      <form method="dialog">
+        <h2>Name this area</h2>
+        <input id="roomNameInput" type="text" maxlength="40" placeholder="e.g. Throne Room" autocomplete="off">
+        <div class="name-dialog-actions">
+          <button value="save" type="submit" class="save-btn">Save</button>
+          <button value="cancel" type="submit">Skip</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="stairDialog" class="name-dialog">
+      <form method="dialog">
+        <h2>Place staircase</h2>
+        <label>
+          Leads to
+          <select id="stairFloorSelect"></select>
+        </label>
+        <label>
+          Label <span class="hint-inline">(optional, shown on map)</span>
+          <input id="stairLabelInput" type="text" maxlength="16" placeholder="e.g. To Sewers" autocomplete="off">
+        </label>
+        <div class="name-dialog-actions">
+          <button value="place" type="submit" class="save-btn">Place</button>
+          <button value="cancel" type="submit">Cancel</button>
+        </div>
+      </form>
+    </dialog>
+
+    <script src="app.js"></script>
+  </body>
+</html>

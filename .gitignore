@@ -1,0 +1,18 @@
+# OS junk
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editor / IDE
+.vscode/
+.idea/
+*.swp
+*~
+
+# Dev tooling (local preview/server config — not part of the app)
+.claude/
+launch.json
+
+# Logs / temp
+*.log
+tmp/
