@@ -15,10 +15,11 @@ A local-first battlemap display tool for game masters. Cast a map with fog of wa
 ## Features
 
 - **Maps** — load high-resolution map images from local disk; pan and zoom freely.
-- **Player display** — open a second window, drag it to another screen, and cast the map to your players. The player window can go fullscreen.
+- **Player display** — open a second window, drag it to another screen, and cast the map to your players. The player window can go fullscreen, and you can optionally let players pan and zoom their own screen.
 - **Fog of war**
   - Trace polygon areas and click them in reveal mode to show/hide on the player display.
   - Name polygon areas with a GM-only label.
+  - Drag-draw fog shapes (rectangle, square, ellipse, circle, triangle) for quick rooms.
   - Paint or erase fog with a round or square brush of adjustable size.
   - GM sees fog as an adjustable tint/opacity; players see solid black.
 - **Multi-floor** — build multi-level locations; each floor has its own map, fog, tokens, and stairs. Navigate with the on-screen floor widget.
@@ -49,8 +50,9 @@ For anything you want to keep, use **Export** in the GM panel to save your whole
 
 - `V` move · `P` polygon fog · `N` named fog area · `R` reveal · `B` brush · `E` eraser · `T` tokens · `M` measure · `S` stairs
 - `F` fit map · `[` / `]` brush size · `Ctrl+Z` undo · `Ctrl+Shift+Z` redo
-- Polygon mode: click corners, `Enter` to place, `Esc` to cancel
-- `Alt+click` anywhere to ping · right-click a token, polygon, or stair to delete it
+- **Middle-mouse drag** pans the map in any tool, so you never have to switch tools just to reposition.
+- Polygon mode: click corners, `Enter` to place, `Esc` to cancel. `Ctrl+Z` or `Backspace` removes just the last point you placed.
+- `Alt+click` anywhere to ping · right-click a token, fog area, or stair to delete it
 
 ## Coordinate model
 

@@ -66,10 +66,20 @@ const controls = {
   revealMode: document.getElementById("revealMode"),
   brushMode: document.getElementById("brushMode"),
   eraserMode: document.getElementById("eraserMode"),
+  stampMode: document.getElementById("stampMode"),
   tokenMode: document.getElementById("tokenMode"),
   measureMode: document.getElementById("measureMode"),
   roundShape: document.getElementById("roundShape"),
   squareShape: document.getElementById("squareShape"),
+  brushSizeRow: document.getElementById("brushSizeRow"),
+  brushShapeRow: document.getElementById("brushShapeRow"),
+  stampShapeRow: document.getElementById("stampShapeRow"),
+  fogToolHeading: document.getElementById("fogToolHeading"),
+  stampRect: document.getElementById("stampRect"),
+  stampSquare: document.getElementById("stampSquare"),
+  stampEllipse: document.getElementById("stampEllipse"),
+  stampCircle: document.getElementById("stampCircle"),
+  stampTriangle: document.getElementById("stampTriangle"),
   clearFog: document.getElementById("clearFog"),
   undo: document.getElementById("undoBtn"),
   redo: document.getElementById("redoBtn"),
@@ -77,6 +87,7 @@ const controls = {
   tokenOptions: document.getElementById("tokenOptions"),
   fitMap: document.getElementById("fitMap"),
   playerMatchDM: document.getElementById("playerMatchDM"),
+  playerInteractive: document.getElementById("playerInteractive"),
   copyDMView: document.getElementById("copyDMView"),
   playerZoom: document.getElementById("playerZoom"),
   playerOffsetX: document.getElementById("playerOffsetX"),
@@ -142,13 +153,14 @@ const state = {
     strokes: [],
     toolSize: 70,
     toolShape: "round",
+    stampShape: "rectangle",
     gmColor: "#080909",
     gmOpacity: DEFAULT_GM_FOG_OPACITY,
   },
   tokens: [],
   stairs: [],
   view: { scale: 1, cx: 0, cy: 0 },
-  playerView: { matchDM: true, scale: 1, cx: 0, cy: 0 },
+  playerView: { matchDM: true, interactive: false, scale: 1, cx: 0, cy: 0 },
   currentFloorId: INITIAL_FLOOR_ID,
   floors: [makeFloor(INITIAL_FLOOR_ID)],
   floorPosition: 1, // player-side display only
@@ -160,6 +172,7 @@ let splashImage = new Image();
 let mode = "pan";
 let drawingRoom = [];
 let activeStroke = null;
+let stampDraft = null; // {shape, start, end} preview while drag-drawing a fog shape
 let isDragging = false;
 let dragStart = { x: 0, y: 0 };
 let viewStart = { cx: 0, cy: 0 };
@@ -241,6 +254,18 @@ function setupStartScreen() {
   window.addEventListener("keydown", onStartKey);
 }
 
+// The player screen hides the cursor for a clean display, but that also hides the
+// fullscreen button. Reveal both whenever the mouse moves, then fade out after a pause.
+function setupPlayerCursor() {
+  let timer = 0;
+  const hide = () => shell.classList.remove("cursor-active");
+  window.addEventListener("mousemove", () => {
+    shell.classList.add("cursor-active");
+    clearTimeout(timer);
+    timer = setTimeout(hide, 2500);
+  });
+}
+
 function setup() {
   shell.dataset.role = isPlayer ? "player" : "gm";
   setupStartScreen();
@@ -264,6 +289,10 @@ function setup() {
   watchCanvasSize();
   window.addEventListener("keydown", onKeyDown);
 
+  // Suppress the middle-click autoscroll widget so middle-drag can pan instead.
+  canvas.addEventListener("mousedown", (event) => {
+    if (event.button === 1) event.preventDefault();
+  });
   canvas.addEventListener("pointerdown", onPointerDown);
   canvas.addEventListener("pointermove", onPointerMove);
   canvas.addEventListener("pointerup", onPointerUp);
@@ -274,6 +303,7 @@ function setup() {
 
   if (isPlayer) {
     controls.playerFullscreen?.addEventListener("click", toggleFullscreen);
+    setupPlayerCursor();
   }
 
   resizeCanvas();
@@ -347,6 +377,7 @@ function bindControls() {
   controls.revealMode.addEventListener("click", () => setMode("reveal"));
   controls.brushMode.addEventListener("click", () => setMode("brush"));
   controls.eraserMode.addEventListener("click", () => setMode("eraser"));
+  controls.stampMode?.addEventListener("click", () => setMode("stamp"));
   controls.tokenMode.addEventListener("click", () => setMode("token"));
   controls.measureMode.addEventListener("click", () => setMode("measure"));
   controls.stairMode?.addEventListener("click", () => setMode("stair"));
@@ -367,6 +398,11 @@ function bindControls() {
   });
   controls.roundShape.addEventListener("click", () => setToolShape("round"));
   controls.squareShape.addEventListener("click", () => setToolShape("square"));
+  controls.stampRect?.addEventListener("click", () => setStampShape("rectangle"));
+  controls.stampSquare?.addEventListener("click", () => setStampShape("square"));
+  controls.stampEllipse?.addEventListener("click", () => setStampShape("ellipse"));
+  controls.stampCircle?.addEventListener("click", () => setStampShape("circle"));
+  controls.stampTriangle?.addEventListener("click", () => setStampShape("triangle"));
   controls.clearFog.addEventListener("click", () => {
     clearFog();
     closeFogRibbon();
@@ -391,6 +427,21 @@ function bindControls() {
       state.playerView.cy = state.view.cy;
     }
     syncPlayerViewControls();
+    renderAndSync();
+  });
+  controls.playerInteractive?.addEventListener("input", () => {
+    state.playerView.interactive = controls.playerInteractive.checked;
+    if (state.playerView.interactive) {
+      // Hand control to the player window: stop following the GM and seed the player
+      // view with the GM's current framing so it doesn't jump.
+      state.playerView.matchDM = false;
+      controls.playerMatchDM.checked = false;
+      state.playerView.scale = state.view.scale;
+      state.playerView.cx = state.view.cx;
+      state.playerView.cy = state.view.cy;
+      syncPlayerViewControls();
+    }
+    updatePlayerViewControlsEnabled();
     renderAndSync();
   });
   controls.copyDMView.addEventListener("click", () => snapPlayerViewToGM(true));
@@ -769,7 +820,9 @@ function loadSnapshot(snapshot) {
     state.fog.gmColor = snapshot.fog.gmColor || "#080909";
     state.fog.gmOpacity = snapshot.fog.gmOpacity ?? DEFAULT_GM_FOG_OPACITY;
   }
-  Object.assign(state.playerView, snapshot.playerView || { matchDM: true, ...(snapshot.view || {}) });
+  const incomingPlayerView = snapshot.playerView || { matchDM: true, ...(snapshot.view || {}) };
+  if (isPlayer) applyIncomingPlayerView(incomingPlayerView);
+  else Object.assign(state.playerView, incomingPlayerView);
 
   if (Array.isArray(snapshot.floors) && snapshot.floors.length) {
     // Full load (library / GM): the floor stack is authoritative.
@@ -839,8 +892,30 @@ function applyAssets(message) {
 
 function applyRemoteView(message) {
   if (message.view) Object.assign(state.view, message.view);
-  if (message.playerView) Object.assign(state.playerView, message.playerView);
+  if (message.playerView) {
+    if (isPlayer) applyIncomingPlayerView(message.playerView);
+    else Object.assign(state.playerView, message.playerView);
+  }
   render();
+}
+
+// Player side: reconcile an incoming playerView from the GM with local interaction.
+// While the player is driving their own view, we keep our local framing and ignore the
+// GM's; we only adopt the GM's framing when interaction is off. Entering interactive mode
+// seeds the local view from whatever is currently displayed so there's no jump.
+function applyIncomingPlayerView(pv) {
+  const enteringInteractive = pv.interactive && !state.playerView.interactive;
+  if (enteringInteractive) {
+    const cur = activeView();
+    state.playerView.scale = cur.scale;
+    state.playerView.cx = cur.cx;
+    state.playerView.cy = cur.cy;
+    state.playerView.interactive = true;
+    state.playerView.matchDM = false;
+    return;
+  }
+  if (state.playerView.interactive && pv.interactive) return; // stay in local control
+  Object.assign(state.playerView, pv); // following the GM
 }
 
 function syncControlsFromState() {
@@ -859,6 +934,7 @@ function syncControlsFromState() {
   controls.fogTint.value = state.fog.gmColor;
   controls.gmFogOpacity.value = state.fog.gmOpacity;
   setToolShape(state.fog.toolShape);
+  setStampShape(state.fog.stampShape || "rectangle");
   updatePlayerSliderRanges();
   syncPlayerViewControls();
 }
@@ -875,10 +951,22 @@ function updatePlayerSliderRanges() {
 
 function syncPlayerViewControls() {
   controls.playerMatchDM.checked = state.playerView.matchDM;
+  if (controls.playerInteractive) controls.playerInteractive.checked = state.playerView.interactive;
   const v = state.playerView.matchDM ? state.view : state.playerView;
   controls.playerZoom.value = v.scale;
   controls.playerOffsetX.value = v.cx;
   controls.playerOffsetY.value = v.cy;
+  updatePlayerViewControlsEnabled();
+}
+
+// While the player drives their own view, the GM's follow/zoom/offset controls no
+// longer affect the player screen, so they're disabled to avoid confusion.
+function updatePlayerViewControlsEnabled() {
+  if (isPlayer) return;
+  const lock = state.playerView.interactive;
+  [controls.playerMatchDM, controls.copyDMView, controls.playerZoom, controls.playerOffsetX, controls.playerOffsetY].forEach((el) => {
+    if (el) el.disabled = lock;
+  });
 }
 
 // One-shot copy of the GM's current framing onto the player view. Intentionally does
@@ -1198,7 +1286,9 @@ function renderAndSyncView() {
 
 /* ----------------------------- modes / tools ----------------------------- */
 
-const FOG_MODES = ["polygon", "namedPolygon", "reveal", "brush", "eraser"];
+const FOG_MODES = ["polygon", "namedPolygon", "reveal", "brush", "eraser", "stamp"];
+// Modes that use the shared fog-options popover (tint/opacity, plus tool-specific rows).
+const FOG_TOOL_MODES = ["brush", "eraser", "stamp", "polygon", "namedPolygon"];
 
 function isFogRibbonOpen() {
   return controls.fogRibbon && !controls.fogRibbon.classList.contains("hidden");
@@ -1216,26 +1306,51 @@ function toggleFogRibbon() {
 function setMode(nextMode) {
   mode = nextMode;
   closeFogRibbon();
+  drawingRoom = [];
+  stampDraft = null;
   controls.fogToggle?.classList.toggle("active", FOG_MODES.includes(nextMode));
-  [controls.panMode, controls.polygonMode, controls.namedPolygonMode, controls.revealMode, controls.brushMode, controls.eraserMode, controls.tokenMode, controls.measureMode, controls.stairMode].forEach(
+  [controls.panMode, controls.polygonMode, controls.namedPolygonMode, controls.revealMode, controls.brushMode, controls.eraserMode, controls.stampMode, controls.tokenMode, controls.measureMode, controls.stairMode].forEach(
     (button) => button?.classList.remove("active"),
   );
   controls[`${nextMode}Mode`]?.classList.add("active");
   controls.modeHint.textContent = {
-    pan: "Drag to move the map. Wheel to zoom. Alt+click to ping.",
-    polygon: "Click room corners, then press Enter to place the polygon.",
-    namedPolygon: "Click corners, then press Enter to place and name the area (GM-only label).",
-    reveal: "Click a polygon fog section to reveal or hide it for players.",
+    pan: "Drag to move the map. Middle-drag to pan in any tool. Wheel to zoom. Alt+click to ping.",
+    polygon: "Click corners, Enter to place. Ctrl+Z or Backspace removes the last point.",
+    namedPolygon: "Click corners, Enter to place and name (GM-only label). Ctrl+Z removes the last point.",
+    reveal: "Click a fog area to reveal or hide it for players.",
     brush: "Drag to paint fog. Alt+click to ping.",
     eraser: "Drag over fog to erase it.",
+    stamp: "Drag to draw a fog shape. Right-click an area to remove it.",
     token: "Click to drop a token, drag to move it, right-click to remove it.",
     measure: "Drag to measure distance across the grid.",
     stair: "Click to place a staircase. Right-click a stair to remove it.",
   }[nextMode] ?? "";
-  controls.brushOptions.classList.toggle("hidden", !["brush", "eraser"].includes(nextMode));
+
+  // Shared fog-options popover: shown for all fog tools, with tool-specific rows toggled.
+  const showFogOptions = FOG_TOOL_MODES.includes(nextMode);
+  controls.brushOptions.classList.toggle("hidden", !showFogOptions);
+  const isBrush = nextMode === "brush" || nextMode === "eraser";
+  controls.brushSizeRow?.classList.toggle("hidden", !isBrush);
+  controls.brushShapeRow?.classList.toggle("hidden", !isBrush);
+  controls.stampShapeRow?.classList.toggle("hidden", nextMode !== "stamp");
+  if (controls.fogToolHeading) {
+    controls.fogToolHeading.textContent =
+      nextMode === "stamp" ? "Fog Shape" : isBrush ? "Fog Brush" : "Fog Area";
+  }
   controls.tokenOptions.classList.toggle("hidden", nextMode !== "token");
   measureLine = null;
   render();
+}
+
+function setStampShape(shape) {
+  state.fog.stampShape = shape;
+  [
+    ["rectangle", controls.stampRect],
+    ["square", controls.stampSquare],
+    ["ellipse", controls.stampEllipse],
+    ["circle", controls.stampCircle],
+    ["triangle", controls.stampTriangle],
+  ].forEach(([name, button]) => button?.classList.toggle("active", shape === name));
 }
 
 function setToolShape(shape) {
@@ -1395,6 +1510,14 @@ function toNativePoint(event) {
   return screenToNative(clientToCanvasPoint(event));
 }
 
+// Pointer capture keeps a drag tracking even if the cursor leaves the canvas. Guarded
+// because a capture can legitimately fail (e.g. the pointer was already released).
+function capturePointer(pointerId) {
+  try {
+    canvas.setPointerCapture(pointerId);
+  } catch {}
+}
+
 /* ----------------------------- render ----------------------------- */
 
 function render() {
@@ -1437,6 +1560,7 @@ function render() {
   drawTokens();
   if (!isPlayer) drawStairs(); // stairs are a GM-only navigation aid
   if (!isPlayer) drawDraftRoom();
+  if (!isPlayer) drawStampDraft();
   if (measureLine) drawMeasureLine();
   if (!isPlayer && ["brush", "eraser"].includes(mode) && state.imageData) {
     drawToolPreview(screenToNative(clientToCanvasPoint(lastPointer)));
@@ -1658,6 +1782,20 @@ function drawDraftRoom() {
   ctx.restore();
 }
 
+function drawStampDraft() {
+  if (!stampDraft) return;
+  const points = stampPolygon(stampDraft.shape, stampDraft.start, stampDraft.end);
+  if (!points) return;
+  ctx.save();
+  ctx.fillStyle = "rgba(127, 182, 166, 0.18)";
+  ctx.strokeStyle = "rgba(127, 182, 166, 0.95)";
+  ctx.lineWidth = 2 / (curK * curMs);
+  drawPolygon(points);
+  ctx.fill();
+  ctx.stroke();
+  ctx.restore();
+}
+
 function drawPolygon(points) {
   if (!points.length) return;
   ctx.beginPath();
@@ -1851,14 +1989,45 @@ function drawMeasureLabel() {
 /* ----------------------------- pointer input ----------------------------- */
 
 function onPointerDown(event) {
-  if (isPlayer) return; // floors/stairs are GM-driven; the player display is view-only
   lastPointer = { clientX: event.clientX, clientY: event.clientY };
+
+  // Player display: view-only, except optional local pan when the GM enables interaction.
+  if (isPlayer) {
+    if (state.playerView.interactive && event.button === 2 && state.imageData) {
+      event.preventDefault();
+      isDragging = true;
+      dragStart = { x: event.clientX, y: event.clientY };
+      viewStart = { cx: state.playerView.cx, cy: state.playerView.cy };
+      capturePointer(event.pointerId);
+    }
+    return;
+  }
+
+  // Middle-mouse drags the map in ANY tool, so you can reposition the view without
+  // switching tools or accidentally dropping fog.
+  if (event.button === 1 && state.imageData) {
+    event.preventDefault();
+    isDragging = true;
+    dragStart = { x: event.clientX, y: event.clientY };
+    viewStart = { cx: state.view.cx, cy: state.view.cy };
+    capturePointer(event.pointerId);
+    return;
+  }
+
   if (event.button === 2) return; // right-click handled by contextmenu
 
   const native = toNativePoint(event);
 
   if (event.altKey) {
     triggerPing(native);
+    return;
+  }
+
+  if (mode === "stamp") {
+    stampDraft = { shape: state.fog.stampShape, start: native, end: native };
+    isDragging = true;
+    capturePointer(event.pointerId);
+    render();
     return;
   }
 
@@ -1874,7 +2043,7 @@ function onPointerDown(event) {
       pushHistory();
       draggingToken = hit;
       isDragging = true;
-      canvas.setPointerCapture(event.pointerId);
+      capturePointer(event.pointerId);
     } else {
       addToken(native);
     }
@@ -1903,7 +2072,7 @@ function onPointerDown(event) {
   if (mode === "measure") {
     measureLine = { start: native, end: native };
     isDragging = true;
-    canvas.setPointerCapture(event.pointerId);
+    capturePointer(event.pointerId);
     render();
     relay({ type: "measure", line: measureLine });
     return;
@@ -1919,7 +2088,7 @@ function onPointerDown(event) {
       points: [native],
     };
     isDragging = true;
-    canvas.setPointerCapture(event.pointerId);
+    capturePointer(event.pointerId);
     render();
     return;
   }
@@ -1940,14 +2109,31 @@ function onPointerDown(event) {
   isDragging = true;
   dragStart = { x: event.clientX, y: event.clientY };
   viewStart = { cx: state.view.cx, cy: state.view.cy };
-  canvas.setPointerCapture(event.pointerId);
+  capturePointer(event.pointerId);
 }
 
 function onPointerMove(event) {
   lastPointer = { clientX: event.clientX, clientY: event.clientY };
 
+  // Player display: only local pan (when enabled) is possible here.
+  if (isPlayer) {
+    if (isDragging && state.playerView.interactive) {
+      const t = viewTransform();
+      state.playerView.cx = viewStart.cx - (event.clientX - dragStart.x) / (t.k * t.ms);
+      state.playerView.cy = viewStart.cy - (event.clientY - dragStart.y) / (t.k * t.ms);
+      render();
+    }
+    return;
+  }
+
   if (!isDragging) {
-    if (!isPlayer && ["brush", "eraser"].includes(mode)) render(); // live tool preview
+    if (["brush", "eraser"].includes(mode)) render(); // live tool preview
+    return;
+  }
+
+  if (stampDraft) {
+    stampDraft.end = toNativePoint(event);
+    render();
     return;
   }
 
@@ -1993,6 +2179,19 @@ function onPointerUp(event) {
     return;
   }
 
+  if (stampDraft) {
+    const points = stampPolygon(stampDraft.shape, stampDraft.start, stampDraft.end);
+    stampDraft = null;
+    if (points) {
+      pushHistory();
+      state.fog.rooms.push({ id: uuid(), points, revealed: false, name: "" });
+      fogDirty = true;
+      renderAndSync();
+    } else {
+      render();
+    }
+  }
+
   if (activeStroke) {
     state.fog.strokes.push(activeStroke);
     stampStroke(activeStroke); // commit incrementally; avoids a full fog rebuild
@@ -2022,7 +2221,23 @@ function onPointerUp(event) {
 }
 
 function onWheel(event) {
-  if (isPlayer || !state.imageData) return;
+  if (!state.imageData) return;
+
+  // Player display: local zoom about the cursor, only when the GM enabled interaction.
+  if (isPlayer) {
+    if (!state.playerView.interactive) return;
+    event.preventDefault();
+    const p = clientToCanvasPoint(event);
+    const before = screenToNative(p);
+    const zoom = event.deltaY < 0 ? 1.08 : 0.92;
+    state.playerView.scale = Math.min(16, Math.max(0.02, state.playerView.scale * zoom));
+    const t = viewTransform();
+    state.playerView.cx = before.x - (p.x - t.rect.width / 2) / (t.k * t.ms);
+    state.playerView.cy = before.y - (p.y - t.rect.height / 2) / (t.k * t.ms);
+    render();
+    return;
+  }
+
   event.preventDefault();
   const p = clientToCanvasPoint(event);
   const before = screenToNative(p);
@@ -2049,7 +2264,10 @@ function onDoubleClick(event) {
 }
 
 function onContextMenu(event) {
-  if (isPlayer) return;
+  if (isPlayer) {
+    if (state.playerView.interactive) event.preventDefault(); // right-drag pans instead
+    return;
+  }
   event.preventDefault();
   deleteTokenOrRoom(toNativePoint(event));
 }
@@ -2064,11 +2282,19 @@ function onKeyDown(event) {
     closeFogRibbon();
     return;
   }
-  if (event.target.matches("input, button, textarea, select")) return;
+  if (event.target?.matches?.("input, button, textarea, select")) return;
 
+  const drawingPolygon = mode === "polygon" || mode === "namedPolygon";
   const ctrl = event.ctrlKey || event.metaKey;
   if (ctrl && event.key.toLowerCase() === "z") {
     event.preventDefault();
+    // While placing a polygon, Ctrl+Z removes just the last point you dropped,
+    // so a single misclick doesn't scrap the whole shape (or earlier committed work).
+    if (!event.shiftKey && drawingPolygon && drawingRoom.length) {
+      drawingRoom.pop();
+      render();
+      return;
+    }
     if (event.shiftKey) redo();
     else undo();
     return;
@@ -2079,7 +2305,13 @@ function onKeyDown(event) {
     return;
   }
 
-  const drawingPolygon = mode === "polygon" || mode === "namedPolygon";
+  // Backspace also removes the last placed polygon point (intuitive while drawing).
+  if ((event.key === "Backspace" || event.key === "Delete") && drawingPolygon && drawingRoom.length) {
+    event.preventDefault();
+    drawingRoom.pop();
+    render();
+    return;
+  }
   if (event.key === "Enter" && drawingPolygon) {
     event.preventDefault();
     finishRoom();
@@ -2150,6 +2382,55 @@ function promptRoomName(room) {
   controls.nameDialog.showModal();
   controls.roomNameInput.focus();
   controls.roomNameInput.select();
+}
+
+// Build a polygon (in native coords) for a drag-drawn fog stamp. Shapes become regular
+// rooms, so they reveal, get outlines/names, undo, and delete just like polygon areas.
+// "square" and "circle" force an equal-sided bounding box following the drag direction.
+function stampPolygon(shape, a, b) {
+  let x0 = Math.min(a.x, b.x);
+  let y0 = Math.min(a.y, b.y);
+  let x1 = Math.max(a.x, b.x);
+  let y1 = Math.max(a.y, b.y);
+  if (shape === "square" || shape === "circle") {
+    const side = Math.max(x1 - x0, y1 - y0);
+    const sx = b.x >= a.x ? 1 : -1;
+    const sy = b.y >= a.y ? 1 : -1;
+    x0 = Math.min(a.x, a.x + sx * side);
+    x1 = Math.max(a.x, a.x + sx * side);
+    y0 = Math.min(a.y, a.y + sy * side);
+    y1 = Math.max(a.y, a.y + sy * side);
+  }
+  const w = x1 - x0;
+  const h = y1 - y0;
+  if (w < 4 || h < 4) return null; // ignore stray clicks
+  if (shape === "rectangle" || shape === "square") {
+    return [
+      { x: x0, y: y0 },
+      { x: x1, y: y0 },
+      { x: x1, y: y1 },
+      { x: x0, y: y1 },
+    ];
+  }
+  if (shape === "triangle") {
+    return [
+      { x: (x0 + x1) / 2, y: y0 },
+      { x: x1, y: y1 },
+      { x: x0, y: y1 },
+    ];
+  }
+  // ellipse / circle, approximated as a 64-gon
+  const cx = (x0 + x1) / 2;
+  const cy = (y0 + y1) / 2;
+  const rx = w / 2;
+  const ry = h / 2;
+  const points = [];
+  const segments = 64;
+  for (let i = 0; i < segments; i++) {
+    const angle = (i / segments) * Math.PI * 2;
+    points.push({ x: cx + rx * Math.cos(angle), y: cy + ry * Math.sin(angle) });
+  }
+  return points;
 }
 
 function addInterpolatedStrokePoints(stroke, from, to, spacing) {
