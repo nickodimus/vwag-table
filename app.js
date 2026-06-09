@@ -58,6 +58,9 @@ const controls = {
   tokenColor: document.getElementById("tokenColor"),
   tokenCells: document.getElementById("tokenCells"),
   tokenLabel: document.getElementById("tokenLabel"),
+  tokenImage: document.getElementById("tokenImage"),
+  tokenImagePreview: document.getElementById("tokenImagePreview"),
+  tokenImageClear: document.getElementById("tokenImageClear"),
   panMode: document.getElementById("panMode"),
   fogToggle: document.getElementById("fogToggle"),
   fogRibbon: document.getElementById("fogRibbon"),
@@ -173,6 +176,9 @@ let mode = "pan";
 let drawingRoom = [];
 let activeStroke = null;
 let stampDraft = null; // {shape, start, end} preview while drag-drawing a fog shape
+let selectedToken = null; // token highlighted in Move mode for arrow-key nudging (GM only)
+let tokenImageData = ""; // image applied to newly placed tokens (data URL), authoring default
+const tokenImageCache = new Map(); // data URL -> HTMLImageElement, so token art draws each frame
 let isDragging = false;
 let dragStart = { x: 0, y: 0 };
 let viewStart = { cx: 0, cy: 0 };
@@ -403,6 +409,8 @@ function bindControls() {
   controls.stampEllipse?.addEventListener("click", () => setStampShape("ellipse"));
   controls.stampCircle?.addEventListener("click", () => setStampShape("circle"));
   controls.stampTriangle?.addEventListener("click", () => setStampShape("triangle"));
+  controls.tokenImage?.addEventListener("change", loadTokenImage);
+  controls.tokenImageClear?.addEventListener("click", clearTokenImage);
   controls.clearFog.addEventListener("click", () => {
     clearFog();
     closeFogRibbon();
@@ -1002,6 +1010,7 @@ function captureCurrentFloor() {
 
 // Promote a floor record into the active state fields.
 function applyFloor(floor) {
+  selectedToken = null; // tokens array is about to be replaced
   state.currentFloorId = floor.id;
   state.imageId = floor.imageId || "";
   state.imageData = floor.imageData || "";
@@ -1308,13 +1317,14 @@ function setMode(nextMode) {
   closeFogRibbon();
   drawingRoom = [];
   stampDraft = null;
+  selectedToken = null;
   controls.fogToggle?.classList.toggle("active", FOG_MODES.includes(nextMode));
   [controls.panMode, controls.polygonMode, controls.namedPolygonMode, controls.revealMode, controls.brushMode, controls.eraserMode, controls.stampMode, controls.tokenMode, controls.measureMode, controls.stairMode].forEach(
     (button) => button?.classList.remove("active"),
   );
   controls[`${nextMode}Mode`]?.classList.add("active");
   controls.modeHint.textContent = {
-    pan: "Drag to move the map. Middle-drag to pan in any tool. Wheel to zoom. Alt+click to ping.",
+    pan: "Drag to move the map. Click a token to select it, then nudge it with the arrow keys. Middle-drag pans in any tool. Wheel to zoom. Alt+click to ping.",
     polygon: "Click corners, Enter to place. Ctrl+Z or Backspace removes the last point.",
     namedPolygon: "Click corners, Enter to place and name (GM-only label). Ctrl+Z removes the last point.",
     reveal: "Click a fog area to reveal or hide it for players.",
@@ -1815,24 +1825,52 @@ function tokenRadius(token) {
 }
 
 function drawTokens() {
+  const lineW = Math.max(1, 2 / (curK * curMs));
   state.tokens.forEach((token) => {
     const r = tokenRadius(token);
     ctx.save();
-    ctx.beginPath();
-    ctx.arc(token.x, token.y, r, 0, Math.PI * 2);
-    ctx.fillStyle = token.color || "#d6a94d";
-    ctx.globalAlpha = 0.95;
-    ctx.fill();
-    ctx.globalAlpha = 1;
-    ctx.lineWidth = Math.max(1, 2 / (curK * curMs));
-    ctx.strokeStyle = "rgba(0,0,0,0.65)";
-    ctx.stroke();
-    if (token.label) {
-      ctx.fillStyle = "#0c0d0d";
-      ctx.textAlign = "center";
-      ctx.textBaseline = "middle";
-      ctx.font = `700 ${Math.round(r)}px Inter, sans-serif`;
-      ctx.fillText(String(token.label).slice(0, 3), token.x, token.y);
+    const img = getTokenImage(token.image);
+    if (img && img.complete && img.naturalWidth) {
+      // Token art: cover-fit the image into the circular token and ring it.
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(token.x, token.y, r, 0, Math.PI * 2);
+      ctx.clip();
+      const scale = Math.max((2 * r) / img.naturalWidth, (2 * r) / img.naturalHeight);
+      const w = img.naturalWidth * scale;
+      const h = img.naturalHeight * scale;
+      ctx.drawImage(img, token.x - w / 2, token.y - h / 2, w, h);
+      ctx.restore();
+      ctx.beginPath();
+      ctx.arc(token.x, token.y, r, 0, Math.PI * 2);
+      ctx.lineWidth = lineW;
+      ctx.strokeStyle = "rgba(0,0,0,0.65)";
+      ctx.stroke();
+    } else {
+      ctx.beginPath();
+      ctx.arc(token.x, token.y, r, 0, Math.PI * 2);
+      ctx.fillStyle = token.color || "#d6a94d";
+      ctx.globalAlpha = 0.95;
+      ctx.fill();
+      ctx.globalAlpha = 1;
+      ctx.lineWidth = lineW;
+      ctx.strokeStyle = "rgba(0,0,0,0.65)";
+      ctx.stroke();
+      if (token.label) {
+        ctx.fillStyle = "#0c0d0d";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.font = `700 ${Math.round(r)}px Inter, sans-serif`;
+        ctx.fillText(String(token.label).slice(0, 3), token.x, token.y);
+      }
+    }
+    // Selection highlight (GM only): an accent ring around the active token.
+    if (!isPlayer && token === selectedToken) {
+      ctx.beginPath();
+      ctx.arc(token.x, token.y, r + 3 / (curK * curMs), 0, Math.PI * 2);
+      ctx.lineWidth = Math.max(1.5, 3 / (curK * curMs));
+      ctx.strokeStyle = "#b1c301";
+      ctx.stroke();
     }
     ctx.restore();
   });
@@ -1867,7 +1905,73 @@ function addToken(native) {
     cells: Number(controls.tokenCells?.value) || 1,
     color: controls.tokenColor?.value || "#d6a94d",
     label: controls.tokenLabel?.value?.trim() || "",
+    image: tokenImageData || "",
   });
+  renderAndSync();
+}
+
+// Token art is loaded once per data URL and cached; the image draws on every frame.
+function getTokenImage(src) {
+  if (!src) return null;
+  let img = tokenImageCache.get(src);
+  if (!img) {
+    img = new Image();
+    img.onload = render; // redraw once the art is decoded
+    img.src = src;
+    tokenImageCache.set(src, img);
+  }
+  return img;
+}
+
+function loadTokenImage(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onerror = () => window.alert("Could not read that image file.");
+  reader.onload = () => {
+    tokenImageData = reader.result;
+    // If a token is selected in Move mode, re-skin it immediately; otherwise this image
+    // becomes the default for newly dropped tokens.
+    if (selectedToken) {
+      pushHistory();
+      selectedToken.image = tokenImageData;
+      renderAndSync();
+    }
+    updateTokenImagePreview();
+  };
+  reader.readAsDataURL(file);
+  event.target.value = ""; // allow re-selecting the same file later
+}
+
+function clearTokenImage() {
+  tokenImageData = "";
+  if (selectedToken && selectedToken.image) {
+    pushHistory();
+    selectedToken.image = "";
+    renderAndSync();
+  }
+  updateTokenImagePreview();
+}
+
+function updateTokenImagePreview() {
+  if (!controls.tokenImagePreview) return;
+  const has = Boolean(tokenImageData);
+  controls.tokenImagePreview.src = has ? tokenImageData : "";
+  controls.tokenImagePreview.classList.toggle("hidden", !has);
+  controls.tokenImageClear?.classList.toggle("hidden", !has);
+}
+
+function nudgeSelectedToken(key) {
+  if (!selectedToken) return;
+  const step = gridCellNative();
+  const delta = { ArrowUp: [0, -1], ArrowDown: [0, 1], ArrowLeft: [-1, 0], ArrowRight: [1, 0] }[key];
+  if (!delta) return;
+  pushHistory();
+  selectedToken.x += delta[0] * step;
+  selectedToken.y += delta[1] * step;
+  const snapped = snapNative(selectedToken);
+  selectedToken.x = snapped.x;
+  selectedToken.y = snapped.y;
   renderAndSync();
 }
 
@@ -1882,6 +1986,7 @@ function deleteTokenOrRoom(native) {
   const token = hitToken(native);
   if (token) {
     pushHistory();
+    if (token === selectedToken) selectedToken = null;
     state.tokens = state.tokens.filter((item) => item !== token);
     renderAndSync();
     return true;
@@ -2059,13 +2164,24 @@ function onPointerDown(event) {
     return;
   }
 
-  // In Move mode: click a stair marker to jump to that floor.
+  // In Move mode: click a token to select it (for arrow-key nudging), or click a stair
+  // marker to jump to that floor. Clicking empty space clears the selection and pans.
   if (mode === "pan") {
+    const token = hitToken(native);
+    if (token) {
+      selectedToken = token;
+      render();
+      return;
+    }
     const stair = hitStair(native);
     if (stair) {
       const idx = state.floors.findIndex((f) => f.id === stair.targetFloorId);
       if (idx !== -1) goToFloor(idx);
       return;
+    }
+    if (selectedToken) {
+      selectedToken = null;
+      render();
     }
   }
 
@@ -2310,6 +2426,21 @@ function onKeyDown(event) {
     event.preventDefault();
     drawingRoom.pop();
     render();
+    return;
+  }
+
+  // A selected token (Move mode) nudges one grid cell per arrow press, snapped to grid.
+  if (selectedToken && ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(event.key)) {
+    event.preventDefault();
+    nudgeSelectedToken(event.key);
+    return;
+  }
+  if (selectedToken && (event.key === "Delete" || event.key === "Backspace")) {
+    event.preventDefault();
+    pushHistory();
+    state.tokens = state.tokens.filter((t) => t !== selectedToken);
+    selectedToken = null;
+    renderAndSync();
     return;
   }
   if (event.key === "Enter" && drawingPolygon) {

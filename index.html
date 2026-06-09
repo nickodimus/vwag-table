@@ -274,7 +274,15 @@
               Label
               <input id="tokenLabel" type="text" maxlength="3" placeholder="e.g. G1" autocomplete="off">
             </label>
-            <p class="hint">Click to drop, drag to move, right-click to remove.</p>
+            <div class="token-image-row">
+              <img id="tokenImagePreview" class="token-image-preview hidden" alt="Token image preview">
+              <label class="file-loader inline-loader token-image-loader">
+                <input id="tokenImage" type="file" accept="image/*">
+                <span>Load image</span>
+              </label>
+              <button id="tokenImageClear" class="hidden" type="button">Clear</button>
+            </div>
+            <p class="hint">Click to drop, drag to move, right-click to remove. In Move mode, click a token to select it, then use the arrow keys to nudge it cell by cell. Loading an image re-skins the selected token, or sets the art for new tokens.</p>
           </div>
 
           <div class="player-toggles">

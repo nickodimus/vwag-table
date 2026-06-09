@@ -642,6 +642,24 @@ input:disabled {
   padding: 0 10px;
 }
 
+.token-image-row {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+}
+
+.token-image-row .inline-loader {
+  flex: 1;
+}
+
+.token-image-preview {
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  height: 36px;
+  object-fit: cover;
+  width: 36px;
+}
+
 .player-fullscreen {
   align-items: center;
   background: rgba(25, 28, 29, 0.6);
