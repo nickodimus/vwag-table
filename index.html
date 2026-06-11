@@ -124,6 +124,10 @@
           </div>
           <button id="copyDMView" type="button">Match GM view</button>
           <label class="checkbox-row">
+            <input id="playerFrameToggle" type="checkbox" checked>
+            <span>Show player frame on GM screen</span>
+          </label>
+          <label class="checkbox-row">
             <input id="playerInteractive" type="checkbox">
             <span>Let players pan &amp; zoom their screen</span>
           </label>
@@ -192,6 +196,9 @@
               </button>
               <button id="tokenMode" class="tool-button" type="button" title="Tokens (T)" aria-label="Tokens">
                 <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><line x1="9" y1="8.5" x2="15" y2="8.5"/><line x1="12" y1="8.5" x2="12" y2="15.5"/></svg>
+              </button>
+              <button id="aoeMode" class="tool-button" type="button" title="Area of effect (A)" aria-label="Area of effect">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/></svg>
               </button>
               <button id="measureMode" class="tool-button" type="button" title="Measure (M)" aria-label="Measure">
                 <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21.3 15.3a2.4 2.4 0 0 1 0 3.4l-2.6 2.6a2.4 2.4 0 0 1-3.4 0L2.7 8.7a2.41 2.41 0 0 1 0-3.4l2.6-2.6a2.4 2.4 0 0 1 3.4 0Z"/><path d="m14.5 12.5 2-2"/><path d="m11.5 9.5 2-2"/><path d="m8.5 6.5 2-2"/><path d="m17.5 15.5 2-2"/></svg>
@@ -290,6 +297,21 @@
             <p class="hint">Click to drop, drag to move, right-click to remove. In Move mode, click a token to select it, then use the arrow keys to nudge it cell by cell. Loading an image re-skins the selected token, or sets the art for new tokens.</p>
           </div>
 
+          <div class="tool-popover hidden" id="aoeOptions">
+            <h2>Area of Effect</h2>
+            <div class="segmented segmented-wrap" id="aoeShapeRow">
+              <button id="aoeCircle" class="active" type="button">Circle</button>
+              <button id="aoeSquare" type="button">Square</button>
+              <button id="aoeCone" type="button">Cone</button>
+              <button id="aoeLine" type="button">Line</button>
+            </div>
+            <label>
+              Color
+              <input id="aoeColor" type="color" value="#e2603a">
+            </label>
+            <p class="hint">Drag on the map to place. Circle and square anchor at the center; cone and line run from the start point. Right-click an area to remove it.</p>
+          </div>
+
           <div class="tool-popover hidden" id="measureOptions">
             <h2>Measure</h2>
             <label>
@@ -322,16 +344,24 @@
           </div>
         </div>
 
-        <!-- GM floor widget top-right -->
-        <div class="floor-widget" id="floorWidget" aria-label="Floor navigation">
-          <button id="floorUp" class="floor-widget-btn" type="button" title="Go up one floor" aria-label="Go up" disabled>
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m18 15-6-6-6 6"/></svg>
+        <!-- GM top-right widgets -->
+        <div class="stage-top-right">
+          <button id="initToggle" class="floor-widget-btn solo-widget" type="button" title="Initiative tracker" aria-label="Initiative tracker">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14.5 17.5 4.5 15 2 4.5 4.5 2 15 4.5l2.5 10z"/><path d="m13 19 6-6"/><path d="m16 16 4 4"/><path d="m19 21 2-2"/></svg>
           </button>
-          <span id="floorIndicator" class="floor-widget-label" title="Current floor">1 / 1</span>
-          <button id="floorDown" class="floor-widget-btn" type="button" title="Go down one floor" aria-label="Go down" disabled>
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
-          </button>
+          <div class="floor-widget" id="floorWidget" aria-label="Floor navigation">
+            <button id="floorUp" class="floor-widget-btn" type="button" title="Go up one floor" aria-label="Go up" disabled>
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m18 15-6-6-6 6"/></svg>
+            </button>
+            <span id="floorIndicator" class="floor-widget-label" title="Current floor">1 / 1</span>
+            <button id="floorDown" class="floor-widget-btn" type="button" title="Go down one floor" aria-label="Go down" disabled>
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+            </button>
+          </div>
         </div>
+
+        <!-- Initiative order overlay (GM always when active; player when shared) -->
+        <div class="initiative-overlay" id="initiativeOverlay" hidden></div>
 
         <!-- Player floor badge top-right (player display only) -->
         <div class="player-floor-badge" id="playerFloorBadge" hidden></div>
@@ -346,6 +376,46 @@
           <span>Load a local image from the GM panel.</span>
         </div>
       </section>
+
+      <aside class="initiative-panel" id="initiativePanel" aria-label="Initiative tracker" hidden>
+        <div class="init-head">
+          <h2>Initiative</h2>
+          <label class="switch with-label" title="Show the turn order on the player display">
+            Players
+            <input id="initShowPlayers" type="checkbox">
+            <span></span>
+          </label>
+          <button id="initClose" class="init-close" type="button" title="Close tracker" aria-label="Close tracker">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+          </button>
+        </div>
+        <div class="init-round">
+          <button id="initPrev" type="button" title="Previous turn" aria-label="Previous turn">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 18-6-6 6-6"/></svg>
+          </button>
+          <span id="initRoundLabel">Round 1</span>
+          <button id="initNext" type="button" title="Next turn" aria-label="Next turn">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 18 6-6-6-6"/></svg>
+          </button>
+          <button id="initReset" type="button" title="Reset to round 1" aria-label="Reset">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
+          </button>
+        </div>
+        <div id="initList" class="init-list"></div>
+        <form id="initAddForm" class="init-add" autocomplete="off">
+          <input id="initName" type="text" placeholder="Name" maxlength="24" required>
+          <div class="init-add-row">
+            <input id="initRoll" type="number" placeholder="Init" min="-10" max="99">
+            <input id="initHp" type="number" placeholder="HP" min="0" max="9999">
+            <select id="initType">
+              <option value="player">Player</option>
+              <option value="npc">NPC</option>
+              <option value="monster">Monster</option>
+            </select>
+          </div>
+          <button type="submit">Add combatant</button>
+        </form>
+      </aside>
     </main>
 
     <dialog id="libraryDialog" class="library-dialog">

@@ -6,6 +6,12 @@ MIT License, reproduced below.
 
 Demo/screenshot artwork is credited separately at the bottom of this file.
 
+## Feature ideas
+
+Thanks to **u/Odd_Maybe2168** on Reddit for sharing their Lodestar experiments, which
+inspired the initiative tracker, the red "player frame" indicator, and the area-of-effect
+tool added in this version.
+
 ---
 
 ## Lucide

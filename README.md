@@ -15,7 +15,9 @@ A local-first battlemap display tool for game masters. Cast a map with fog of wa
 ## Features
 
 - **Maps** — load high-resolution map images from local disk; pan and zoom freely.
-- **Player display** — open a second window, drag it to another screen, and cast the map to your players. The player window can go fullscreen, and you can optionally let players pan and zoom their own screen.
+- **Player display** — open a second window, drag it to another screen, and cast the map to your players. The player window can go fullscreen, and you can optionally let players pan and zoom their own screen. A red frame on the GM screen shows exactly what the players currently see.
+- **Initiative tracker** — a dockable turn-order panel: add players, NPCs, and monsters with initiative and HP, advance turns and rounds, track damage/healing with HP bars, and optionally mirror a compact order overlay onto the player display.
+- **Area of effect** — drop spell areas (circle, square, cone, line) in any color; they show on both displays.
 - **Fog of war**
   - Trace polygon areas and click them in reveal mode to show/hide on the player display.
   - Name polygon areas with a GM-only label.
@@ -48,7 +50,7 @@ For anything you want to keep, use **Export** in the GM panel to save your whole
 
 ## Keyboard shortcuts (GM)
 
-- `V` move · `P` polygon fog · `N` named fog area · `R` reveal · `B` brush · `E` eraser · `T` tokens · `M` measure · `S` stairs
+- `V` move · `P` polygon fog · `N` named fog area · `R` reveal · `B` brush · `E` eraser · `T` tokens · `A` area of effect · `M` measure · `S` stairs
 - `F` fit map · `[` / `]` brush size · `Ctrl+Z` undo · `Ctrl+Shift+Z` redo
 - **Middle-mouse drag** pans the map in any tool, so you never have to switch tools just to reposition.
 - Polygon mode: click corners, `Enter` to place, `Esc` to cancel. `Ctrl+Z` or `Backspace` removes just the last point you placed.

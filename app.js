@@ -76,6 +76,13 @@ const controls = {
   eraserMode: document.getElementById("eraserMode"),
   stampMode: document.getElementById("stampMode"),
   tokenMode: document.getElementById("tokenMode"),
+  aoeMode: document.getElementById("aoeMode"),
+  aoeOptions: document.getElementById("aoeOptions"),
+  aoeCircle: document.getElementById("aoeCircle"),
+  aoeSquare: document.getElementById("aoeSquare"),
+  aoeCone: document.getElementById("aoeCone"),
+  aoeLine: document.getElementById("aoeLine"),
+  aoeColor: document.getElementById("aoeColor"),
   measureMode: document.getElementById("measureMode"),
   measureOptions: document.getElementById("measureOptions"),
   measureUnit: document.getElementById("measureUnit"),
@@ -101,6 +108,7 @@ const controls = {
   fitMap: document.getElementById("fitMap"),
   playerMatchDM: document.getElementById("playerMatchDM"),
   playerInteractive: document.getElementById("playerInteractive"),
+  playerFrameToggle: document.getElementById("playerFrameToggle"),
   copyDMView: document.getElementById("copyDMView"),
   playerZoom: document.getElementById("playerZoom"),
   playerOffsetX: document.getElementById("playerOffsetX"),
@@ -124,6 +132,21 @@ const controls = {
   deleteFloor: document.getElementById("deleteFloor"),
   playerFloorBadge: document.getElementById("playerFloorBadge"),
   fitMapBtn: document.getElementById("fitMapBtn"),
+  initToggle: document.getElementById("initToggle"),
+  initiativePanel: document.getElementById("initiativePanel"),
+  initiativeOverlay: document.getElementById("initiativeOverlay"),
+  initShowPlayers: document.getElementById("initShowPlayers"),
+  initClose: document.getElementById("initClose"),
+  initPrev: document.getElementById("initPrev"),
+  initNext: document.getElementById("initNext"),
+  initReset: document.getElementById("initReset"),
+  initRoundLabel: document.getElementById("initRoundLabel"),
+  initList: document.getElementById("initList"),
+  initAddForm: document.getElementById("initAddForm"),
+  initName: document.getElementById("initName"),
+  initRoll: document.getElementById("initRoll"),
+  initHp: document.getElementById("initHp"),
+  initType: document.getElementById("initType"),
 };
 
 const isPlayer = new URLSearchParams(window.location.search).get("view") === "player";
@@ -147,6 +170,7 @@ function makeFloor(id) {
     strokes: [],
     tokens: [],
     stairs: [],
+    aoes: [],
     view: { scale: 1, cx: 0, cy: 0 },
   };
 }
@@ -172,6 +196,10 @@ const state = {
   },
   tokens: [],
   stairs: [],
+  aoes: [], // area-of-effect markers (spell areas), visible to players
+  // Initiative tracker: a turn order shared across all floors. When showPlayers is on, a
+  // compact order overlay is mirrored to the player display.
+  initiative: { active: false, showPlayers: false, round: 1, turn: 0, combatants: [] },
   // Measurement: unit system + an optional calibrated cell size (world px) used when the
   // grid overlay is off but the map has its own printed grid.
   measure: { unit: "imperial", cellSize: 0 },
@@ -191,6 +219,9 @@ let activeStroke = null;
 let stampDraft = null; // {shape, start, end} preview while drag-drawing a fog shape
 let calibrating = null; // 'grid' | 'measure' while waiting for a drag-a-square calibration
 let calibrationDraft = null; // {start, end} preview during a calibration drag
+let aoeDraft = null; // {shape, start, end} preview while drag-drawing an area of effect
+let aoeShape = "circle"; // authoring default: circle | square | cone | line
+let aoeColor = "#e2603a"; // authoring default colour for new AoE markers
 let selectedToken = null; // token highlighted in Move mode for arrow-key nudging (GM only)
 let tokenImageData = ""; // image applied to newly placed tokens (data URL), authoring default
 const tokenImageCache = new Map(); // data URL -> HTMLImageElement, so token art draws each frame
@@ -213,6 +244,8 @@ const redoStack = [];
 
 let playerWindow = null; // handle to the popup (GM side), used as a direct postMessage fallback
 let seenMids = []; // recently handled message ids, for de-duplicating the two transports
+let playerViewport = null; // {w,h} CSS px the player reports, used to draw the player frame
+let showPlayerFrame = true; // GM-only: draw a red rectangle of what the players currently see
 
 function handleMessage(message, source) {
   if (!message || typeof message !== "object") return;
@@ -235,6 +268,17 @@ function handleMessage(message, source) {
     broadcastState();
   }
   if (message.type === "request-assets" && !isPlayer) broadcastAssets();
+  if (message.type === "viewport" && !isPlayer) {
+    playerViewport = { w: message.w, h: message.h };
+    render();
+  }
+}
+
+// Player -> GM: report this display's pixel size so the GM can draw the "player frame".
+function reportPlayerViewport() {
+  if (!isPlayer) return;
+  const rect = canvas.getBoundingClientRect();
+  relay({ type: "viewport", w: rect.width, h: rect.height });
 }
 
 // Send a message over both transports. BroadcastChannel reaches any same-origin window;
@@ -329,6 +373,7 @@ function setup() {
     refreshLibraryButtonState();
     updateUndoButtons();
     setupCollapsibleSections();
+    updateInitiativeUI();
   }
 
   // Two transports so the link works whether or not BroadcastChannel delivers between
@@ -361,6 +406,7 @@ function setup() {
   resizeCanvas();
   refreshFloorUI();
   render();
+  reportPlayerViewport(); // player: announce initial size for the GM's player-frame
 }
 
 function bindControls() {
@@ -432,6 +478,7 @@ function bindControls() {
   controls.eraserMode.addEventListener("click", () => setMode("eraser"));
   controls.stampMode?.addEventListener("click", () => setMode("stamp"));
   controls.tokenMode.addEventListener("click", () => setMode("token"));
+  controls.aoeMode?.addEventListener("click", () => setMode("aoe"));
   controls.measureMode.addEventListener("click", () => setMode("measure"));
   controls.stairMode?.addEventListener("click", () => setMode("stair"));
 
@@ -462,8 +509,59 @@ function bindControls() {
     state.measure.unit = controls.measureUnit.value === "metric" ? "metric" : "imperial";
     renderAndSync();
   });
+  controls.aoeCircle?.addEventListener("click", () => setAoeShape("circle"));
+  controls.aoeSquare?.addEventListener("click", () => setAoeShape("square"));
+  controls.aoeCone?.addEventListener("click", () => setAoeShape("cone"));
+  controls.aoeLine?.addEventListener("click", () => setAoeShape("line"));
+  controls.aoeColor?.addEventListener("input", () => {
+    aoeColor = controls.aoeColor.value;
+  });
   controls.measureCalibrate?.addEventListener("click", () => armCalibration("measure"));
   controls.gridCalibrate?.addEventListener("click", () => armCalibration("grid"));
+  controls.playerFrameToggle?.addEventListener("input", () => {
+    showPlayerFrame = controls.playerFrameToggle.checked;
+    render();
+  });
+
+  // Initiative tracker
+  controls.initToggle?.addEventListener("click", toggleInitiative);
+  controls.initClose?.addEventListener("click", () => setInitiativeActive(false));
+  controls.initPrev?.addEventListener("click", () => stepInitiative(-1));
+  controls.initNext?.addEventListener("click", () => stepInitiative(1));
+  controls.initReset?.addEventListener("click", resetInitiative);
+  controls.initShowPlayers?.addEventListener("input", () => {
+    state.initiative.showPlayers = controls.initShowPlayers.checked;
+    updateInitiativeUI();
+    broadcastState();
+  });
+  controls.initAddForm?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    addCombatant();
+  });
+  controls.initList?.addEventListener("click", (event) => {
+    const row = event.target.closest("[data-id]");
+    if (!row) return;
+    const id = row.dataset.id;
+    if (event.target.closest("[data-act='remove']")) removeCombatant(id);
+    else if (event.target.closest("[data-act='hp-down']")) adjustHp(id, -1);
+    else if (event.target.closest("[data-act='hp-up']")) adjustHp(id, 1);
+    else if (event.target.closest("[data-act='set-turn']")) setTurnToId(id);
+  });
+  controls.initList?.addEventListener("change", (event) => {
+    const row = event.target.closest("[data-id]");
+    if (!row) return;
+    const c = state.initiative.combatants.find((x) => x.id === row.dataset.id);
+    if (!c) return;
+    if (event.target.matches("[data-field='hp']")) {
+      c.hp = event.target.value === "" ? null : Math.max(0, Number(event.target.value) || 0);
+      if (c.hp != null && (c.maxHp == null || c.hp > c.maxHp)) c.maxHp = c.hp;
+    } else if (event.target.matches("[data-field='init']")) {
+      c.init = Number(event.target.value) || 0;
+      clampInitiativeTurn();
+    }
+    updateInitiativeUI();
+    broadcastState();
+  });
   controls.clearFog.addEventListener("click", () => {
     clearFog();
     closeFogRibbon();
@@ -876,6 +974,9 @@ function loadSnapshot(snapshot) {
   Object.assign(state.grid, snapshot.grid);
   if (state.grid.snap === undefined) state.grid.snap = true;
   if (snapshot.measure) Object.assign(state.measure, snapshot.measure);
+  if (snapshot.initiative) {
+    state.initiative = { active: false, showPlayers: false, round: 1, turn: 0, combatants: [], ...snapshot.initiative };
+  }
   if (snapshot.fog) {
     state.fog.toolSize = snapshot.fog.toolSize ?? state.fog.toolSize;
     state.fog.toolShape = snapshot.fog.toolShape ?? state.fog.toolShape;
@@ -898,6 +999,7 @@ function loadSnapshot(snapshot) {
     state.fog.strokes = snapshot.fog?.strokes || [];
     state.tokens = Array.isArray(snapshot.tokens) ? snapshot.tokens : [];
     state.stairs = Array.isArray(snapshot.stairs) ? snapshot.stairs : [];
+    state.aoes = Array.isArray(snapshot.aoes) ? snapshot.aoes : [];
     Object.assign(state.view, snapshot.view || {});
     state.imageId = snapshot.imageId || state.imageId;
     state.imageData = snapshot.imageData || state.imageData; // keep the image assets delivered separately
@@ -921,6 +1023,7 @@ function loadSnapshot(snapshot) {
       syncControlsFromState();
     }
     refreshFloorUI();
+    updateInitiativeUI();
     render();
   };
 
@@ -997,6 +1100,8 @@ function syncControlsFromState() {
   controls.gmFogOpacity.value = state.fog.gmOpacity;
   setToolShape(state.fog.toolShape);
   setStampShape(state.fog.stampShape || "rectangle");
+  setAoeShape(aoeShape);
+  if (controls.aoeColor) controls.aoeColor.value = aoeColor;
   if (controls.measureUnit) controls.measureUnit.value = state.measure.unit || "imperial";
   updateMeasureCalibrateRow();
   updatePlayerSliderRanges();
@@ -1061,12 +1166,14 @@ function captureCurrentFloor() {
   floor.strokes = JSON.parse(JSON.stringify(state.fog.strokes));
   floor.tokens = JSON.parse(JSON.stringify(state.tokens));
   floor.stairs = JSON.parse(JSON.stringify(state.stairs));
+  floor.aoes = JSON.parse(JSON.stringify(state.aoes));
   floor.view = { ...state.view };
 }
 
 // Promote a floor record into the active state fields.
 function applyFloor(floor) {
   selectedToken = null; // tokens array is about to be replaced
+  aoeDraft = null;
   state.currentFloorId = floor.id;
   state.imageId = floor.imageId || "";
   state.imageData = floor.imageData || "";
@@ -1078,6 +1185,7 @@ function applyFloor(floor) {
   state.fog.strokes = JSON.parse(JSON.stringify(floor.strokes || []));
   state.tokens = JSON.parse(JSON.stringify(floor.tokens || []));
   state.stairs = JSON.parse(JSON.stringify(floor.stairs || []));
+  state.aoes = JSON.parse(JSON.stringify(floor.aoes || []));
   Object.assign(state.view, floor.view || { scale: 1, cx: 0, cy: 0 });
   fogDirty = true;
   undoStack.length = 0;
@@ -1373,9 +1481,10 @@ function setMode(nextMode) {
   closeFogRibbon();
   drawingRoom = [];
   stampDraft = null;
+  aoeDraft = null;
   selectedToken = null;
   controls.fogToggle?.classList.toggle("active", FOG_MODES.includes(nextMode));
-  [controls.panMode, controls.polygonMode, controls.namedPolygonMode, controls.revealMode, controls.brushMode, controls.eraserMode, controls.stampMode, controls.tokenMode, controls.measureMode, controls.stairMode].forEach(
+  [controls.panMode, controls.polygonMode, controls.namedPolygonMode, controls.revealMode, controls.brushMode, controls.eraserMode, controls.stampMode, controls.tokenMode, controls.aoeMode, controls.measureMode, controls.stairMode].forEach(
     (button) => button?.classList.remove("active"),
   );
   controls[`${nextMode}Mode`]?.classList.add("active");
@@ -1388,6 +1497,7 @@ function setMode(nextMode) {
     eraser: "Drag over fog to erase it.",
     stamp: "Drag to draw a fog shape. Right-click an area to remove it.",
     token: "Click to drop a token, drag to move it, right-click to remove it.",
+    aoe: "Drag to place a spell area. Circle/square anchor at the center; cone/line run from the start point. Right-click to remove.",
     measure: "Drag to measure distance across the grid.",
     stair: "Click to place a staircase. Right-click a stair to remove it.",
   }[nextMode] ?? "";
@@ -1404,6 +1514,7 @@ function setMode(nextMode) {
       nextMode === "stamp" ? "Fog Shape" : isBrush ? "Fog Brush" : "Fog Area";
   }
   controls.tokenOptions.classList.toggle("hidden", nextMode !== "token");
+  controls.aoeOptions?.classList.toggle("hidden", nextMode !== "aoe");
   controls.measureOptions?.classList.toggle("hidden", nextMode !== "measure");
   if (nextMode === "measure") updateMeasureCalibrateRow();
   // Switching tools cancels a pending calibration.
@@ -1447,7 +1558,7 @@ function clearFog() {
 /* ----------------------------- history ----------------------------- */
 
 function snapshotFog() {
-  return JSON.stringify({ rooms: state.fog.rooms, strokes: state.fog.strokes, tokens: state.tokens, stairs: state.stairs });
+  return JSON.stringify({ rooms: state.fog.rooms, strokes: state.fog.strokes, tokens: state.tokens, stairs: state.stairs, aoes: state.aoes });
 }
 function pushHistory() {
   undoStack.push(snapshotFog());
@@ -1461,6 +1572,7 @@ function applyFogSnapshot(serialized) {
   state.fog.strokes = data.strokes || [];
   state.tokens = data.tokens || [];
   state.stairs = data.stairs || [];
+  state.aoes = data.aoes || [];
   fogDirty = true;
 }
 function undo() {
@@ -1507,6 +1619,7 @@ function watchCanvasSize() {
       queued = false;
       resizeCanvas();
       render();
+      reportPlayerViewport(); // keep the GM's player-frame in sync with this display's size
     });
   };
   if (window.ResizeObserver) {
@@ -1636,11 +1749,13 @@ function render() {
   ctx.scale(t.ms, t.ms);
   if (fogDirty) rebuildFog();
   compositeFog();
+  drawAoes(); // spell areas sit above fog and below tokens; visible to players
   if (!isPlayer) drawRoomOutlines();
   drawTokens();
   if (!isPlayer) drawStairs(); // stairs are a GM-only navigation aid
   if (!isPlayer) drawDraftRoom();
   if (!isPlayer) drawStampDraft();
+  if (!isPlayer) drawAoeDraft();
   if (!isPlayer) drawCalibrationDraft();
   if (measureLine) drawMeasureLine();
   if (!isPlayer && ["brush", "eraser"].includes(mode) && state.imageData) {
@@ -1654,6 +1769,26 @@ function render() {
   drawPings();
   if (measureLine) drawMeasureLabel();
   if (!isPlayer) drawRoomNames();
+  if (!isPlayer) drawPlayerFrame();
+}
+
+// GM-only: a red rectangle marking the region the player display currently shows, so the
+// GM can tell exactly what their players see. Uses the player's reported pixel size.
+function drawPlayerFrame() {
+  if (!showPlayerFrame || !playerViewport || !state.imageData) return;
+  const ms = state.map.scale || 1;
+  const pv = state.playerView.matchDM ? state.view : state.playerView;
+  if (!pv.scale) return;
+  const halfW = playerViewport.w / (pv.scale * ms) / 2;
+  const halfH = playerViewport.h / (pv.scale * ms) / 2;
+  const tl = nativeToScreen({ x: pv.cx - halfW, y: pv.cy - halfH });
+  const br = nativeToScreen({ x: pv.cx + halfW, y: pv.cy + halfH });
+  ctx.save();
+  ctx.strokeStyle = "rgba(226, 74, 74, 0.92)";
+  ctx.lineWidth = 2;
+  ctx.setLineDash([10, 6]);
+  ctx.strokeRect(tl.x, tl.y, br.x - tl.x, br.y - tl.y);
+  ctx.restore();
 }
 
 function renderSplash(rect) {
@@ -1939,6 +2074,125 @@ function drawCalibrationDraft() {
   ctx.restore();
 }
 
+/* ----------------------------- area of effect ----------------------------- */
+
+// Build the geometry (native coords) for an AoE from a drag: circle/square are anchored
+// at the press point (center), cone/line run from the press point to the cursor.
+function aoeFromDraft(shape, a, b) {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const dist = Math.hypot(dx, dy);
+  if (shape === "square") return { shape, x: a.x, y: a.y, half: Math.max(Math.abs(dx), Math.abs(dy)) };
+  if (shape === "cone") return { shape, x: a.x, y: a.y, angle: Math.atan2(dy, dx), length: dist };
+  if (shape === "line") return { shape, x: a.x, y: a.y, x2: b.x, y2: b.y, width: gridCellNative() };
+  return { shape: "circle", x: a.x, y: a.y, radius: dist };
+}
+
+function aoeBigEnough(aoe) {
+  if (aoe.shape === "circle") return aoe.radius >= 4;
+  if (aoe.shape === "square") return aoe.half >= 4;
+  if (aoe.shape === "cone") return aoe.length >= 4;
+  if (aoe.shape === "line") return Math.hypot(aoe.x2 - aoe.x, aoe.y2 - aoe.y) >= 4;
+  return false;
+}
+
+const AOE_CONE_HALF_ANGLE = Math.atan(0.5); // ~26.6°, so the cone's total spread ≈ 53° (D&D)
+
+// Polygon footprint for square/cone/line (used for both drawing and hit-testing).
+function aoePolygon(aoe) {
+  if (aoe.shape === "square") {
+    return [
+      { x: aoe.x - aoe.half, y: aoe.y - aoe.half },
+      { x: aoe.x + aoe.half, y: aoe.y - aoe.half },
+      { x: aoe.x + aoe.half, y: aoe.y + aoe.half },
+      { x: aoe.x - aoe.half, y: aoe.y + aoe.half },
+    ];
+  }
+  if (aoe.shape === "cone") {
+    const a1 = aoe.angle - AOE_CONE_HALF_ANGLE;
+    const a2 = aoe.angle + AOE_CONE_HALF_ANGLE;
+    return [
+      { x: aoe.x, y: aoe.y },
+      { x: aoe.x + Math.cos(a1) * aoe.length, y: aoe.y + Math.sin(a1) * aoe.length },
+      { x: aoe.x + Math.cos(a2) * aoe.length, y: aoe.y + Math.sin(a2) * aoe.length },
+    ];
+  }
+  if (aoe.shape === "line") {
+    const dx = aoe.x2 - aoe.x;
+    const dy = aoe.y2 - aoe.y;
+    const len = Math.hypot(dx, dy) || 1;
+    const nx = -dy / len;
+    const ny = dx / len;
+    const hw = (aoe.width || 10) / 2;
+    return [
+      { x: aoe.x + nx * hw, y: aoe.y + ny * hw },
+      { x: aoe.x2 + nx * hw, y: aoe.y2 + ny * hw },
+      { x: aoe.x2 - nx * hw, y: aoe.y2 - ny * hw },
+      { x: aoe.x - nx * hw, y: aoe.y - ny * hw },
+    ];
+  }
+  return null;
+}
+
+function drawAoes() {
+  if (!state.aoes || !state.aoes.length) return;
+  state.aoes.forEach((aoe) => drawOneAoe(aoe, aoe.color || "#e2603a"));
+}
+
+function drawOneAoe(aoe, color) {
+  ctx.save();
+  ctx.beginPath();
+  if (aoe.shape === "circle") {
+    ctx.arc(aoe.x, aoe.y, aoe.radius, 0, Math.PI * 2);
+  } else {
+    const poly = aoePolygon(aoe);
+    if (!poly) {
+      ctx.restore();
+      return;
+    }
+    ctx.moveTo(poly[0].x, poly[0].y);
+    poly.slice(1).forEach((p) => ctx.lineTo(p.x, p.y));
+    ctx.closePath();
+  }
+  ctx.globalAlpha = 0.28;
+  ctx.fillStyle = color;
+  ctx.fill();
+  ctx.globalAlpha = 0.9;
+  ctx.lineWidth = 2 / (curK * curMs);
+  ctx.strokeStyle = color;
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawAoeDraft() {
+  if (!aoeDraft) return;
+  const aoe = aoeFromDraft(aoeDraft.shape, aoeDraft.start, aoeDraft.end);
+  if (aoe && aoeBigEnough(aoe)) drawOneAoe(aoe, aoeColor);
+}
+
+function hitAoe(native) {
+  for (let i = state.aoes.length - 1; i >= 0; i--) {
+    const aoe = state.aoes[i];
+    if (aoe.shape === "circle") {
+      if (Math.hypot(native.x - aoe.x, native.y - aoe.y) <= aoe.radius) return aoe;
+    } else {
+      const poly = aoePolygon(aoe);
+      if (poly && pointInPolygon(native, poly)) return aoe;
+    }
+  }
+  return null;
+}
+
+function setAoeShape(shape) {
+  aoeShape = shape;
+  [
+    ["circle", controls.aoeCircle],
+    ["square", controls.aoeSquare],
+    ["cone", controls.aoeCone],
+    ["line", controls.aoeLine],
+  ].forEach(([name, button]) => button?.classList.toggle("active", shape === name));
+}
+
 function drawStampDraft() {
   if (!stampDraft) return;
   const points = stampPolygon(stampDraft.shape, stampDraft.start, stampDraft.end);
@@ -2184,6 +2438,13 @@ function deleteTokenOrRoom(native) {
     renderAndSync();
     return true;
   }
+  const aoe = hitAoe(native);
+  if (aoe) {
+    pushHistory();
+    state.aoes = state.aoes.filter((item) => item !== aoe);
+    renderAndSync();
+    return true;
+  }
   const room = [...state.fog.rooms].reverse().find((item) => pointInPolygon(native, item.points));
   if (room) {
     pushHistory();
@@ -2193,6 +2454,162 @@ function deleteTokenOrRoom(native) {
     return true;
   }
   return false;
+}
+
+/* ----------------------------- initiative tracker ----------------------------- */
+
+function escapeHtml(text) {
+  return String(text).replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]));
+}
+
+// Turn order: highest initiative first. JS sort is stable, so ties keep insertion order.
+function sortedCombatants() {
+  return [...state.initiative.combatants].sort((a, b) => b.init - a.init);
+}
+
+function clampInitiativeTurn() {
+  const n = state.initiative.combatants.length;
+  state.initiative.turn = n ? Math.min(Math.max(0, state.initiative.turn), n - 1) : 0;
+}
+
+function toggleInitiative() {
+  setInitiativeActive(!state.initiative.active);
+}
+
+function setInitiativeActive(on) {
+  state.initiative.active = on;
+  updateInitiativeUI();
+  broadcastState();
+  // The docked panel adds/removes a layout column, so the canvas must re-measure.
+  requestAnimationFrame(() => {
+    resizeCanvas();
+    render();
+  });
+}
+
+function addCombatant() {
+  const name = controls.initName.value.trim();
+  if (!name) return;
+  const init = Number(controls.initRoll.value) || 0;
+  const hp = controls.initHp.value === "" ? null : Math.max(0, Number(controls.initHp.value) || 0);
+  const type = controls.initType.value || "player";
+  state.initiative.combatants.push({ id: uuid(), name, type, init, hp, maxHp: hp });
+  controls.initName.value = "";
+  controls.initRoll.value = "";
+  controls.initHp.value = "";
+  controls.initName.focus();
+  if (!state.initiative.active) {
+    setInitiativeActive(true);
+  } else {
+    updateInitiativeUI();
+    broadcastState();
+  }
+}
+
+function removeCombatant(id) {
+  state.initiative.combatants = state.initiative.combatants.filter((c) => c.id !== id);
+  clampInitiativeTurn();
+  updateInitiativeUI();
+  broadcastState();
+}
+
+function adjustHp(id, delta) {
+  const c = state.initiative.combatants.find((x) => x.id === id);
+  if (!c || c.hp == null) return;
+  const cap = c.maxHp == null ? Infinity : c.maxHp;
+  c.hp = Math.max(0, Math.min(cap, (c.hp || 0) + delta));
+  updateInitiativeUI();
+  broadcastState();
+}
+
+function setTurnToId(id) {
+  const idx = sortedCombatants().findIndex((c) => c.id === id);
+  if (idx >= 0) {
+    state.initiative.turn = idx;
+    updateInitiativeUI();
+    broadcastState();
+  }
+}
+
+function stepInitiative(dir) {
+  const list = sortedCombatants();
+  if (!list.length) return;
+  let turn = state.initiative.turn + dir;
+  let round = state.initiative.round;
+  if (turn >= list.length) {
+    turn = 0;
+    round += 1;
+  } else if (turn < 0) {
+    turn = list.length - 1;
+    round = Math.max(1, round - 1);
+  }
+  state.initiative.turn = turn;
+  state.initiative.round = round;
+  updateInitiativeUI();
+  broadcastState();
+}
+
+function resetInitiative() {
+  state.initiative.round = 1;
+  state.initiative.turn = 0;
+  updateInitiativeUI();
+  broadcastState();
+}
+
+function updateInitiativeUI() {
+  if (!isPlayer) renderInitiativePanel();
+  renderInitiativeOverlay();
+}
+
+function renderInitiativePanel() {
+  const init = state.initiative;
+  if (controls.initiativePanel) controls.initiativePanel.hidden = !init.active;
+  shell.classList.toggle("has-initiative", init.active);
+  controls.initToggle?.classList.toggle("active", init.active);
+  if (controls.initShowPlayers) controls.initShowPlayers.checked = init.showPlayers;
+  if (controls.initRoundLabel) controls.initRoundLabel.textContent = `Round ${init.round}`;
+  if (!controls.initList) return;
+  const list = sortedCombatants();
+  controls.initList.innerHTML = list
+    .map((c, i) => {
+      const pct = c.maxHp > 0 ? Math.max(0, Math.min(100, ((c.hp || 0) / c.maxHp) * 100)) : 0;
+      return `<div class="init-row${i === init.turn ? " current" : ""}" data-id="${c.id}">
+        <div class="init-row-top">
+          <span class="init-dot ${c.type}"></span>
+          <button type="button" class="init-name" data-act="set-turn" title="Set as current turn">${escapeHtml(c.name)}</button>
+          <input class="init-init" type="number" data-field="init" value="${c.init}" title="Initiative">
+          <button type="button" class="init-remove" data-act="remove" title="Remove" aria-label="Remove">&times;</button>
+        </div>
+        <div class="init-hp-line">
+          <button type="button" class="init-hp-step" data-act="hp-down" title="Damage 1" aria-label="Damage">&minus;</button>
+          <div class="init-hp-bar"><span style="width:${pct}%"></span></div>
+          <input class="init-hp-input" type="number" data-field="hp" value="${c.hp ?? ""}" placeholder="–" title="Current HP">
+          <span class="init-hp-max">/ ${c.maxHp ?? "–"}</span>
+          <button type="button" class="init-hp-step" data-act="hp-up" title="Heal 1" aria-label="Heal">+</button>
+        </div>
+      </div>`;
+    })
+    .join("");
+  if (!list.length) {
+    controls.initList.innerHTML = '<p class="hint">No combatants yet. Add one below.</p>';
+  }
+}
+
+function renderInitiativeOverlay() {
+  const ov = controls.initiativeOverlay;
+  if (!ov) return;
+  const init = state.initiative;
+  const show = init.active && init.combatants.length > 0 && (!isPlayer || init.showPlayers);
+  ov.hidden = !show;
+  if (!show) return;
+  const list = sortedCombatants();
+  const rows = list
+    .map((c, i) => {
+      const hp = !isPlayer && c.hp != null ? ` <em>${c.hp}${c.maxHp != null ? `/${c.maxHp}` : ""}</em>` : "";
+      return `<li class="${i === init.turn ? "current" : ""}"><span class="init-dot ${c.type}"></span><span class="init-ov-name">${escapeHtml(c.name)}</span>${hp}</li>`;
+    })
+    .join("");
+  ov.innerHTML = `<div class="init-ov-round">Round ${init.round}</div><ol>${rows}</ol>`;
 }
 
 /* ----------------------------- ping / measure ----------------------------- */
@@ -2349,6 +2766,14 @@ function onPointerDown(event) {
     return;
   }
 
+  if (mode === "aoe") {
+    aoeDraft = { shape: aoeShape, start: native, end: native };
+    isDragging = true;
+    capturePointer(event.pointerId);
+    render();
+    return;
+  }
+
   if (mode === "polygon" || mode === "namedPolygon") {
     drawingRoom.push(native);
     render();
@@ -2472,6 +2897,12 @@ function onPointerMove(event) {
     return;
   }
 
+  if (aoeDraft) {
+    aoeDraft.end = toNativePoint(event);
+    render();
+    return;
+  }
+
   if (activeStroke) {
     const point = toNativePoint(event);
     const previous = activeStroke.points[activeStroke.points.length - 1];
@@ -2534,6 +2965,18 @@ function onPointerUp(event) {
     }
   }
 
+  if (aoeDraft) {
+    const geo = aoeFromDraft(aoeDraft.shape, aoeDraft.start, aoeDraft.end);
+    aoeDraft = null;
+    if (geo && aoeBigEnough(geo)) {
+      pushHistory();
+      state.aoes.push({ id: uuid(), color: aoeColor, ...geo });
+      renderAndSync();
+    } else {
+      render();
+    }
+  }
+
   if (activeStroke) {
     state.fog.strokes.push(activeStroke);
     stampStroke(activeStroke); // commit incrementally; avoids a full fog rebuild
@@ -2556,7 +2999,7 @@ function onPointerUp(event) {
   }
 
   if (isDragging) {
-    canvas.releasePointerCapture?.(event.pointerId);
+    releasePointer(event.pointerId);
     broadcastState();
   }
   isDragging = false;
@@ -2681,7 +3124,7 @@ function onKeyDown(event) {
     return;
   }
 
-  const shortcuts = { v: "pan", h: "pan", p: "polygon", n: "namedPolygon", r: "reveal", b: "brush", e: "eraser", t: "token", m: "measure", s: "stair" };
+  const shortcuts = { v: "pan", h: "pan", p: "polygon", n: "namedPolygon", r: "reveal", b: "brush", e: "eraser", t: "token", a: "aoe", m: "measure", s: "stair" };
   const key = event.key.toLowerCase();
   if (shortcuts[key]) {
     setMode(shortcuts[key]);
