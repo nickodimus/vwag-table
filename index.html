@@ -69,10 +69,15 @@
               <span></span>
             </label>
           </div>
-          <label>
-            Size
-            <input id="gridSize" type="range" min="20" max="200" value="70">
-          </label>
+          <div class="field-with-action">
+            <label>
+              Size
+              <input id="gridSize" type="range" min="20" max="200" value="70">
+            </label>
+            <button id="gridCalibrate" class="mini-btn" type="button" title="Set the grid size by drawing a square on the map" aria-label="Set grid size by drawing a square">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 3a2 2 0 0 0-2 2"/><path d="M19 3a2 2 0 0 1 2 2"/><path d="M21 19a2 2 0 0 1-2 2"/><path d="M5 21a2 2 0 0 1-2-2"/><path d="M9 3h1"/><path d="M9 21h1"/><path d="M14 3h1"/><path d="M14 21h1"/><path d="M3 9v1"/><path d="M21 9v1"/><path d="M3 14v1"/><path d="M21 14v1"/></svg>
+            </button>
+          </div>
           <label>
             Offset X
             <input id="gridOffsetX" type="range" min="-100" max="100" value="0">
@@ -283,6 +288,26 @@
               <button id="tokenImageClear" class="hidden" type="button">Clear</button>
             </div>
             <p class="hint">Click to drop, drag to move, right-click to remove. In Move mode, click a token to select it, then use the arrow keys to nudge it cell by cell. Loading an image re-skins the selected token, or sets the art for new tokens.</p>
+          </div>
+
+          <div class="tool-popover hidden" id="measureOptions">
+            <h2>Measure</h2>
+            <label>
+              Units
+              <select id="measureUnit">
+                <option value="imperial">Imperial (feet)</option>
+                <option value="metric">Metric (meters)</option>
+              </select>
+            </label>
+            <div id="measureCalibrateRow" class="hidden">
+              <div class="field-with-action">
+                <span class="calib-label">Measure one square</span>
+                <button id="measureCalibrate" class="mini-btn" type="button" title="Set the ruler scale by drawing one square of the map's printed grid" aria-label="Measure one square">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 3a2 2 0 0 0-2 2"/><path d="M19 3a2 2 0 0 1 2 2"/><path d="M21 19a2 2 0 0 1-2 2"/><path d="M5 21a2 2 0 0 1-2-2"/><path d="M9 3h1"/><path d="M9 21h1"/><path d="M14 3h1"/><path d="M14 21h1"/><path d="M3 9v1"/><path d="M21 9v1"/><path d="M3 14v1"/><path d="M21 14v1"/></svg>
+                </button>
+              </div>
+              <p class="hint">Use this when the map already has a grid and the overlay is off.</p>
+            </div>
           </div>
 
           <div class="player-toggles">

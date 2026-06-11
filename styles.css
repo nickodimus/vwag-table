@@ -246,11 +246,78 @@ h2 {
   padding-top: 18px;
 }
 
+/* Sections made collapsible carry their own spacing inside .section-body. */
+.control-section:has(.section-body) {
+  gap: 0;
+}
+
 .section-title {
   align-items: center;
   display: flex;
-  justify-content: space-between;
   gap: 10px;
+}
+
+.section-title h2 {
+  flex: 1;
+  margin: 0;
+}
+
+/* Collapsible body: animate grid rows from 1fr to 0fr for a smooth slide. */
+.section-toggle {
+  align-items: center;
+  background: none;
+  border: 0;
+  color: var(--muted);
+  cursor: pointer;
+  display: flex;
+  justify-content: center;
+  min-height: 0;
+  padding: 0;
+  transition: transform 0.25s ease;
+  width: 20px;
+}
+
+.section-toggle:hover {
+  background: none;
+  border: 0;
+  color: var(--text);
+}
+
+.section-toggle svg {
+  fill: none;
+  height: 18px;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2;
+  width: 18px;
+}
+
+.control-section.collapsed .section-toggle {
+  transform: rotate(-90deg);
+}
+
+.section-body {
+  display: grid;
+  grid-template-rows: 1fr;
+  transition: grid-template-rows 0.3s ease;
+}
+
+.control-section.collapsed .section-body {
+  grid-template-rows: 0fr;
+}
+
+.section-body-inner {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 12px;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.control-section.collapsed .section-body-inner {
+  margin-top: 0;
 }
 
 label {
@@ -626,20 +693,85 @@ input:disabled {
   display: grid;
   gap: 12px;
   min-width: 230px;
+  max-width: 260px;
   padding: 12px;
+}
+
+/* Keep long hint text from stretching the grid-auto-sized popover. */
+.tool-popover .hint {
+  max-width: 236px;
 }
 
 .tool-popover h2 {
   font-size: 0.9rem;
 }
 
-.tool-popover input[type="text"] {
+.tool-popover input[type="text"],
+.tool-popover select {
   background: var(--panel-2);
   border: 1px solid var(--line);
   border-radius: 6px;
   color: var(--text);
   min-height: 34px;
   padding: 0 10px;
+}
+
+#measureCalibrateRow {
+  display: grid;
+  gap: 8px;
+}
+
+/* A field (label/slider) paired with a small action button to its right. */
+.field-with-action {
+  align-items: end;
+  display: flex;
+  gap: 8px;
+}
+
+.field-with-action label {
+  flex: 1;
+}
+
+.field-with-action .calib-label {
+  color: var(--muted);
+  flex: 1;
+  font-size: 0.83rem;
+}
+
+.mini-btn {
+  align-items: center;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--text);
+  cursor: pointer;
+  display: inline-flex;
+  flex: none;
+  height: 34px;
+  justify-content: center;
+  min-height: 0;
+  padding: 0;
+  width: 34px;
+}
+
+.mini-btn:hover {
+  border-color: #52605e;
+}
+
+.mini-btn svg {
+  fill: none;
+  height: 18px;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2;
+  width: 18px;
+}
+
+.mini-btn.active {
+  background: #263635;
+  border-color: var(--accent-2);
+  color: #c6fff1;
 }
 
 .token-image-row {

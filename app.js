@@ -32,6 +32,11 @@ const STAIRS_ICON_NEUTRAL = new Path2D("M22 5h-5v5h-5v5h-5v5h-5");
 const STAIRS_ICON_UP = new Path2D("M22 6h-5v5h-5v5h-5v5h-5 M6 10v-7 M3 6l3 -3l3 3");
 const STAIRS_ICON_DOWN = new Path2D("M22 21h-5v-5h-5v-5h-5v-5h-5 M18 3v7 M15 7l3 3l3 -3");
 const FEET_PER_CELL = 5;
+// Real-world distance one grid cell represents, per measurement system.
+const MEASURE_UNITS = {
+  imperial: { perCell: 5, label: "ft" },
+  metric: { perCell: 1.5, label: "m" },
+};
 const PING_DURATION = 1300;
 
 const controls = {
@@ -72,6 +77,11 @@ const controls = {
   stampMode: document.getElementById("stampMode"),
   tokenMode: document.getElementById("tokenMode"),
   measureMode: document.getElementById("measureMode"),
+  measureOptions: document.getElementById("measureOptions"),
+  measureUnit: document.getElementById("measureUnit"),
+  measureCalibrate: document.getElementById("measureCalibrate"),
+  measureCalibrateRow: document.getElementById("measureCalibrateRow"),
+  gridCalibrate: document.getElementById("gridCalibrate"),
   roundShape: document.getElementById("roundShape"),
   squareShape: document.getElementById("squareShape"),
   brushSizeRow: document.getElementById("brushSizeRow"),
@@ -162,6 +172,9 @@ const state = {
   },
   tokens: [],
   stairs: [],
+  // Measurement: unit system + an optional calibrated cell size (world px) used when the
+  // grid overlay is off but the map has its own printed grid.
+  measure: { unit: "imperial", cellSize: 0 },
   view: { scale: 1, cx: 0, cy: 0 },
   playerView: { matchDM: true, interactive: false, scale: 1, cx: 0, cy: 0 },
   currentFloorId: INITIAL_FLOOR_ID,
@@ -176,6 +189,8 @@ let mode = "pan";
 let drawingRoom = [];
 let activeStroke = null;
 let stampDraft = null; // {shape, start, end} preview while drag-drawing a fog shape
+let calibrating = null; // 'grid' | 'measure' while waiting for a drag-a-square calibration
+let calibrationDraft = null; // {start, end} preview during a calibration drag
 let selectedToken = null; // token highlighted in Move mode for arrow-key nudging (GM only)
 let tokenImageData = ""; // image applied to newly placed tokens (data URL), authoring default
 const tokenImageCache = new Map(); // data URL -> HTMLImageElement, so token art draws each frame
@@ -260,6 +275,36 @@ function setupStartScreen() {
   window.addEventListener("keydown", onStartKey);
 }
 
+// Make each GM panel section collapsible: a caret in the title toggles a slide-down
+// body. The top action buttons (no heading) stay always visible.
+function setupCollapsibleSections() {
+  document.querySelectorAll(".gm-panel .control-section").forEach((section) => {
+    const title = section.querySelector(":scope > .section-title");
+    const heading = title?.querySelector("h2");
+    if (!title || !heading) return;
+    // Wrap everything after the title in an animatable body (grid-rows 1fr -> 0fr).
+    const body = document.createElement("div");
+    body.className = "section-body";
+    const inner = document.createElement("div");
+    inner.className = "section-body-inner";
+    while (title.nextSibling) inner.appendChild(title.nextSibling);
+    body.appendChild(inner);
+    section.appendChild(body);
+    // Caret toggle at the start of the title.
+    const arrow = document.createElement("button");
+    arrow.type = "button";
+    arrow.className = "section-toggle";
+    arrow.setAttribute("aria-label", "Collapse or expand section");
+    arrow.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>';
+    title.insertBefore(arrow, title.firstChild);
+    section.classList.add("collapsed"); // start collapsed by default; click a title to open
+    const toggle = () => section.classList.toggle("collapsed");
+    arrow.addEventListener("click", toggle);
+    heading.style.cursor = "pointer";
+    heading.addEventListener("click", toggle);
+  });
+}
+
 // The player screen hides the cursor for a clean display, but that also hides the
 // fullscreen button. Reveal both whenever the mouse moves, then fade out after a pause.
 function setupPlayerCursor() {
@@ -283,6 +328,7 @@ function setup() {
     syncControlsFromState();
     refreshLibraryButtonState();
     updateUndoButtons();
+    setupCollapsibleSections();
   }
 
   // Two transports so the link works whether or not BroadcastChannel delivers between
@@ -357,6 +403,7 @@ function bindControls() {
       renderAndSync();
     });
   });
+  controls.gridEnabled.addEventListener("input", updateMeasureCalibrateRow);
 
   controls.brushSize.addEventListener("input", () => {
     state.fog.toolSize = Number(controls.brushSize.value);
@@ -411,6 +458,12 @@ function bindControls() {
   controls.stampTriangle?.addEventListener("click", () => setStampShape("triangle"));
   controls.tokenImage?.addEventListener("change", loadTokenImage);
   controls.tokenImageClear?.addEventListener("click", clearTokenImage);
+  controls.measureUnit?.addEventListener("change", () => {
+    state.measure.unit = controls.measureUnit.value === "metric" ? "metric" : "imperial";
+    renderAndSync();
+  });
+  controls.measureCalibrate?.addEventListener("click", () => armCalibration("measure"));
+  controls.gridCalibrate?.addEventListener("click", () => armCalibration("grid"));
   controls.clearFog.addEventListener("click", () => {
     clearFog();
     closeFogRibbon();
@@ -822,6 +875,7 @@ function loadSnapshot(snapshot) {
   state.blackout = Boolean(snapshot.blackout);
   Object.assign(state.grid, snapshot.grid);
   if (state.grid.snap === undefined) state.grid.snap = true;
+  if (snapshot.measure) Object.assign(state.measure, snapshot.measure);
   if (snapshot.fog) {
     state.fog.toolSize = snapshot.fog.toolSize ?? state.fog.toolSize;
     state.fog.toolShape = snapshot.fog.toolShape ?? state.fog.toolShape;
@@ -943,6 +997,8 @@ function syncControlsFromState() {
   controls.gmFogOpacity.value = state.fog.gmOpacity;
   setToolShape(state.fog.toolShape);
   setStampShape(state.fog.stampShape || "rectangle");
+  if (controls.measureUnit) controls.measureUnit.value = state.measure.unit || "imperial";
+  updateMeasureCalibrateRow();
   updatePlayerSliderRanges();
   syncPlayerViewControls();
 }
@@ -1348,6 +1404,14 @@ function setMode(nextMode) {
       nextMode === "stamp" ? "Fog Shape" : isBrush ? "Fog Brush" : "Fog Area";
   }
   controls.tokenOptions.classList.toggle("hidden", nextMode !== "token");
+  controls.measureOptions?.classList.toggle("hidden", nextMode !== "measure");
+  if (nextMode === "measure") updateMeasureCalibrateRow();
+  // Switching tools cancels a pending calibration.
+  if (calibrating) {
+    calibrating = null;
+    calibrationDraft = null;
+    updateCalibrationUI();
+  }
   measureLine = null;
   render();
 }
@@ -1528,6 +1592,12 @@ function capturePointer(pointerId) {
   } catch {}
 }
 
+function releasePointer(pointerId) {
+  try {
+    canvas.releasePointerCapture?.(pointerId);
+  } catch {}
+}
+
 /* ----------------------------- render ----------------------------- */
 
 function render() {
@@ -1571,6 +1641,7 @@ function render() {
   if (!isPlayer) drawStairs(); // stairs are a GM-only navigation aid
   if (!isPlayer) drawDraftRoom();
   if (!isPlayer) drawStampDraft();
+  if (!isPlayer) drawCalibrationDraft();
   if (measureLine) drawMeasureLine();
   if (!isPlayer && ["brush", "eraser"].includes(mode) && state.imageData) {
     drawToolPreview(screenToNative(clientToCanvasPoint(lastPointer)));
@@ -1792,6 +1863,82 @@ function drawDraftRoom() {
   ctx.restore();
 }
 
+// Arm a "drag one square" calibration. The next drag on the map sets either the grid
+// size ('grid') or the measurement cell size when the grid overlay is off ('measure').
+function armCalibration(purpose) {
+  calibrating = calibrating === purpose ? null : purpose;
+  calibrationDraft = null;
+  updateCalibrationUI();
+  controls.modeHint.textContent = calibrating
+    ? "Drag a square over one grid cell on the map, then release to set the size."
+    : "";
+  render();
+}
+
+function finishCalibration() {
+  const draft = calibrationDraft;
+  const purpose = calibrating;
+  calibrationDraft = null;
+  calibrating = null;
+  updateCalibrationUI();
+  if (!draft || !purpose) {
+    render();
+    return;
+  }
+  const ms = state.map.scale || 1;
+  const wpx = Math.abs(draft.end.x - draft.start.x) * ms;
+  const hpx = Math.abs(draft.end.y - draft.start.y) * ms;
+  const side = Math.max(wpx, hpx); // tolerate a slightly non-square drag
+  if (side < 4) {
+    render();
+    return;
+  }
+  if (purpose === "grid") {
+    const min = Number(controls.gridSize?.min) || 20;
+    const max = Number(controls.gridSize?.max) || 200;
+    state.grid.size = Math.min(max, Math.max(min, Math.round(side)));
+    state.grid.enabled = true;
+    syncControlsFromState();
+    controls.modeHint.textContent = `Grid size set to ${Math.round(state.grid.size)} px.`;
+    renderAndSync();
+  } else {
+    state.measure.cellSize = Math.round(side);
+    controls.modeHint.textContent = `Measure calibrated: 1 cell = ${Math.round(side)} px.`;
+    renderAndSync();
+  }
+}
+
+function updateCalibrationUI() {
+  controls.gridCalibrate?.classList.toggle("active", calibrating === "grid");
+  controls.measureCalibrate?.classList.toggle("active", calibrating === "measure");
+}
+
+// The "measure one square" calibration is only offered when the grid overlay is off
+// (i.e. the map has its own printed grid to calibrate the ruler against).
+function updateMeasureCalibrateRow() {
+  controls.measureCalibrateRow?.classList.toggle("hidden", state.grid.enabled);
+}
+
+function drawCalibrationDraft() {
+  if (!calibrationDraft) return;
+  const a = calibrationDraft.start;
+  const b = calibrationDraft.end;
+  const ms = state.map.scale || 1;
+  const side = Math.max(Math.abs(b.x - a.x), Math.abs(b.y - a.y));
+  const sx = b.x >= a.x ? 1 : -1;
+  const sy = b.y >= a.y ? 1 : -1;
+  const x0 = Math.min(a.x, a.x + sx * side);
+  const y0 = Math.min(a.y, a.y + sy * side);
+  ctx.save();
+  ctx.fillStyle = "rgba(177, 195, 1, 0.18)";
+  ctx.strokeStyle = "#b1c301";
+  ctx.lineWidth = 2 / (curK * curMs);
+  ctx.setLineDash([6 / (curK * curMs), 4 / (curK * curMs)]);
+  ctx.strokeRect(x0, y0, side, side);
+  ctx.fillRect(x0, y0, side, side);
+  ctx.restore();
+}
+
 function drawStampDraft() {
   if (!stampDraft) return;
   const points = stampPolygon(stampDraft.shape, stampDraft.start, stampDraft.end);
@@ -1824,6 +1971,20 @@ function tokenRadius(token) {
   return Math.max(6, ((token.cells || 1) * gridCellNative()) / 2);
 }
 
+// Multi-cell tokens render as squares (they fill their grid footprint); single-cell
+// tokens stay circular.
+function tokenIsSquare(token) {
+  return (token.cells || 1) > 1;
+}
+
+function tokenOutline(token, r) {
+  if (tokenIsSquare(token)) {
+    ctx.rect(token.x - r, token.y - r, r * 2, r * 2);
+  } else {
+    ctx.arc(token.x, token.y, r, 0, Math.PI * 2);
+  }
+}
+
 function drawTokens() {
   const lineW = Math.max(1, 2 / (curK * curMs));
   state.tokens.forEach((token) => {
@@ -1831,10 +1992,10 @@ function drawTokens() {
     ctx.save();
     const img = getTokenImage(token.image);
     if (img && img.complete && img.naturalWidth) {
-      // Token art: cover-fit the image into the circular token and ring it.
+      // Token art: cover-fit the image into the token outline and ring it.
       ctx.save();
       ctx.beginPath();
-      ctx.arc(token.x, token.y, r, 0, Math.PI * 2);
+      tokenOutline(token, r);
       ctx.clip();
       const scale = Math.max((2 * r) / img.naturalWidth, (2 * r) / img.naturalHeight);
       const w = img.naturalWidth * scale;
@@ -1842,13 +2003,13 @@ function drawTokens() {
       ctx.drawImage(img, token.x - w / 2, token.y - h / 2, w, h);
       ctx.restore();
       ctx.beginPath();
-      ctx.arc(token.x, token.y, r, 0, Math.PI * 2);
+      tokenOutline(token, r);
       ctx.lineWidth = lineW;
       ctx.strokeStyle = "rgba(0,0,0,0.65)";
       ctx.stroke();
     } else {
       ctx.beginPath();
-      ctx.arc(token.x, token.y, r, 0, Math.PI * 2);
+      tokenOutline(token, r);
       ctx.fillStyle = token.color || "#d6a94d";
       ctx.globalAlpha = 0.95;
       ctx.fill();
@@ -1860,14 +2021,14 @@ function drawTokens() {
         ctx.fillStyle = "#0c0d0d";
         ctx.textAlign = "center";
         ctx.textBaseline = "middle";
-        ctx.font = `700 ${Math.round(r)}px Inter, sans-serif`;
+        ctx.font = `700 ${Math.round(gridCellNative() / 2)}px Inter, sans-serif`;
         ctx.fillText(String(token.label).slice(0, 3), token.x, token.y);
       }
     }
-    // Selection highlight (GM only): an accent ring around the active token.
+    // Selection highlight (GM only): an accent outline around the active token.
     if (!isPlayer && token === selectedToken) {
       ctx.beginPath();
-      ctx.arc(token.x, token.y, r + 3 / (curK * curMs), 0, Math.PI * 2);
+      tokenOutline(token, r + 3 / (curK * curMs));
       ctx.lineWidth = Math.max(1.5, 3 / (curK * curMs));
       ctx.strokeStyle = "#b1c301";
       ctx.stroke();
@@ -1879,7 +2040,12 @@ function drawTokens() {
 function hitToken(native) {
   for (let i = state.tokens.length - 1; i >= 0; i--) {
     const token = state.tokens[i];
-    if (Math.hypot(native.x - token.x, native.y - token.y) <= tokenRadius(token)) return token;
+    const r = tokenRadius(token);
+    if (tokenIsSquare(token)) {
+      if (Math.abs(native.x - token.x) <= r && Math.abs(native.y - token.y) <= r) return token;
+    } else if (Math.hypot(native.x - token.x, native.y - token.y) <= r) {
+      return token;
+    }
   }
   return null;
 }
@@ -1923,21 +2089,48 @@ function getTokenImage(src) {
   return img;
 }
 
+const TOKEN_IMAGE_MAX_EDGE = 256; // token art is tiny on screen; cap it to keep saves small
+
+// Downscale a data URL so its longest edge is at most maxEdge, re-encoding to PNG.
+// Keeps token art (and therefore the synced/saved state) small regardless of source size.
+function downscaleImage(src, maxEdge, callback) {
+  const img = new Image();
+  img.onload = () => {
+    const longest = Math.max(img.naturalWidth, img.naturalHeight) || 1;
+    const scale = Math.min(1, maxEdge / longest);
+    if (scale >= 1) {
+      callback(src); // already small enough
+      return;
+    }
+    const w = Math.max(1, Math.round(img.naturalWidth * scale));
+    const h = Math.max(1, Math.round(img.naturalHeight * scale));
+    const c = document.createElement("canvas");
+    c.width = w;
+    c.height = h;
+    c.getContext("2d").drawImage(img, 0, 0, w, h);
+    callback(c.toDataURL("image/png"));
+  };
+  img.onerror = () => callback(src);
+  img.src = src;
+}
+
 function loadTokenImage(event) {
   const file = event.target.files[0];
   if (!file) return;
   const reader = new FileReader();
   reader.onerror = () => window.alert("Could not read that image file.");
   reader.onload = () => {
-    tokenImageData = reader.result;
-    // If a token is selected in Move mode, re-skin it immediately; otherwise this image
-    // becomes the default for newly dropped tokens.
-    if (selectedToken) {
-      pushHistory();
-      selectedToken.image = tokenImageData;
-      renderAndSync();
-    }
-    updateTokenImagePreview();
+    downscaleImage(reader.result, TOKEN_IMAGE_MAX_EDGE, (data) => {
+      tokenImageData = data;
+      // If a token is selected in Move mode, re-skin it immediately; otherwise this image
+      // becomes the default for newly dropped tokens.
+      if (selectedToken) {
+        pushHistory();
+        selectedToken.image = tokenImageData;
+        renderAndSync();
+      }
+      updateTokenImagePreview();
+    });
   };
   reader.readAsDataURL(file);
   event.target.value = ""; // allow re-selecting the same file later
@@ -2066,14 +2259,25 @@ function drawMeasureLine() {
   ctx.restore();
 }
 
+// World px that represent one cell for measurement: the live grid when it's on, else the
+// calibrated size (from "measure one square"), else the grid size as a fallback.
+function measureCellWorld() {
+  if (state.grid.enabled && state.grid.size > 0) return state.grid.size;
+  if (state.measure.cellSize > 0) return state.measure.cellSize;
+  return state.grid.size > 0 ? state.grid.size : 0;
+}
+
 function drawMeasureLabel() {
   const ms = state.map.scale || 1;
   const dx = (measureLine.end.x - measureLine.start.x) * ms;
   const dy = (measureLine.end.y - measureLine.start.y) * ms;
   const worldDist = Math.hypot(dx, dy);
-  const cells = state.grid.size > 0 ? worldDist / state.grid.size : 0;
-  const feet = Math.round(cells * FEET_PER_CELL);
-  const label = `${cells.toFixed(1)} cells · ${feet} ft`;
+  const cellW = measureCellWorld();
+  const cells = cellW > 0 ? worldDist / cellW : 0;
+  const unit = MEASURE_UNITS[state.measure.unit] || MEASURE_UNITS.imperial;
+  const dist = cells * unit.perCell;
+  const distStr = state.measure.unit === "metric" ? dist.toFixed(1) : String(Math.round(dist));
+  const label = `${cells.toFixed(1)} cells · ${distStr} ${unit.label}`;
   const mid = nativeToScreen({
     x: (measureLine.start.x + measureLine.end.x) / 2,
     y: (measureLine.start.y + measureLine.end.y) / 2,
@@ -2122,6 +2326,15 @@ function onPointerDown(event) {
   if (event.button === 2) return; // right-click handled by contextmenu
 
   const native = toNativePoint(event);
+
+  // Calibration drag (set grid size / measure scale by drawing one square) takes priority.
+  if (calibrating) {
+    calibrationDraft = { start: native, end: native };
+    isDragging = true;
+    capturePointer(event.pointerId);
+    render();
+    return;
+  }
 
   if (event.altKey) {
     triggerPing(native);
@@ -2247,6 +2460,12 @@ function onPointerMove(event) {
     return;
   }
 
+  if (calibrationDraft) {
+    calibrationDraft.end = toNativePoint(event);
+    render();
+    return;
+  }
+
   if (stampDraft) {
     stampDraft.end = toNativePoint(event);
     render();
@@ -2291,6 +2510,13 @@ function onPointerMove(event) {
 
 function onPointerUp(event) {
   if (isPlayer) {
+    isDragging = false;
+    return;
+  }
+
+  if (calibrationDraft) {
+    finishCalibration();
+    releasePointer(event.pointerId);
     isDragging = false;
     return;
   }

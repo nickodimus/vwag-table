@@ -25,9 +25,9 @@ A local-first battlemap display tool for game masters. Cast a map with fog of wa
 - **Multi-floor** — build multi-level locations; each floor has its own map, fog, tokens, and stairs. Navigate with the on-screen floor widget.
 - **Stairs** — place GM-only staircase markers that link floors; they scale with the grid and zoom and are invisible to players.
 - **Tokens** — drop, drag, label, color, size, or give them a custom image; they snap to the grid and appear on both displays. In Move mode, click a token to select it and nudge it cell by cell with the arrow keys (Delete removes it).
-- **Grid** — toggle and adjust size, offset, color, opacity, and token snapping.
+- **Grid** — toggle and adjust size, offset, color, opacity, and token snapping. Set the size quickly by dragging a square over one cell of the map.
 - **Ping** — Alt+click draws an animated marker on both displays.
-- **Measure** — reports distance in grid cells and feet.
+- **Measure** — reports distance in grid cells and your choice of imperial (feet) or metric (meters). If the map already has its own printed grid (and the overlay is off), calibrate the ruler by dragging a square over one cell.
 - **Splash / blackout** — show a splash image or a plain black screen on the player display instead of the map.
 - **Library** — save full setups (image, grid, fog, tokens, floors, views) to a local IndexedDB library; export/import the whole library as JSON for backups or moving machines.
 - **Undo / redo** and **fit-to-screen**.
