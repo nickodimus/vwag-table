@@ -17,7 +17,7 @@ A local-first battlemap display tool for game masters. Cast a map with fog of wa
 - **Maps** — load high-resolution map images from local disk; pan and zoom freely.
 - **Player display** — open a second window, drag it to another screen, and cast the map to your players. The player window can go fullscreen, and you can optionally let players pan and zoom their own screen. A red frame on the GM screen shows exactly what the players currently see.
 - **Initiative tracker** — a dockable turn-order panel: add players, NPCs, and monsters with initiative and HP, advance turns and rounds, track damage/healing with HP bars, and optionally mirror a compact order overlay onto the player display.
-- **Area of effect** — drop spell areas (circle, square, cone, line) in any color; they show on both displays.
+- **Area of effect** — hover a live spell template (circle, square, or cone) over the map in any color and size; it mirrors to the player display in real time. The cone rotates with the mouse wheel or a direction slider.
 - **Fog of war**
   - Trace polygon areas and click them in reveal mode to show/hide on the player display.
   - Name polygon areas with a GM-only label.

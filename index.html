@@ -127,6 +127,16 @@
             <input id="playerFrameToggle" type="checkbox" checked>
             <span>Show player frame on GM screen</span>
           </label>
+          <div class="inline-fields" id="playerFrameStyleRow">
+            <label>
+              Frame color
+              <input id="playerFrameColor" type="color" value="#e24a4a">
+            </label>
+            <label>
+              Frame opacity
+              <input id="playerFrameOpacity" type="range" min="0.1" max="1" step="0.05" value="0.9">
+            </label>
+          </div>
           <label class="checkbox-row">
             <input id="playerInteractive" type="checkbox">
             <span>Let players pan &amp; zoom their screen</span>
@@ -184,6 +194,9 @@
       </aside>
 
       <section class="stage-wrap">
+        <button id="panelToggle" class="panel-toggle" type="button" title="Hide controls" aria-label="Collapse the control panel">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m11 17-5-5 5-5"/><path d="m18 17-5-5 5-5"/></svg>
+        </button>
         <p class="mode-hint-bar" id="modeHint">Drag to move the map. Wheel to zoom. Alt+click to ping.</p>
         <div class="stage-controls">
           <div class="tool-row">
@@ -205,6 +218,9 @@
               </button>
               <button id="stairMode" class="tool-button" type="button" title="Place stairs (S)" aria-label="Place stairs">
                 <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M22 5h-5v5h-5v5h-5v5h-5"/></svg>
+              </button>
+              <button id="initToggle" class="tool-button" type="button" title="Initiative tracker" aria-label="Initiative tracker">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><line x1="10" x2="21" y1="6" y2="6"/><line x1="10" x2="21" y1="12" y2="12"/><line x1="10" x2="21" y1="18" y2="18"/><path d="M4 6h1v4"/><path d="M4 10h2"/><path d="M6 18H4c0-1 2-2 2-3s-1-1.5-2-1"/></svg>
               </button>
               <button id="fitMapBtn" class="tool-button" type="button" title="Fit to screen (F)" aria-label="Fit to screen">
                 <svg viewBox="0 0 24 24" aria-hidden="true"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" x2="14" y1="3" y2="10"/><line x1="3" x2="10" y1="21" y2="14"/></svg>
@@ -299,17 +315,33 @@
 
           <div class="tool-popover hidden" id="aoeOptions">
             <h2>Area of Effect</h2>
-            <div class="segmented segmented-wrap" id="aoeShapeRow">
-              <button id="aoeCircle" class="active" type="button">Circle</button>
-              <button id="aoeSquare" type="button">Square</button>
-              <button id="aoeCone" type="button">Cone</button>
-              <button id="aoeLine" type="button">Line</button>
+            <div class="segmented icon-segmented" id="aoeShapeRow">
+              <button id="aoeCircle" class="active" type="button" title="Circle" aria-label="Circle">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10"/></svg>
+              </button>
+              <button id="aoeSquare" type="button" title="Cube / square" aria-label="Cube / square">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/><path d="m3.3 7 8.7 5 8.7-5"/><path d="M12 22V12"/></svg>
+              </button>
+              <button id="aoeCone" type="button" title="Cone" aria-label="Cone">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m20.9 18.55-8-15.98a1 1 0 0 0-1.8 0l-8 15.98"/><ellipse cx="12" cy="19" rx="9" ry="3"/></svg>
+              </button>
+            </div>
+            <div class="segmented segmented-wrap" id="aoePresetsRow"></div>
+            <label>
+              Custom (ft)
+              <input id="aoeCustomSize" type="number" min="1" max="500" step="5" value="10">
+            </label>
+            <div id="aoeAngleRow" class="hidden">
+              <label>
+                Direction
+                <input id="aoeAngleSlider" type="range" min="0" max="359" value="270">
+              </label>
             </div>
             <label>
               Color
               <input id="aoeColor" type="color" value="#e2603a">
             </label>
-            <p class="hint">Drag on the map to place. Circle and square anchor at the center; cone and line run from the start point. Right-click an area to remove it.</p>
+            <p class="hint">Hover over the map to preview. Mouse wheel rotates the cone.</p>
           </div>
 
           <div class="tool-popover hidden" id="measureOptions">
@@ -346,9 +378,6 @@
 
         <!-- GM top-right widgets -->
         <div class="stage-top-right">
-          <button id="initToggle" class="floor-widget-btn solo-widget" type="button" title="Initiative tracker" aria-label="Initiative tracker">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14.5 17.5 4.5 15 2 4.5 4.5 2 15 4.5l2.5 10z"/><path d="m13 19 6-6"/><path d="m16 16 4 4"/><path d="m19 21 2-2"/></svg>
-          </button>
           <div class="floor-widget" id="floorWidget" aria-label="Floor navigation">
             <button id="floorUp" class="floor-widget-btn" type="button" title="Go up one floor" aria-label="Go up" disabled>
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m18 15-6-6-6 6"/></svg>
@@ -377,7 +406,7 @@
         </div>
       </section>
 
-      <aside class="initiative-panel" id="initiativePanel" aria-label="Initiative tracker" hidden>
+      <aside class="initiative-panel" id="initiativePanel" aria-label="Initiative tracker">
         <div class="init-head">
           <h2>Initiative</h2>
           <label class="switch with-label" title="Show the turn order on the player display">
@@ -413,7 +442,7 @@
               <option value="monster">Monster</option>
             </select>
           </div>
-          <button type="submit">Add combatant</button>
+          <button type="submit">Add character</button>
         </form>
       </aside>
     </main>
