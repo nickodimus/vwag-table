@@ -72,7 +72,7 @@
           <div class="field-with-action">
             <label>
               Size
-              <input id="gridSize" type="range" min="20" max="200" value="70">
+              <input id="gridSize" type="range" min="20" max="400" value="70">
             </label>
             <button id="gridCalibrate" class="mini-btn" type="button" title="Set the grid size by drawing a square on the map" aria-label="Set grid size by drawing a square">
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 3a2 2 0 0 0-2 2"/><path d="M19 3a2 2 0 0 1 2 2"/><path d="M21 19a2 2 0 0 1-2 2"/><path d="M5 21a2 2 0 0 1-2-2"/><path d="M9 3h1"/><path d="M9 21h1"/><path d="M14 3h1"/><path d="M14 21h1"/><path d="M3 9v1"/><path d="M21 9v1"/><path d="M3 14v1"/><path d="M21 14v1"/></svg>
@@ -80,11 +80,11 @@
           </div>
           <label>
             Offset X
-            <input id="gridOffsetX" type="range" min="-100" max="100" value="0">
+            <input id="gridOffsetX" type="range" min="-200" max="200" value="0">
           </label>
           <label>
             Offset Y
-            <input id="gridOffsetY" type="range" min="-100" max="100" value="0">
+            <input id="gridOffsetY" type="range" min="-200" max="200" value="0">
           </label>
           <div class="inline-fields">
             <label>
@@ -111,6 +111,15 @@
             Map image size
             <input id="mapScale" type="range" min="0.25" max="3" step="0.01" value="1">
           </label>
+          <div class="field-with-action">
+            <span class="calib-label">Rotate map (carries fog, tokens &amp; stairs)</span>
+            <button id="rotateMapLeft" class="mini-btn" type="button" title="Rotate map left" aria-label="Rotate map left">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
+            </button>
+            <button id="rotateMapRight" class="mini-btn" type="button" title="Rotate map right" aria-label="Rotate map right">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12a9 9 0 1 1-9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/></svg>
+            </button>
+          </div>
         </section>
 
         <section class="control-section">
@@ -122,7 +131,19 @@
               <span></span>
             </label>
           </div>
-          <button id="copyDMView" type="button">Match GM view</button>
+          <div class="inline-buttons">
+            <button id="copyDMView" type="button">Match GM view</button>
+            <button id="playerFit" type="button">Fit player view</button>
+          </div>
+          <div class="field-with-action">
+            <span class="calib-label">Rotate player view only</span>
+            <button id="rotatePlayerLeft" class="mini-btn" type="button" title="Rotate player view left" aria-label="Rotate player view left">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
+            </button>
+            <button id="rotatePlayerRight" class="mini-btn" type="button" title="Rotate player view right" aria-label="Rotate player view right">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12a9 9 0 1 1-9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/></svg>
+            </button>
+          </div>
           <label class="checkbox-row">
             <input id="playerFrameToggle" type="checkbox" checked>
             <span>Show player frame on GM screen</span>
@@ -137,11 +158,6 @@
               <input id="playerFrameOpacity" type="range" min="0.1" max="1" step="0.05" value="0.9">
             </label>
           </div>
-          <label class="checkbox-row">
-            <input id="playerInteractive" type="checkbox">
-            <span>Let players pan &amp; zoom their screen</span>
-          </label>
-          <p class="hint">When on, the player window can scroll to zoom and right-drag to move, independent of the controls below.</p>
           <label>
             Zoom
             <input id="playerZoom" type="range" min="0.05" max="4" step="0.01" value="1">
@@ -164,6 +180,12 @@
             Floor name
             <input id="floorName" type="text" maxlength="32" placeholder="e.g. Ground Floor" autocomplete="off">
           </label>
+          <div class="inline-fields">
+            <label>
+              Stair color
+              <input id="stairColor" type="color" value="#ffffff">
+            </label>
+          </div>
           <div class="floor-add-row">
             <button id="addFloorUp" class="ghost-button" type="button" title="Add a floor above">
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14"/><path d="M12 5v14"/></svg>

@@ -110,8 +110,13 @@ const controls = {
   tokenOptions: document.getElementById("tokenOptions"),
   fitMap: document.getElementById("fitMap"),
   playerMatchDM: document.getElementById("playerMatchDM"),
-  playerInteractive: document.getElementById("playerInteractive"),
   playerFrameToggle: document.getElementById("playerFrameToggle"),
+  rotateMapLeft: document.getElementById("rotateMapLeft"),
+  rotateMapRight: document.getElementById("rotateMapRight"),
+  rotatePlayerLeft: document.getElementById("rotatePlayerLeft"),
+  rotatePlayerRight: document.getElementById("rotatePlayerRight"),
+  playerFit: document.getElementById("playerFit"),
+  stairColor: document.getElementById("stairColor"),
   playerFrameColor: document.getElementById("playerFrameColor"),
   playerFrameOpacity: document.getElementById("playerFrameOpacity"),
   panelToggle: document.getElementById("panelToggle"),
@@ -176,7 +181,7 @@ function makeFloor(id) {
     strokes: [],
     tokens: [],
     stairs: [],
-    view: { scale: 1, cx: 0, cy: 0 },
+    view: { scale: 1, cx: 0, cy: 0, rotation: 0 },
   };
 }
 
@@ -201,14 +206,17 @@ const state = {
   },
   tokens: [],
   stairs: [],
+  stairColor: "#ffffff", // GM-only stair marker color (stairs never show on the player display)
   // Initiative tracker: a turn order shared across all floors. When showPlayers is on, a
   // compact order overlay is mirrored to the player display.
   initiative: { active: false, showPlayers: false, round: 1, turn: 0, combatants: [] },
   // Measurement: unit system + an optional calibrated cell size (world px) used when the
   // grid overlay is off but the map has its own printed grid.
   measure: { unit: "imperial", cellSize: 0 },
-  view: { scale: 1, cx: 0, cy: 0 },
-  playerView: { matchDM: true, interactive: false, scale: 1, cx: 0, cy: 0 },
+  // Views carry a rotation (degrees) so the map can be re-oriented. The GM "rotate map"
+  // drives view.rotation; the player can be rotated independently via playerView.rotation.
+  view: { scale: 1, cx: 0, cy: 0, rotation: 0 },
+  playerView: { matchDM: true, scale: 1, cx: 0, cy: 0, rotation: 0 },
   currentFloorId: INITIAL_FLOOR_ID,
   floors: [makeFloor(INITIAL_FLOOR_ID)],
   floorPosition: 1, // player-side display only
@@ -620,23 +628,18 @@ function bindControls() {
       state.playerView.scale = state.view.scale;
       state.playerView.cx = state.view.cx;
       state.playerView.cy = state.view.cy;
+      state.playerView.rotation = state.view.rotation;
     }
     syncPlayerViewControls();
     renderAndSync();
   });
-  controls.playerInteractive?.addEventListener("input", () => {
-    state.playerView.interactive = controls.playerInteractive.checked;
-    if (state.playerView.interactive) {
-      // Hand control to the player window: stop following the GM and seed the player
-      // view with the GM's current framing so it doesn't jump.
-      state.playerView.matchDM = false;
-      controls.playerMatchDM.checked = false;
-      state.playerView.scale = state.view.scale;
-      state.playerView.cx = state.view.cx;
-      state.playerView.cy = state.view.cy;
-      syncPlayerViewControls();
-    }
-    updatePlayerViewControlsEnabled();
+  controls.rotateMapLeft?.addEventListener("click", () => rotateMap(-90));
+  controls.rotateMapRight?.addEventListener("click", () => rotateMap(90));
+  controls.rotatePlayerLeft?.addEventListener("click", () => rotatePlayerView(-90));
+  controls.rotatePlayerRight?.addEventListener("click", () => rotatePlayerView(90));
+  controls.playerFit?.addEventListener("click", fitPlayerView);
+  controls.stairColor?.addEventListener("input", () => {
+    state.stairColor = controls.stairColor.value;
     renderAndSync();
   });
   controls.copyDMView.addEventListener("click", () => snapPlayerViewToGM(true));
@@ -1009,6 +1012,7 @@ function loadSnapshot(snapshot) {
   state.blackout = Boolean(snapshot.blackout);
   Object.assign(state.grid, snapshot.grid);
   if (state.grid.snap === undefined) state.grid.snap = true;
+  if (snapshot.stairColor) state.stairColor = snapshot.stairColor;
   if (snapshot.measure) Object.assign(state.measure, snapshot.measure);
   if (snapshot.initiative) {
     state.initiative = { active: false, showPlayers: false, round: 1, turn: 0, combatants: [], ...snapshot.initiative };
@@ -1110,23 +1114,10 @@ function applyRemoteView(message) {
   render();
 }
 
-// Player side: reconcile an incoming playerView from the GM with local interaction.
-// While the player is driving their own view, we keep our local framing and ignore the
-// GM's; we only adopt the GM's framing when interaction is off. Entering interactive mode
-// seeds the local view from whatever is currently displayed so there's no jump.
+// Player side: the player display is fully GM-driven, so it just adopts whatever
+// playerView the GM sends (framing + rotation).
 function applyIncomingPlayerView(pv) {
-  const enteringInteractive = pv.interactive && !state.playerView.interactive;
-  if (enteringInteractive) {
-    const cur = activeView();
-    state.playerView.scale = cur.scale;
-    state.playerView.cx = cur.cx;
-    state.playerView.cy = cur.cy;
-    state.playerView.interactive = true;
-    state.playerView.matchDM = false;
-    return;
-  }
-  if (state.playerView.interactive && pv.interactive) return; // stay in local control
-  Object.assign(state.playerView, pv); // following the GM
+  Object.assign(state.playerView, pv);
 }
 
 function syncControlsFromState() {
@@ -1150,6 +1141,7 @@ function syncControlsFromState() {
   if (controls.aoeColor) controls.aoeColor.value = aoeColor;
   if (controls.aoeCustomSize) controls.aoeCustomSize.value = aoeSizeFt;
   if (controls.measureUnit) controls.measureUnit.value = state.measure.unit || "imperial";
+  if (controls.stairColor) controls.stairColor.value = state.stairColor || "#ffffff";
   updateMeasureCalibrateRow();
   updatePlayerSliderRanges();
   syncPlayerViewControls();
@@ -1167,22 +1159,10 @@ function updatePlayerSliderRanges() {
 
 function syncPlayerViewControls() {
   controls.playerMatchDM.checked = state.playerView.matchDM;
-  if (controls.playerInteractive) controls.playerInteractive.checked = state.playerView.interactive;
   const v = state.playerView.matchDM ? state.view : state.playerView;
   controls.playerZoom.value = v.scale;
   controls.playerOffsetX.value = v.cx;
   controls.playerOffsetY.value = v.cy;
-  updatePlayerViewControlsEnabled();
-}
-
-// While the player drives their own view, the GM's follow/zoom/offset controls no
-// longer affect the player screen, so they're disabled to avoid confusion.
-function updatePlayerViewControlsEnabled() {
-  if (isPlayer) return;
-  const lock = state.playerView.interactive;
-  [controls.playerMatchDM, controls.copyDMView, controls.playerZoom, controls.playerOffsetX, controls.playerOffsetY].forEach((el) => {
-    if (el) el.disabled = lock;
-  });
 }
 
 // One-shot copy of the GM's current framing onto the player view. Intentionally does
@@ -1192,6 +1172,7 @@ function snapPlayerViewToGM(sync) {
   state.playerView.scale = state.view.scale;
   state.playerView.cx = state.view.cx;
   state.playerView.cy = state.view.cy;
+  state.playerView.rotation = state.view.rotation;
   syncPlayerViewControls();
   render();
   if (sync) broadcastState();
@@ -1231,6 +1212,7 @@ function applyFloor(floor) {
   state.tokens = JSON.parse(JSON.stringify(floor.tokens || []));
   state.stairs = JSON.parse(JSON.stringify(floor.stairs || []));
   Object.assign(state.view, floor.view || { scale: 1, cx: 0, cy: 0 });
+  state.view.rotation = floor.view?.rotation || 0; // default older floors with no rotation
   fogDirty = true;
   undoStack.length = 0;
   redoStack.length = 0;
@@ -1391,28 +1373,18 @@ function drawStairs() {
       if (targetIdx !== -1) dir = targetIdx > myIdx ? 1 : -1;
     }
 
-    // ---- grey square background with white border (token-style) ----
-    ctx.save();
-    ctx.beginPath();
-    ctx.rect(x - half, y - half, cell, cell);
-    ctx.fillStyle = "#3d4141";
-    ctx.fill();
-    ctx.strokeStyle = "#ffffff";
-    ctx.lineWidth = sw * 1.5;
-    ctx.stroke();
-    ctx.restore();
-
-    // ---- Tabler stair icon scaled to fill 80% of the cell ----
-    // The icons are defined in a 24×24 coordinate space.
-    const iconFill = cell * 0.80;
+    // ---- bare stair icon (no box/background) in the tunable stair color ----
+    // The Tabler icons are defined in a 24×24 coordinate space; fill ~90% of the cell.
+    const stairColor = state.stairColor || "#ffffff";
+    const iconFill = cell * 0.90;
     const iconScale = iconFill / 24;
     const iconPad = (cell - iconFill) / 2;
 
     ctx.save();
     ctx.translate(x - half + iconPad, y - half + iconPad);
     ctx.scale(iconScale, iconScale);
-    ctx.strokeStyle = "#ffffff";
-    ctx.lineWidth = 2 / (curK * curMs * iconScale); // stays 2px on screen
+    ctx.strokeStyle = stairColor;
+    ctx.lineWidth = 2.4 / (curK * curMs * iconScale); // stays a constant width on screen
     ctx.lineCap = "round";
     ctx.lineJoin = "round";
     const icon = dir > 0 ? STAIRS_ICON_UP : dir < 0 ? STAIRS_ICON_DOWN : STAIRS_ICON_NEUTRAL;
@@ -1703,17 +1675,65 @@ function worldDims() {
   return { w: state.imageWidth * state.map.scale, h: state.imageHeight * state.map.scale };
 }
 
+// Scale that fits the (possibly rotated) map into a viewW x viewH box. At 90/270° the
+// map's on-screen footprint has its width and height swapped.
+function fitScaleFor(viewW, viewH, rotationDeg) {
+  const { w, h } = worldDims();
+  if (!w || !h) return 1;
+  const swap = ((((rotationDeg || 0) % 180) + 180) % 180) === 90;
+  const cw = swap ? h : w;
+  const ch = swap ? w : h;
+  return Math.min(viewW / cw, viewH / ch) * 0.96;
+}
+
 function fitMap(sync) {
   if (!state.imageWidth || !state.imageHeight) return;
   const rect = canvas.getBoundingClientRect();
-  const { w, h } = worldDims();
-  const scale = Math.min(rect.width / w, rect.height / h) * 0.96;
-  state.view.scale = scale;
+  state.view.scale = fitScaleFor(rect.width, rect.height, state.view.rotation || 0);
   state.view.cx = state.imageWidth / 2;
   state.view.cy = state.imageHeight / 2;
   if (state.playerView.matchDM && !isPlayer) syncPlayerViewControls();
   render();
   if (sync) broadcastState();
+}
+
+// GM "rotate map": rotates the GM view in 90° steps and carries the orientation to the
+// player too (overriding any independent player rotation). All content rides the view
+// transform, so fog, tokens and stairs rotate with the map.
+function rotateMap(deg) {
+  state.view.rotation = ((((state.view.rotation || 0) + deg) % 360) + 360) % 360;
+  state.playerView.rotation = state.view.rotation; // authoritative — overrides the player setting
+  if (state.playerView.matchDM) {
+    state.playerView.scale = state.view.scale;
+    state.playerView.cx = state.view.cx;
+    state.playerView.cy = state.view.cy;
+  }
+  renderAndSync();
+}
+
+// Rotate ONLY the player display. Like the zoom/offset sliders, this gives the player an
+// independent view so the rotation is visible while the GM keeps their own orientation.
+function rotatePlayerView(deg) {
+  state.playerView.matchDM = false;
+  if (controls.playerMatchDM) controls.playerMatchDM.checked = false;
+  state.playerView.rotation = ((((state.playerView.rotation || 0) + deg) % 360) + 360) % 360;
+  syncPlayerViewControls();
+  renderAndSync();
+}
+
+// Fit-to-screen for the player display, using the size the player reported.
+function fitPlayerView() {
+  if (!state.imageWidth || !state.imageHeight) return;
+  state.playerView.matchDM = false;
+  if (controls.playerMatchDM) controls.playerMatchDM.checked = false;
+  const rect = canvas.getBoundingClientRect();
+  const vw = playerViewport?.w || rect.width;
+  const vh = playerViewport?.h || rect.height;
+  state.playerView.scale = fitScaleFor(vw, vh, state.playerView.rotation || 0);
+  state.playerView.cx = state.imageWidth / 2;
+  state.playerView.cy = state.imageHeight / 2;
+  syncPlayerViewControls();
+  renderAndSync();
 }
 
 function viewTransform() {
@@ -1725,8 +1745,11 @@ function viewTransform() {
     rect,
     k,
     ms,
-    tx: rect.width / 2 - v.cx * ms * k,
-    ty: rect.height / 2 - v.cy * ms * k,
+    rot: ((v.rotation || 0) * Math.PI) / 180,
+    cx: v.cx,
+    cy: v.cy,
+    centerX: rect.width / 2,
+    centerY: rect.height / 2,
   };
 }
 
@@ -1735,17 +1758,32 @@ function clientToCanvasPoint(point) {
   return { x: point.clientX - rect.left, y: point.clientY - rect.top };
 }
 
+// Screen <-> native conversions, rotation-aware. The view is centered on (cx,cy) in native
+// coords, scaled by k*ms, and rotated by `rot` about the canvas center.
 function screenToNative(point) {
   const t = viewTransform();
+  const s = t.k * t.ms;
+  const ox = point.x - t.centerX;
+  const oy = point.y - t.centerY;
+  const cos = Math.cos(-t.rot);
+  const sin = Math.sin(-t.rot);
   return {
-    x: (point.x - t.tx) / t.k / t.ms,
-    y: (point.y - t.ty) / t.k / t.ms,
+    x: t.cx + (ox * cos - oy * sin) / s,
+    y: t.cy + (ox * sin + oy * cos) / s,
   };
 }
 
 function nativeToScreen(n) {
   const t = viewTransform();
-  return { x: t.tx + n.x * t.ms * t.k, y: t.ty + n.y * t.ms * t.k };
+  const s = t.k * t.ms;
+  const dx = (n.x - t.cx) * s;
+  const dy = (n.y - t.cy) * s;
+  const cos = Math.cos(t.rot);
+  const sin = Math.sin(t.rot);
+  return {
+    x: t.centerX + dx * cos - dy * sin,
+    y: t.centerY + dx * sin + dy * cos,
+  };
 }
 
 function toNativePoint(event) {
@@ -1792,8 +1830,11 @@ function render() {
   const { w, h } = worldDims();
 
   ctx.save();
-  ctx.translate(t.tx, t.ty);
+  // Center the view, rotate, scale, then shift so (cx,cy) sits at the canvas center.
+  ctx.translate(t.centerX, t.centerY);
+  ctx.rotate(t.rot);
   ctx.scale(t.k, t.k);
+  ctx.translate(-t.cx * t.ms, -t.cy * t.ms);
 
   // World block (native x map.scale)
   ctx.drawImage(mapImage, 0, 0, w, h);
@@ -1833,16 +1874,35 @@ function drawPlayerFrame() {
   const ms = state.map.scale || 1;
   const pv = state.playerView.matchDM ? state.view : state.playerView;
   if (!pv.scale) return;
-  const halfW = playerViewport.w / (pv.scale * ms) / 2;
-  const halfH = playerViewport.h / (pv.scale * ms) / 2;
-  const tl = nativeToScreen({ x: pv.cx - halfW, y: pv.cy - halfH });
-  const br = nativeToScreen({ x: pv.cx + halfW, y: pv.cy + halfH });
+  // Find the four corners of the player's visible region in native coords (un-rotating by
+  // the player's own rotation), then project them through the GM transform so the frame is
+  // correct even when the GM and player views are rotated differently.
+  const s = pv.scale * ms;
+  const hw = playerViewport.w / 2;
+  const hh = playerViewport.h / 2;
+  const pr = ((pv.rotation || 0) * Math.PI) / 180;
+  const cosP = Math.cos(-pr);
+  const sinP = Math.sin(-pr);
+  const toNative = (ox, oy) => ({
+    x: pv.cx + (ox * cosP - oy * sinP) / s,
+    y: pv.cy + (ox * sinP + oy * cosP) / s,
+  });
+  const corners = [
+    nativeToScreen(toNative(-hw, -hh)),
+    nativeToScreen(toNative(hw, -hh)),
+    nativeToScreen(toNative(hw, hh)),
+    nativeToScreen(toNative(-hw, hh)),
+  ];
   ctx.save();
   ctx.globalAlpha = playerFrameOpacity;
   ctx.strokeStyle = playerFrameColor;
   ctx.lineWidth = 2;
   ctx.setLineDash([10, 6]);
-  ctx.strokeRect(tl.x, tl.y, br.x - tl.x, br.y - tl.y);
+  ctx.beginPath();
+  ctx.moveTo(corners[0].x, corners[0].y);
+  for (let i = 1; i < corners.length; i++) ctx.lineTo(corners[i].x, corners[i].y);
+  ctx.closePath();
+  ctx.stroke();
   ctx.restore();
 }
 
@@ -2065,6 +2125,10 @@ function armCalibration(purpose) {
   render();
 }
 
+// Both calibrate buttons (Grid and Measure) do the same thing: from the dragged square they
+// set the grid cell SIZE, align the grid OFFSET to where the square was drawn, and store the
+// measure cell size. Because token snapping and the ruler both read grid size+offset, tokens
+// land on the printed cells whether or not the grid overlay is shown.
 function finishCalibration() {
   const draft = calibrationDraft;
   const purpose = calibrating;
@@ -2083,19 +2147,22 @@ function finishCalibration() {
     render();
     return;
   }
-  if (purpose === "grid") {
-    const min = Number(controls.gridSize?.min) || 20;
-    const max = Number(controls.gridSize?.max) || 200;
-    state.grid.size = Math.min(max, Math.max(min, Math.round(side)));
-    state.grid.enabled = true;
-    syncControlsFromState();
-    controls.modeHint.textContent = `Grid size set to ${Math.round(state.grid.size)} px.`;
-    renderAndSync();
-  } else {
-    state.measure.cellSize = Math.round(side);
-    controls.modeHint.textContent = `Measure calibrated: 1 cell = ${Math.round(side)} px.`;
-    renderAndSync();
-  }
+  const size = Math.max(4, Math.round(side));
+  // World-space coords of the square's top-left corner; align a grid line to it.
+  const x0w = Math.min(draft.start.x, draft.end.x) * ms;
+  const y0w = Math.min(draft.start.y, draft.end.y) * ms;
+  const normOffset = (v) => {
+    let o = ((v % size) + size) % size; // 0..size
+    if (o > size / 2) o -= size; // keep it small: (-size/2, size/2]
+    return Math.round(o);
+  };
+  state.grid.size = size;
+  state.grid.offsetX = normOffset(x0w);
+  state.grid.offsetY = normOffset(y0w);
+  state.measure.cellSize = size; // keeps the ruler correct when the overlay is off
+  syncControlsFromState();
+  controls.modeHint.textContent = `Calibrated: 1 cell = ${size} px, grid aligned to the square.`;
+  renderAndSync();
 }
 
 function updateCalibrationUI() {
@@ -2726,17 +2793,8 @@ function drawMeasureLabel() {
 function onPointerDown(event) {
   lastPointer = { clientX: event.clientX, clientY: event.clientY };
 
-  // Player display: view-only, except optional local pan when the GM enables interaction.
-  if (isPlayer) {
-    if (state.playerView.interactive && event.button === 2 && state.imageData) {
-      event.preventDefault();
-      isDragging = true;
-      dragStart = { x: event.clientX, y: event.clientY };
-      viewStart = { cx: state.playerView.cx, cy: state.playerView.cy };
-      capturePointer(event.pointerId);
-    }
-    return;
-  }
+  // Player display: view-only, fully driven by the GM.
+  if (isPlayer) return;
 
   // Middle-mouse drags the map in ANY tool, so you can reposition the view without
   // switching tools or accidentally dropping fog.
@@ -2874,16 +2932,8 @@ function onPointerDown(event) {
 function onPointerMove(event) {
   lastPointer = { clientX: event.clientX, clientY: event.clientY };
 
-  // Player display: only local pan (when enabled) is possible here.
-  if (isPlayer) {
-    if (isDragging && state.playerView.interactive) {
-      const t = viewTransform();
-      state.playerView.cx = viewStart.cx - (event.clientX - dragStart.x) / (t.k * t.ms);
-      state.playerView.cy = viewStart.cy - (event.clientY - dragStart.y) / (t.k * t.ms);
-      render();
-    }
-    return;
-  }
+  // Player display is view-only.
+  if (isPlayer) return;
 
   if (!isDragging) {
     if (["brush", "eraser"].includes(mode)) render(); // live tool preview
@@ -2933,10 +2983,15 @@ function onPointerMove(event) {
     return;
   }
 
-  // pan
+  // pan — un-rotate the screen-space drag delta into native coords
   const t = viewTransform();
-  state.view.cx = viewStart.cx - (event.clientX - dragStart.x) / (t.k * t.ms);
-  state.view.cy = viewStart.cy - (event.clientY - dragStart.y) / (t.k * t.ms);
+  const ddx = event.clientX - dragStart.x;
+  const ddy = event.clientY - dragStart.y;
+  const cos = Math.cos(-t.rot);
+  const sin = Math.sin(-t.rot);
+  const s = t.k * t.ms;
+  state.view.cx = viewStart.cx - (ddx * cos - ddy * sin) / s;
+  state.view.cy = viewStart.cy - (ddx * sin + ddy * cos) / s;
   if (state.playerView.matchDM) {
     state.playerView.cx = state.view.cx;
     state.playerView.cy = state.view.cy;
@@ -3002,20 +3057,8 @@ function onPointerUp(event) {
 function onWheel(event) {
   if (!state.imageData) return;
 
-  // Player display: local zoom about the cursor, only when the GM enabled interaction.
-  if (isPlayer) {
-    if (!state.playerView.interactive) return;
-    event.preventDefault();
-    const p = clientToCanvasPoint(event);
-    const before = screenToNative(p);
-    const zoom = event.deltaY < 0 ? 1.08 : 0.92;
-    state.playerView.scale = Math.min(16, Math.max(0.02, state.playerView.scale * zoom));
-    const t = viewTransform();
-    state.playerView.cx = before.x - (p.x - t.rect.width / 2) / (t.k * t.ms);
-    state.playerView.cy = before.y - (p.y - t.rect.height / 2) / (t.k * t.ms);
-    render();
-    return;
-  }
+  // The player display is view-only; the GM drives its framing.
+  if (isPlayer) return;
 
   // Rotate cone when in AoE mode (don't zoom)
   if (mode === "aoe" && aoeShape === "cone") {
@@ -3034,9 +3077,15 @@ function onWheel(event) {
   const before = screenToNative(p);
   const zoom = event.deltaY < 0 ? 1.08 : 0.92;
   state.view.scale = Math.min(16, Math.max(0.02, state.view.scale * zoom));
+  // Recompute the center so the point under the cursor stays put (rotation-aware).
   const t = viewTransform();
-  state.view.cx = before.x - (p.x - t.rect.width / 2) / (t.k * t.ms);
-  state.view.cy = before.y - (p.y - t.rect.height / 2) / (t.k * t.ms);
+  const s = t.k * t.ms;
+  const ox = p.x - t.centerX;
+  const oy = p.y - t.centerY;
+  const cos = Math.cos(-t.rot);
+  const sin = Math.sin(-t.rot);
+  state.view.cx = before.x - (ox * cos - oy * sin) / s;
+  state.view.cy = before.y - (ox * sin + oy * cos) / s;
   if (state.playerView.matchDM) {
     state.playerView.scale = state.view.scale;
     state.playerView.cx = state.view.cx;
@@ -3055,10 +3104,7 @@ function onDoubleClick(event) {
 }
 
 function onContextMenu(event) {
-  if (isPlayer) {
-    if (state.playerView.interactive) event.preventDefault(); // right-drag pans instead
-    return;
-  }
+  if (isPlayer) return;
   event.preventDefault();
   deleteTokenOrRoom(toNativePoint(event));
 }

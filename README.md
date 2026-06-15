@@ -15,7 +15,7 @@ A local-first battlemap display tool for game masters. Cast a map with fog of wa
 ## Features
 
 - **Maps** — load high-resolution map images from local disk; pan and zoom freely.
-- **Player display** — open a second window, drag it to another screen, and cast the map to your players. The player window can go fullscreen, and you can optionally let players pan and zoom their own screen. A red frame on the GM screen shows exactly what the players currently see.
+- **Player display** — open a second window, drag it to another screen, and cast the map to your players. The player window can go fullscreen. You drive the player's framing from the GM panel — match the GM view, fit the map to the player screen, set zoom/position, or rotate the player view independently. A red frame (color and opacity adjustable) on the GM screen shows exactly what the players currently see.
 - **Initiative tracker** — a dockable turn-order panel: add players, NPCs, and monsters with initiative and HP, advance turns and rounds, track damage/healing with HP bars, and optionally mirror a compact order overlay onto the player display.
 - **Area of effect** — hover a live spell template (circle, square, or cone) over the map in any color and size; it mirrors to the player display in real time. The cone rotates with the mouse wheel or a direction slider.
 - **Fog of war**
@@ -25,11 +25,12 @@ A local-first battlemap display tool for game masters. Cast a map with fog of wa
   - Paint or erase fog with a round or square brush of adjustable size.
   - GM sees fog as an adjustable tint/opacity; players see solid black.
 - **Multi-floor** — build multi-level locations; each floor has its own map, fog, tokens, and stairs. Navigate with the on-screen floor widget.
-- **Stairs** — place GM-only staircase markers that link floors; they scale with the grid and zoom and are invisible to players.
+- **Stairs** — place GM-only staircase arrows (color adjustable in the Floors section) that link floors; they scale with the grid and zoom and are invisible to players.
+- **Rotate** — rotate the GM map in 90° steps (fog, tokens, and stairs all ride along, and the player follows), or rotate just the player display independently so it reads right-side up from across the table.
 - **Tokens** — drop, drag, label, color, size, or give them a custom image; they snap to the grid and appear on both displays. In Move mode, click a token to select it and nudge it cell by cell with the arrow keys (Delete removes it).
-- **Grid** — toggle and adjust size, offset, color, opacity, and token snapping. Set the size quickly by dragging a square over one cell of the map.
+- **Grid** — toggle and adjust size, offset, color, opacity, and token snapping. Calibrate quickly by dragging a square over one cell: this sets the cell size *and* aligns the grid to that cell, so tokens snap onto a map's own printed grid even with the overlay off.
 - **Ping** — Alt+click draws an animated marker on both displays.
-- **Measure** — reports distance in grid cells and your choice of imperial (feet) or metric (meters). If the map already has its own printed grid (and the overlay is off), calibrate the ruler by dragging a square over one cell.
+- **Measure** — reports distance in grid cells and your choice of imperial (feet) or metric (meters). The same drag-a-square calibration sets the ruler scale, working whether or not the grid overlay is shown.
 - **Splash / blackout** — show a splash image or a plain black screen on the player display instead of the map.
 - **Library** — save full setups (image, grid, fog, tokens, floors, views) to a local IndexedDB library; export/import the whole library as JSON for backups or moving machines.
 - **Undo / redo** and **fit-to-screen**.
