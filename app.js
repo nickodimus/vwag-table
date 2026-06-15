@@ -1362,9 +1362,12 @@ function drawStairs() {
   const sw = 2 / (curK * curMs);
 
   ctx.save();
+  const rot = currentViewRotation();
 
   state.stairs.forEach((stair) => {
     const { x, y } = stair;
+    ctx.save();
+    keepUpright(x, y, rot); // icon + label stay upright when the map is rotated
 
     // Determine direction: 1 = going UP (target floor has a higher index), -1 = DOWN.
     let dir = 0;
@@ -1413,6 +1416,7 @@ function drawStairs() {
       ctx.stroke();
       ctx.restore();
     }
+    ctx.restore();
   });
 
   ctx.restore();
@@ -1756,6 +1760,22 @@ function viewTransform() {
 function clientToCanvasPoint(point) {
   const rect = canvas.getBoundingClientRect();
   return { x: point.clientX - rect.left, y: point.clientY - rect.top };
+}
+
+// Current view rotation in radians (the angle the render transform applied). Markers like
+// tokens and stairs counter-rotate by its negative so their art/labels stay screen-upright
+// while their positions still ride the rotated map.
+function currentViewRotation() {
+  return ((activeView().rotation || 0) * Math.PI) / 180;
+}
+
+// Rotate the canvas about a native point so subsequent drawing at absolute coords keeps its
+// position but is drawn upright on screen (cancels the view rotation).
+function keepUpright(cx, cy, rot) {
+  if (!rot) return;
+  ctx.translate(cx, cy);
+  ctx.rotate(-rot);
+  ctx.translate(-cx, -cy);
 }
 
 // Screen <-> native conversions, rotation-aware. The view is centered on (cx,cy) in native
@@ -2312,9 +2332,11 @@ function tokenOutline(token, r) {
 
 function drawTokens() {
   const lineW = Math.max(1, 2 / (curK * curMs));
+  const rot = currentViewRotation();
   state.tokens.forEach((token) => {
     const r = tokenRadius(token);
     ctx.save();
+    keepUpright(token.x, token.y, rot); // art + label stay upright when the map is rotated
     const img = getTokenImage(token.image);
     if (img && img.complete && img.naturalWidth) {
       // Token art: cover-fit the image into the token outline and ring it.
