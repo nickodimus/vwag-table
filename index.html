@@ -120,6 +120,24 @@
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12a9 9 0 1 1-9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/></svg>
             </button>
           </div>
+          <div class="inline-buttons">
+            <label class="file-loader inline-loader" title="Add an image to the map">
+              <input id="addImageInput" type="file" accept="image/*">
+              <span>Add image</span>
+            </label>
+            <button id="addNoteBtn" type="button">Add note</button>
+          </div>
+          <p class="hint">Drag an image onto the map to drop it. In Move mode, click an image or note to select it, drag to move, and press Delete to remove. Double-click a note to edit it. Notes are GM-only.</p>
+          <div id="imageSelPanel" class="hidden">
+            <label class="checkbox-row">
+              <input id="imageShowPlayers" type="checkbox">
+              <span>Show selected image to players</span>
+            </label>
+            <label>
+              Image size
+              <input id="imageSize" type="range" min="40" max="3000" value="300">
+            </label>
+          </div>
         </section>
 
         <section class="control-section">

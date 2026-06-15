@@ -117,6 +117,11 @@ const controls = {
   rotatePlayerRight: document.getElementById("rotatePlayerRight"),
   playerFit: document.getElementById("playerFit"),
   stairColor: document.getElementById("stairColor"),
+  addImageInput: document.getElementById("addImageInput"),
+  addNoteBtn: document.getElementById("addNoteBtn"),
+  imageSelPanel: document.getElementById("imageSelPanel"),
+  imageShowPlayers: document.getElementById("imageShowPlayers"),
+  imageSize: document.getElementById("imageSize"),
   playerFrameColor: document.getElementById("playerFrameColor"),
   playerFrameOpacity: document.getElementById("playerFrameOpacity"),
   panelToggle: document.getElementById("panelToggle"),
@@ -181,6 +186,8 @@ function makeFloor(id) {
     strokes: [],
     tokens: [],
     stairs: [],
+    images: [],
+    notes: [],
     view: { scale: 1, cx: 0, cy: 0, rotation: 0 },
   };
 }
@@ -206,6 +213,10 @@ const state = {
   },
   tokens: [],
   stairs: [],
+  // Droppable map images (synced to players; only those with showPlayers render there) and
+  // GM-only floating notes (never synced). Both are per-floor like tokens/stairs.
+  images: [],
+  notes: [],
   stairColor: "#ffffff", // GM-only stair marker color (stairs never show on the player display)
   // Initiative tracker: a turn order shared across all floors. When showPlayers is on, a
   // compact order overlay is mirrored to the player display.
@@ -242,12 +253,18 @@ let aoeSyncQueued = false;
 const AOE_PRESETS = { circle: [5, 10, 15, 20], square: [10, 20, 30], cone: [15, 30] };
 const AOE_CONE_HALF_ANGLE = Math.atan(0.5); // ~26.6°, total spread ≈ 53° (D&D cone)
 let selectedToken = null; // token highlighted in Move mode for arrow-key nudging (GM only)
+let selectedImage = null; // map image selected in Move mode (GM only)
+let selectedNote = null; // floating note selected in Move mode (GM only)
 let tokenImageData = ""; // image applied to newly placed tokens (data URL), authoring default
 const tokenImageCache = new Map(); // data URL -> HTMLImageElement, so token art draws each frame
+const IMAGE_MAX_EDGE = 1024; // cap dropped map images so saves/syncs stay bounded
 let isDragging = false;
 let dragStart = { x: 0, y: 0 };
 let viewStart = { cx: 0, cy: 0 };
 let draggingToken = null;
+let draggingImage = null;
+let draggingNote = null;
+let dragGrab = { dx: 0, dy: 0 }; // offset from cursor to object center while dragging images/notes
 let measureLine = null;
 let pings = [];
 let pingRaf = 0;
@@ -424,6 +441,23 @@ function setup() {
   canvas.addEventListener("dblclick", onDoubleClick);
   canvas.addEventListener("contextmenu", onContextMenu);
   canvas.addEventListener("wheel", onWheel, { passive: false });
+
+  // Drag-and-drop image files onto the map to place them (GM only).
+  if (!isPlayer) {
+    canvas.addEventListener("dragover", (event) => {
+      if (event.dataTransfer?.types?.includes("Files")) {
+        event.preventDefault();
+        event.dataTransfer.dropEffect = "copy";
+      }
+    });
+    canvas.addEventListener("drop", (event) => {
+      const files = [...(event.dataTransfer?.files || [])].filter((f) => f.type.startsWith("image/"));
+      if (!files.length || !state.imageData) return;
+      event.preventDefault();
+      const n = toNativePoint(event);
+      files.forEach((file) => addImageFile(file, n.x, n.y));
+    });
+  }
 
   if (isPlayer) {
     controls.playerFullscreen?.addEventListener("click", toggleFullscreen);
@@ -640,6 +674,24 @@ function bindControls() {
   controls.playerFit?.addEventListener("click", fitPlayerView);
   controls.stairColor?.addEventListener("input", () => {
     state.stairColor = controls.stairColor.value;
+    renderAndSync();
+  });
+  controls.addImageInput?.addEventListener("change", (event) => {
+    const file = event.target.files[0];
+    if (file) addImageFile(file, state.view.cx, state.view.cy);
+    event.target.value = "";
+  });
+  controls.addNoteBtn?.addEventListener("click", addNote);
+  controls.imageShowPlayers?.addEventListener("input", () => {
+    if (!selectedImage) return;
+    selectedImage.showPlayers = controls.imageShowPlayers.checked;
+    renderAndSync();
+  });
+  controls.imageSize?.addEventListener("input", () => {
+    if (!selectedImage) return;
+    const aspect = selectedImage.w / selectedImage.h || 1;
+    selectedImage.w = Number(controls.imageSize.value);
+    selectedImage.h = selectedImage.w / aspect;
     renderAndSync();
   });
   controls.copyDMView.addEventListener("click", () => snapPlayerViewToGM(true));
@@ -1039,6 +1091,8 @@ function loadSnapshot(snapshot) {
     state.fog.strokes = snapshot.fog?.strokes || [];
     state.tokens = Array.isArray(snapshot.tokens) ? snapshot.tokens : [];
     state.stairs = Array.isArray(snapshot.stairs) ? snapshot.stairs : [];
+    state.images = Array.isArray(snapshot.images) ? snapshot.images : [];
+    state.notes = []; // notes are GM-only and never arrive on the player
     Object.assign(state.view, snapshot.view || {});
     state.imageId = snapshot.imageId || state.imageId;
     state.imageData = snapshot.imageData || state.imageData; // keep the image assets delivered separately
@@ -1194,12 +1248,14 @@ function captureCurrentFloor() {
   floor.strokes = JSON.parse(JSON.stringify(state.fog.strokes));
   floor.tokens = JSON.parse(JSON.stringify(state.tokens));
   floor.stairs = JSON.parse(JSON.stringify(state.stairs));
+  floor.images = JSON.parse(JSON.stringify(state.images));
+  floor.notes = JSON.parse(JSON.stringify(state.notes));
   floor.view = { ...state.view };
 }
 
 // Promote a floor record into the active state fields.
 function applyFloor(floor) {
-  selectedToken = null; // tokens array is about to be replaced
+  selectedToken = selectedImage = selectedNote = null; // these arrays are about to be replaced
   state.currentFloorId = floor.id;
   state.imageId = floor.imageId || "";
   state.imageData = floor.imageData || "";
@@ -1211,6 +1267,8 @@ function applyFloor(floor) {
   state.fog.strokes = JSON.parse(JSON.stringify(floor.strokes || []));
   state.tokens = JSON.parse(JSON.stringify(floor.tokens || []));
   state.stairs = JSON.parse(JSON.stringify(floor.stairs || []));
+  state.images = JSON.parse(JSON.stringify(floor.images || []));
+  state.notes = JSON.parse(JSON.stringify(floor.notes || []));
   Object.assign(state.view, floor.view || { scale: 1, cx: 0, cy: 0 });
   state.view.rotation = floor.view?.rotation || 0; // default older floors with no rotation
   fogDirty = true;
@@ -1444,6 +1502,7 @@ function sanitizedState() {
   const { floors, imageData, ...rest } = state;
   const clone = JSON.parse(JSON.stringify(rest));
   if (clone.splash) delete clone.splash.imageData;
+  delete clone.notes; // floating notes are GM-only and never leave the GM window
   return clone;
 }
 
@@ -1515,6 +1574,8 @@ function setMode(nextMode) {
   drawingRoom = [];
   stampDraft = null;
   selectedToken = null;
+  selectedImage = selectedNote = null;
+  updateImageSelectionPanel();
   controls.fogToggle?.classList.toggle("active", FOG_MODES.includes(nextMode));
   [controls.panMode, controls.polygonMode, controls.namedPolygonMode, controls.revealMode, controls.brushMode, controls.eraserMode, controls.stampMode, controls.tokenMode, controls.aoeMode, controls.measureMode, controls.stairMode].forEach(
     (button) => button?.classList.remove("active"),
@@ -1590,7 +1651,7 @@ function clearFog() {
 /* ----------------------------- history ----------------------------- */
 
 function snapshotFog() {
-  return JSON.stringify({ rooms: state.fog.rooms, strokes: state.fog.strokes, tokens: state.tokens, stairs: state.stairs });
+  return JSON.stringify({ rooms: state.fog.rooms, strokes: state.fog.strokes, tokens: state.tokens, stairs: state.stairs, images: state.images, notes: state.notes });
 }
 function pushHistory() {
   undoStack.push(snapshotFog());
@@ -1604,6 +1665,9 @@ function applyFogSnapshot(serialized) {
   state.fog.strokes = data.strokes || [];
   state.tokens = data.tokens || [];
   state.stairs = data.stairs || [];
+  state.images = data.images || [];
+  state.notes = data.notes || [];
+  selectedImage = selectedNote = null;
   fogDirty = true;
 }
 function undo() {
@@ -1865,6 +1929,7 @@ function render() {
   ctx.scale(t.ms, t.ms);
   if (fogDirty) rebuildFog();
   compositeFog();
+  drawImages(); // droppable map images sit above fog and below tokens
   drawAoeTemplate(); // hover template sits above fog and below tokens; visible to both GM and player
   if (!isPlayer) drawRoomOutlines();
   drawTokens();
@@ -1884,6 +1949,7 @@ function render() {
   drawPings();
   if (measureLine) drawMeasureLabel();
   if (!isPlayer) drawRoomNames();
+  if (!isPlayer) drawNotes();
   if (!isPlayer) drawPlayerFrame();
 }
 
@@ -2515,6 +2581,170 @@ function nudgeSelectedToken(key) {
   renderAndSync();
 }
 
+/* ----------------------------- map images & notes ----------------------------- */
+
+// Droppable images live in native coords (x,y = center; w,h = size) and rotate with the map.
+// On the player display only images flagged showPlayers are drawn.
+function drawImages() {
+  const list = state.images || [];
+  if (!list.length) return;
+  list.forEach((im) => {
+    if (isPlayer && !im.showPlayers) return;
+    const img = getTokenImage(im.src);
+    if (!img || !img.complete || !img.naturalWidth) return;
+    ctx.save();
+    ctx.drawImage(img, im.x - im.w / 2, im.y - im.h / 2, im.w, im.h);
+    if (!isPlayer && im === selectedImage) {
+      ctx.lineWidth = 2 / (curK * curMs);
+      ctx.strokeStyle = "#b1c301";
+      ctx.setLineDash([8 / (curK * curMs), 5 / (curK * curMs)]);
+      ctx.strokeRect(im.x - im.w / 2, im.y - im.h / 2, im.w, im.h);
+    }
+    ctx.restore();
+  });
+}
+
+function hitImage(native) {
+  for (let i = state.images.length - 1; i >= 0; i--) {
+    const im = state.images[i];
+    if (Math.abs(native.x - im.x) <= im.w / 2 && Math.abs(native.y - im.y) <= im.h / 2) return im;
+  }
+  return null;
+}
+
+// Notes are GM-only sticky labels anchored to a native point but drawn in screen space so the
+// text stays a constant, readable size and orientation at any zoom or rotation.
+function wrapNoteText(text, maxW) {
+  const out = [];
+  String(text || "").split("\n").forEach((para) => {
+    const words = para.split(/\s+/);
+    let line = "";
+    words.forEach((w) => {
+      const test = line ? line + " " + w : w;
+      if (line && ctx.measureText(test).width > maxW) {
+        out.push(line);
+        line = w;
+      } else {
+        line = test;
+      }
+    });
+    out.push(line);
+  });
+  return out.length ? out : [""];
+}
+
+function noteLayout(note) {
+  ctx.save();
+  ctx.font = "600 13px Inter, ui-sans-serif, sans-serif";
+  const padX = 9;
+  const padY = 7;
+  const lh = 17;
+  const boxW = 176;
+  const lines = wrapNoteText(note.text, boxW - padX * 2);
+  ctx.restore();
+  return { lines, padX, padY, lh, boxW, boxH: padY * 2 + lines.length * lh };
+}
+
+function noteScreenRect(note) {
+  const s = nativeToScreen({ x: note.x, y: note.y });
+  const { boxW, boxH } = noteLayout(note);
+  return { x: s.x, y: s.y, w: boxW, h: boxH };
+}
+
+function drawNotes() {
+  const list = state.notes || [];
+  if (!list.length) return;
+  ctx.save();
+  ctx.font = "600 13px Inter, ui-sans-serif, sans-serif";
+  ctx.textAlign = "left";
+  ctx.textBaseline = "top";
+  list.forEach((note) => {
+    const s = nativeToScreen({ x: note.x, y: note.y });
+    const { lines, padX, padY, lh, boxW, boxH } = noteLayout(note);
+    const sel = note === selectedNote;
+    ctx.fillStyle = "rgba(244, 226, 140, 0.95)";
+    ctx.strokeStyle = sel ? "#b1c301" : "rgba(0,0,0,0.45)";
+    ctx.lineWidth = sel ? 2 : 1;
+    ctx.beginPath();
+    ctx.rect(s.x, s.y, boxW, boxH);
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = "#1a1400";
+    lines.forEach((ln, i) => ctx.fillText(ln, s.x + padX, s.y + padY + i * lh));
+  });
+  ctx.restore();
+}
+
+function hitNote(screenPt) {
+  for (let i = state.notes.length - 1; i >= 0; i--) {
+    const r = noteScreenRect(state.notes[i]);
+    if (screenPt.x >= r.x && screenPt.x <= r.x + r.w && screenPt.y >= r.y && screenPt.y <= r.y + r.h) {
+      return state.notes[i];
+    }
+  }
+  return null;
+}
+
+// Add a map image from a (raw) data URL, centered at native (nx, ny). Downscaled to bound size.
+function addImageFromDataURL(rawSrc, nx, ny) {
+  downscaleImage(rawSrc, IMAGE_MAX_EDGE, (src) => {
+    const probe = new Image();
+    probe.onload = () => {
+      const aspect = probe.naturalWidth / probe.naturalHeight || 1;
+      const w = Math.max(40, (state.imageWidth || 1000) * 0.25);
+      pushHistory();
+      const im = { id: uuid(), x: nx, y: ny, w, h: w / aspect, src, showPlayers: false };
+      state.images.push(im);
+      selectedToken = selectedNote = null;
+      selectedImage = im;
+      updateImageSelectionPanel();
+      renderAndSync();
+    };
+    probe.onerror = () => window.alert("Could not load that image.");
+    probe.src = src;
+  });
+}
+
+function addImageFile(file, nx, ny) {
+  if (!file || !file.type.startsWith("image/")) return;
+  const reader = new FileReader();
+  reader.onerror = () => window.alert("Could not read that image file.");
+  reader.onload = () => addImageFromDataURL(reader.result, nx, ny);
+  reader.readAsDataURL(file);
+}
+
+function addNote() {
+  const text = window.prompt("Note text (GM only):", "");
+  if (text === null) return;
+  pushHistory();
+  const note = { id: uuid(), x: state.view.cx, y: state.view.cy, text: text || "Note" };
+  state.notes.push(note);
+  selectedToken = selectedImage = null;
+  selectedNote = note;
+  updateImageSelectionPanel();
+  render(); // notes are GM-only, no broadcast needed
+}
+
+function editNote(note) {
+  const text = window.prompt("Edit note (GM only):", note.text || "");
+  if (text === null) return;
+  pushHistory();
+  note.text = text;
+  render();
+}
+
+// Show/populate the View-section panel for the currently selected image.
+function updateImageSelectionPanel() {
+  if (isPlayer) return;
+  const panel = controls.imageSelPanel;
+  if (!panel) return;
+  panel.classList.toggle("hidden", !selectedImage);
+  if (selectedImage) {
+    if (controls.imageShowPlayers) controls.imageShowPlayers.checked = !!selectedImage.showPlayers;
+    if (controls.imageSize) controls.imageSize.value = Math.round(selectedImage.w);
+  }
+}
+
 function deleteTokenOrRoom(native) {
   const stair = hitStair(native);
   if (stair) {
@@ -2528,6 +2758,14 @@ function deleteTokenOrRoom(native) {
     pushHistory();
     if (token === selectedToken) selectedToken = null;
     state.tokens = state.tokens.filter((item) => item !== token);
+    renderAndSync();
+    return true;
+  }
+  const image = hitImage(native);
+  if (image) {
+    pushHistory();
+    if (image === selectedImage) { selectedImage = null; updateImageSelectionPanel(); }
+    state.images = state.images.filter((item) => item !== image);
     renderAndSync();
     return true;
   }
@@ -2887,12 +3125,40 @@ function onPointerDown(event) {
     return;
   }
 
-  // In Move mode: click a token to select it (for arrow-key nudging), or click a stair
-  // marker to jump to that floor. Clicking empty space clears the selection and pans.
+  // In Move mode: click a token to select it (for arrow-key nudging), a note or image to
+  // select+drag it, or a stair to jump floors. Clicking empty space clears selection and pans.
   if (mode === "pan") {
     const token = hitToken(native);
     if (token) {
       selectedToken = token;
+      selectedImage = selectedNote = null;
+      updateImageSelectionPanel();
+      render();
+      return;
+    }
+    const note = hitNote(clientToCanvasPoint(event));
+    if (note) {
+      pushHistory();
+      selectedNote = note;
+      selectedToken = selectedImage = null;
+      draggingNote = note;
+      dragGrab = { dx: note.x - native.x, dy: note.y - native.y };
+      isDragging = true;
+      capturePointer(event.pointerId);
+      updateImageSelectionPanel();
+      render();
+      return;
+    }
+    const image = hitImage(native);
+    if (image) {
+      pushHistory();
+      selectedImage = image;
+      selectedToken = selectedNote = null;
+      draggingImage = image;
+      dragGrab = { dx: image.x - native.x, dy: image.y - native.y };
+      isDragging = true;
+      capturePointer(event.pointerId);
+      updateImageSelectionPanel();
       render();
       return;
     }
@@ -2902,8 +3168,9 @@ function onPointerDown(event) {
       if (idx !== -1) goToFloor(idx);
       return;
     }
-    if (selectedToken) {
-      selectedToken = null;
+    if (selectedToken || selectedImage || selectedNote) {
+      selectedToken = selectedImage = selectedNote = null;
+      updateImageSelectionPanel();
       render();
     }
   }
@@ -2998,6 +3265,22 @@ function onPointerMove(event) {
     return;
   }
 
+  if (draggingImage) {
+    const native = toNativePoint(event);
+    draggingImage.x = native.x + dragGrab.dx;
+    draggingImage.y = native.y + dragGrab.dy;
+    render();
+    return;
+  }
+
+  if (draggingNote) {
+    const native = toNativePoint(event);
+    draggingNote.x = native.x + dragGrab.dx;
+    draggingNote.y = native.y + dragGrab.dy;
+    render();
+    return;
+  }
+
   if (measureLine) {
     measureLine.end = toNativePoint(event);
     render();
@@ -3063,6 +3346,16 @@ function onPointerUp(event) {
     renderAndSync();
   }
 
+  if (draggingImage) {
+    draggingImage = null;
+    renderAndSync(); // sync the moved image to players
+  }
+
+  if (draggingNote) {
+    draggingNote = null;
+    render(); // notes are GM-only
+  }
+
   if (measureLine && mode === "measure") {
     measureLine = null;
     render();
@@ -3122,12 +3415,25 @@ function onDoubleClick(event) {
     toggleFullscreen();
     return;
   }
+  const note = hitNote(clientToCanvasPoint(event));
+  if (note) {
+    editNote(note);
+    return;
+  }
   if (mode === "polygon" || mode === "namedPolygon") finishRoom();
 }
 
 function onContextMenu(event) {
   if (isPlayer) return;
   event.preventDefault();
+  const note = hitNote(clientToCanvasPoint(event));
+  if (note) {
+    pushHistory();
+    if (note === selectedNote) { selectedNote = null; updateImageSelectionPanel(); }
+    state.notes = state.notes.filter((n) => n !== note);
+    render();
+    return;
+  }
   deleteTokenOrRoom(toNativePoint(event));
 }
 
@@ -3184,6 +3490,23 @@ function onKeyDown(event) {
     state.tokens = state.tokens.filter((t) => t !== selectedToken);
     selectedToken = null;
     renderAndSync();
+    return;
+  }
+  if (selectedImage && (event.key === "Delete" || event.key === "Backspace")) {
+    event.preventDefault();
+    pushHistory();
+    state.images = state.images.filter((im) => im !== selectedImage);
+    selectedImage = null;
+    updateImageSelectionPanel();
+    renderAndSync();
+    return;
+  }
+  if (selectedNote && (event.key === "Delete" || event.key === "Backspace")) {
+    event.preventDefault();
+    pushHistory();
+    state.notes = state.notes.filter((n) => n !== selectedNote);
+    selectedNote = null;
+    render(); // notes are GM-only
     return;
   }
   if (event.key === "Enter" && drawingPolygon) {
