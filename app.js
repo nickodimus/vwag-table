@@ -122,6 +122,9 @@ const controls = {
   imageSelPanel: document.getElementById("imageSelPanel"),
   imageShowPlayers: document.getElementById("imageShowPlayers"),
   imageSize: document.getElementById("imageSize"),
+  imageRotation: document.getElementById("imageRotation"),
+  noteSelPanel: document.getElementById("noteSelPanel"),
+  noteSize: document.getElementById("noteSize"),
   playerFrameColor: document.getElementById("playerFrameColor"),
   playerFrameOpacity: document.getElementById("playerFrameOpacity"),
   panelToggle: document.getElementById("panelToggle"),
@@ -693,6 +696,16 @@ function bindControls() {
     selectedImage.w = Number(controls.imageSize.value);
     selectedImage.h = selectedImage.w / aspect;
     renderAndSync();
+  });
+  controls.imageRotation?.addEventListener("input", () => {
+    if (!selectedImage) return;
+    selectedImage.rotation = Number(controls.imageRotation.value);
+    renderAndSync();
+  });
+  controls.noteSize?.addEventListener("input", () => {
+    if (!selectedNote) return;
+    selectedNote.scale = Number(controls.noteSize.value);
+    render(); // notes are GM-only
   });
   controls.copyDMView.addEventListener("click", () => snapPlayerViewToGM(true));
   controls.playerZoom.addEventListener("input", () => {
@@ -1575,7 +1588,7 @@ function setMode(nextMode) {
   stampDraft = null;
   selectedToken = null;
   selectedImage = selectedNote = null;
-  updateImageSelectionPanel();
+  updateSelectionPanels();
   controls.fogToggle?.classList.toggle("active", FOG_MODES.includes(nextMode));
   [controls.panMode, controls.polygonMode, controls.namedPolygonMode, controls.revealMode, controls.brushMode, controls.eraserMode, controls.stampMode, controls.tokenMode, controls.aoeMode, controls.measureMode, controls.stairMode].forEach(
     (button) => button?.classList.remove("active"),
@@ -2593,6 +2606,12 @@ function drawImages() {
     const img = getTokenImage(im.src);
     if (!img || !img.complete || !img.naturalWidth) return;
     ctx.save();
+    const irot = (im.rotation || 0) * Math.PI / 180;
+    if (irot) {
+      ctx.translate(im.x, im.y);
+      ctx.rotate(irot);
+      ctx.translate(-im.x, -im.y);
+    }
     ctx.drawImage(img, im.x - im.w / 2, im.y - im.h / 2, im.w, im.h);
     if (!isPlayer && im === selectedImage) {
       ctx.lineWidth = 2 / (curK * curMs);
@@ -2607,7 +2626,15 @@ function drawImages() {
 function hitImage(native) {
   for (let i = state.images.length - 1; i >= 0; i--) {
     const im = state.images[i];
-    if (Math.abs(native.x - im.x) <= im.w / 2 && Math.abs(native.y - im.y) <= im.h / 2) return im;
+    let dx = native.x - im.x;
+    let dy = native.y - im.y;
+    const irot = (im.rotation || 0) * Math.PI / 180;
+    if (irot) {
+      const c = Math.cos(-irot);
+      const s = Math.sin(-irot);
+      [dx, dy] = [dx * c - dy * s, dx * s + dy * c];
+    }
+    if (Math.abs(dx) <= im.w / 2 && Math.abs(dy) <= im.h / 2) return im;
   }
   return null;
 }
@@ -2633,13 +2660,18 @@ function wrapNoteText(text, maxW) {
   return out.length ? out : [""];
 }
 
+function noteFont(note) {
+  return `600 ${Math.round(13 * (note.scale || 1))}px Inter, ui-sans-serif, sans-serif`;
+}
+
 function noteLayout(note) {
+  const sc = note.scale || 1;
   ctx.save();
-  ctx.font = "600 13px Inter, ui-sans-serif, sans-serif";
-  const padX = 9;
-  const padY = 7;
-  const lh = 17;
-  const boxW = 176;
+  ctx.font = noteFont(note);
+  const padX = 9 * sc;
+  const padY = 7 * sc;
+  const lh = 17 * sc;
+  const boxW = 176 * sc;
   const lines = wrapNoteText(note.text, boxW - padX * 2);
   ctx.restore();
   return { lines, padX, padY, lh, boxW, boxH: padY * 2 + lines.length * lh };
@@ -2655,12 +2687,12 @@ function drawNotes() {
   const list = state.notes || [];
   if (!list.length) return;
   ctx.save();
-  ctx.font = "600 13px Inter, ui-sans-serif, sans-serif";
   ctx.textAlign = "left";
   ctx.textBaseline = "top";
   list.forEach((note) => {
     const s = nativeToScreen({ x: note.x, y: note.y });
     const { lines, padX, padY, lh, boxW, boxH } = noteLayout(note);
+    ctx.font = noteFont(note);
     const sel = note === selectedNote;
     ctx.fillStyle = "rgba(244, 226, 140, 0.95)";
     ctx.strokeStyle = sel ? "#b1c301" : "rgba(0,0,0,0.45)";
@@ -2693,11 +2725,11 @@ function addImageFromDataURL(rawSrc, nx, ny) {
       const aspect = probe.naturalWidth / probe.naturalHeight || 1;
       const w = Math.max(40, (state.imageWidth || 1000) * 0.25);
       pushHistory();
-      const im = { id: uuid(), x: nx, y: ny, w, h: w / aspect, src, showPlayers: false };
+      const im = { id: uuid(), x: nx, y: ny, w, h: w / aspect, rotation: 0, src, showPlayers: false };
       state.images.push(im);
       selectedToken = selectedNote = null;
       selectedImage = im;
-      updateImageSelectionPanel();
+      updateSelectionPanels();
       renderAndSync();
     };
     probe.onerror = () => window.alert("Could not load that image.");
@@ -2717,11 +2749,11 @@ function addNote() {
   const text = window.prompt("Note text (GM only):", "");
   if (text === null) return;
   pushHistory();
-  const note = { id: uuid(), x: state.view.cx, y: state.view.cy, text: text || "Note" };
+  const note = { id: uuid(), x: state.view.cx, y: state.view.cy, text: text || "Note", scale: 1 };
   state.notes.push(note);
   selectedToken = selectedImage = null;
   selectedNote = note;
-  updateImageSelectionPanel();
+  updateSelectionPanels();
   render(); // notes are GM-only, no broadcast needed
 }
 
@@ -2733,15 +2765,20 @@ function editNote(note) {
   render();
 }
 
-// Show/populate the View-section panel for the currently selected image.
-function updateImageSelectionPanel() {
+// Show/populate the View-section panels for the currently selected image or note.
+function updateSelectionPanels() {
   if (isPlayer) return;
-  const panel = controls.imageSelPanel;
-  if (!panel) return;
-  panel.classList.toggle("hidden", !selectedImage);
-  if (selectedImage) {
-    if (controls.imageShowPlayers) controls.imageShowPlayers.checked = !!selectedImage.showPlayers;
-    if (controls.imageSize) controls.imageSize.value = Math.round(selectedImage.w);
+  if (controls.imageSelPanel) {
+    controls.imageSelPanel.classList.toggle("hidden", !selectedImage);
+    if (selectedImage) {
+      if (controls.imageShowPlayers) controls.imageShowPlayers.checked = !!selectedImage.showPlayers;
+      if (controls.imageSize) controls.imageSize.value = Math.round(selectedImage.w);
+      if (controls.imageRotation) controls.imageRotation.value = Math.round(selectedImage.rotation || 0);
+    }
+  }
+  if (controls.noteSelPanel) {
+    controls.noteSelPanel.classList.toggle("hidden", !selectedNote);
+    if (selectedNote && controls.noteSize) controls.noteSize.value = selectedNote.scale || 1;
   }
 }
 
@@ -2764,7 +2801,7 @@ function deleteTokenOrRoom(native) {
   const image = hitImage(native);
   if (image) {
     pushHistory();
-    if (image === selectedImage) { selectedImage = null; updateImageSelectionPanel(); }
+    if (image === selectedImage) { selectedImage = null; updateSelectionPanels(); }
     state.images = state.images.filter((item) => item !== image);
     renderAndSync();
     return true;
@@ -3132,7 +3169,7 @@ function onPointerDown(event) {
     if (token) {
       selectedToken = token;
       selectedImage = selectedNote = null;
-      updateImageSelectionPanel();
+      updateSelectionPanels();
       render();
       return;
     }
@@ -3145,7 +3182,7 @@ function onPointerDown(event) {
       dragGrab = { dx: note.x - native.x, dy: note.y - native.y };
       isDragging = true;
       capturePointer(event.pointerId);
-      updateImageSelectionPanel();
+      updateSelectionPanels();
       render();
       return;
     }
@@ -3158,7 +3195,7 @@ function onPointerDown(event) {
       dragGrab = { dx: image.x - native.x, dy: image.y - native.y };
       isDragging = true;
       capturePointer(event.pointerId);
-      updateImageSelectionPanel();
+      updateSelectionPanels();
       render();
       return;
     }
@@ -3170,7 +3207,7 @@ function onPointerDown(event) {
     }
     if (selectedToken || selectedImage || selectedNote) {
       selectedToken = selectedImage = selectedNote = null;
-      updateImageSelectionPanel();
+      updateSelectionPanels();
       render();
     }
   }
@@ -3429,7 +3466,7 @@ function onContextMenu(event) {
   const note = hitNote(clientToCanvasPoint(event));
   if (note) {
     pushHistory();
-    if (note === selectedNote) { selectedNote = null; updateImageSelectionPanel(); }
+    if (note === selectedNote) { selectedNote = null; updateSelectionPanels(); }
     state.notes = state.notes.filter((n) => n !== note);
     render();
     return;
@@ -3497,7 +3534,7 @@ function onKeyDown(event) {
     pushHistory();
     state.images = state.images.filter((im) => im !== selectedImage);
     selectedImage = null;
-    updateImageSelectionPanel();
+    updateSelectionPanels();
     renderAndSync();
     return;
   }
