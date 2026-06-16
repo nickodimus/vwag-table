@@ -116,6 +116,7 @@ const controls = {
   rotatePlayerLeft: document.getElementById("rotatePlayerLeft"),
   rotatePlayerRight: document.getElementById("rotatePlayerRight"),
   playerFit: document.getElementById("playerFit"),
+  lockPlayerSquare: document.getElementById("lockPlayerSquare"),
   stairColor: document.getElementById("stairColor"),
   addImageInput: document.getElementById("addImageInput"),
   addNoteBtn: document.getElementById("addNoteBtn"),
@@ -288,6 +289,11 @@ let playerViewport = null; // {w,h} CSS px the player reports, used to draw the 
 let showPlayerFrame = true; // GM-only: draw a red rectangle of what the players currently see
 let playerFrameColor = "#e24a4a"; // GM-only: color of that rectangle
 let playerFrameOpacity = 0.9; // GM-only: opacity of that rectangle
+// IRL play: keep one grid square a constant physical size on the player screen (TV). The
+// target is screen px per square; the player zoom is re-derived per map from its grid size.
+let lockPlayerSquare = false;
+let lockedSquarePx = 0;
+const SQUARE_LOCK_KEY = "lodestar.squareLock";
 
 function handleMessage(message, source) {
   if (!message || typeof message !== "object") return;
@@ -411,7 +417,9 @@ function setup() {
     relay({ type: "player-ready" });
   } else {
     bindControls();
+    loadSquareLock();
     syncControlsFromState();
+    updateSquareLockUI();
     refreshLibraryButtonState();
     updateUndoButtons();
     setupCollapsibleSections();
@@ -713,7 +721,11 @@ function bindControls() {
     state.playerView.matchDM = false;
     controls.playerMatchDM.checked = false;
     state.playerView.scale = Number(controls.playerZoom.value);
+    captureSquareLock(); // manual zoom re-dials the locked TV square size
     renderAndSyncView();
+  });
+  controls.lockPlayerSquare?.addEventListener("input", () => {
+    setPlayerSquareLock(controls.lockPlayerSquare.checked);
   });
   controls.playerOffsetX.addEventListener("input", () => {
     state.playerView.matchDM = false;
@@ -1298,6 +1310,7 @@ function applyFloor(floor) {
   } else {
     render();
   }
+  applyPlayerSquareLock(); // keep the locked TV square size across map/floor changes
 }
 
 function currentFloorIndex() {
@@ -1815,6 +1828,7 @@ function fitPlayerView() {
   state.playerView.scale = fitScaleFor(vw, vh, state.playerView.rotation || 0);
   state.playerView.cx = state.imageWidth / 2;
   state.playerView.cy = state.imageHeight / 2;
+  captureSquareLock(); // fitting re-dials the locked TV square size
   syncPlayerViewControls();
   renderAndSync();
 }
@@ -1835,6 +1849,76 @@ function startFrameDrag(native, pointerId) {
   dragGrab = { dx: state.playerView.cx - native.x, dy: state.playerView.cy - native.y };
   isDragging = true;
   capturePointer(pointerId);
+}
+
+/* ---- Player-square lock (IRL): keep one grid square a fixed physical size on the TV ---- */
+
+// World px per grid square for the current map (calibrated grid, else the measured cell).
+function cellWorldPx() {
+  return state.grid.size > 0 ? state.grid.size : state.measure.cellSize > 0 ? state.measure.cellSize : 0;
+}
+
+// Screen px that one grid square currently occupies on the player display.
+function playerSquareScreenPx() {
+  const sc = state.playerView.matchDM ? state.view.scale : state.playerView.scale;
+  return cellWorldPx() * (state.map.scale || 1) * sc;
+}
+
+function persistSquareLock() {
+  try {
+    localStorage.setItem(SQUARE_LOCK_KEY, JSON.stringify({ on: lockPlayerSquare, px: lockedSquarePx }));
+  } catch {}
+}
+
+function loadSquareLock() {
+  try {
+    const v = JSON.parse(localStorage.getItem(SQUARE_LOCK_KEY) || "null");
+    if (v && typeof v.px === "number") {
+      lockPlayerSquare = !!v.on;
+      lockedSquarePx = v.px;
+    }
+  } catch {}
+}
+
+// Re-capture the locked square size from the current player zoom (used when the GM
+// deliberately re-dials the TV via the zoom slider or fit while the lock is on).
+function captureSquareLock() {
+  if (isPlayer || !lockPlayerSquare) return;
+  const px = playerSquareScreenPx();
+  if (px > 0) {
+    lockedSquarePx = px;
+    persistSquareLock();
+  }
+}
+
+// Re-derive the player zoom for THIS map so one grid square equals the locked physical size.
+// Different maps have different px-per-square, so the zoom differs per map but the square
+// stays the same size on the TV. No-op until this map's grid is calibrated.
+function applyPlayerSquareLock() {
+  if (isPlayer || !lockPlayerSquare || !lockedSquarePx) return;
+  const cell = cellWorldPx();
+  const ms = state.map.scale || 1;
+  if (cell <= 0) return;
+  state.playerView.matchDM = false;
+  if (controls.playerMatchDM) controls.playerMatchDM.checked = false;
+  state.playerView.scale = lockedSquarePx / (cell * ms);
+  syncPlayerViewControls();
+  renderAndSync();
+}
+
+function setPlayerSquareLock(on) {
+  lockPlayerSquare = on;
+  if (on) {
+    const px = playerSquareScreenPx();
+    if (px > 0) lockedSquarePx = px; // capture the current TV calibration as the target
+  }
+  persistSquareLock();
+  updateSquareLockUI();
+  if (on) applyPlayerSquareLock();
+}
+
+function updateSquareLockUI() {
+  if (controls.lockPlayerSquare) controls.lockPlayerSquare.checked = lockPlayerSquare;
 }
 
 function viewTransform() {
@@ -2287,6 +2371,7 @@ function finishCalibration() {
   syncControlsFromState();
   controls.modeHint.textContent = `Calibrated: 1 cell = ${size} px, grid aligned to the square.`;
   renderAndSync();
+  applyPlayerSquareLock(); // a fresh calibration re-derives the locked player zoom for this map
 }
 
 function updateCalibrationUI() {
