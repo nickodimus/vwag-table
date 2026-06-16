@@ -267,7 +267,8 @@ let viewStart = { cx: 0, cy: 0 };
 let draggingToken = null;
 let draggingImage = null;
 let draggingNote = null;
-let dragGrab = { dx: 0, dy: 0 }; // offset from cursor to object center while dragging images/notes
+let draggingFrame = false; // GM is dragging the player-view frame to pan the player display
+let dragGrab = { dx: 0, dy: 0 }; // offset from cursor to object center while dragging images/notes/frame
 let measureLine = null;
 let pings = [];
 let pingRaf = 0;
@@ -1589,6 +1590,7 @@ function setMode(nextMode) {
   selectedToken = null;
   selectedImage = selectedNote = null;
   updateSelectionPanels();
+  canvas.style.cursor = ""; // clear any frame-hover cursor
   controls.fogToggle?.classList.toggle("active", FOG_MODES.includes(nextMode));
   [controls.panMode, controls.polygonMode, controls.namedPolygonMode, controls.revealMode, controls.brushMode, controls.eraserMode, controls.stampMode, controls.tokenMode, controls.aoeMode, controls.measureMode, controls.stairMode].forEach(
     (button) => button?.classList.remove("active"),
@@ -1817,6 +1819,24 @@ function fitPlayerView() {
   renderAndSync();
 }
 
+// Begin dragging the red player-view frame. Detaches from "Follow GM" (seeding the player
+// view from the GM's framing so it doesn't jump) and records the grab offset so the frame
+// tracks the cursor; dragging then pans the player display live.
+function startFrameDrag(native, pointerId) {
+  if (state.playerView.matchDM) {
+    state.playerView.matchDM = false;
+    if (controls.playerMatchDM) controls.playerMatchDM.checked = false;
+    state.playerView.scale = state.view.scale;
+    state.playerView.cx = state.view.cx;
+    state.playerView.cy = state.view.cy;
+    state.playerView.rotation = state.view.rotation;
+  }
+  draggingFrame = true;
+  dragGrab = { dx: state.playerView.cx - native.x, dy: state.playerView.cy - native.y };
+  isDragging = true;
+  capturePointer(pointerId);
+}
+
 function viewTransform() {
   const rect = canvas.getBoundingClientRect();
   const v = activeView();
@@ -1968,14 +1988,14 @@ function render() {
 
 // GM-only: a red rectangle marking the region the player display currently shows, so the
 // GM can tell exactly what their players see. Uses the player's reported pixel size.
-function drawPlayerFrame() {
-  if (!showPlayerFrame || !playerViewport || !state.imageData) return;
+// Screen-space corners of the player's visible region, or null when no frame is shown.
+// Un-rotates by the player's own rotation, then projects through the GM transform, so the
+// frame is correct even when the GM and player views are rotated differently.
+function playerFrameCorners() {
+  if (!showPlayerFrame || !playerViewport || !state.imageData) return null;
   const ms = state.map.scale || 1;
   const pv = state.playerView.matchDM ? state.view : state.playerView;
-  if (!pv.scale) return;
-  // Find the four corners of the player's visible region in native coords (un-rotating by
-  // the player's own rotation), then project them through the GM transform so the frame is
-  // correct even when the GM and player views are rotated differently.
+  if (!pv.scale) return null;
   const s = pv.scale * ms;
   const hw = playerViewport.w / 2;
   const hh = playerViewport.h / 2;
@@ -1986,12 +2006,17 @@ function drawPlayerFrame() {
     x: pv.cx + (ox * cosP - oy * sinP) / s,
     y: pv.cy + (ox * sinP + oy * cosP) / s,
   });
-  const corners = [
+  return [
     nativeToScreen(toNative(-hw, -hh)),
     nativeToScreen(toNative(hw, -hh)),
     nativeToScreen(toNative(hw, hh)),
     nativeToScreen(toNative(-hw, hh)),
   ];
+}
+
+function drawPlayerFrame() {
+  const corners = playerFrameCorners();
+  if (!corners) return;
   ctx.save();
   ctx.globalAlpha = playerFrameOpacity;
   ctx.strokeStyle = playerFrameColor;
@@ -3205,6 +3230,12 @@ function onPointerDown(event) {
       if (idx !== -1) goToFloor(idx);
       return;
     }
+    // Dragging the red player-view frame pans the player display in real time.
+    const frame = playerFrameCorners();
+    if (frame && pointInPolygon(clientToCanvasPoint(event), frame)) {
+      startFrameDrag(native, event.pointerId);
+      return;
+    }
     if (selectedToken || selectedImage || selectedNote) {
       selectedToken = selectedImage = selectedNote = null;
       updateSelectionPanels();
@@ -3270,6 +3301,11 @@ function onPointerMove(event) {
       aoeTemplate.visible = true;
       renderAndSyncView();
     }
+    // Hint that the player-view frame can be dragged.
+    if (mode === "pan" && state.imageData) {
+      const frame = playerFrameCorners();
+      canvas.style.cursor = frame && pointInPolygon(clientToCanvasPoint(event), frame) ? "move" : "";
+    }
     return;
   }
 
@@ -3291,6 +3327,15 @@ function onPointerMove(event) {
     const spacing = Math.max(2, activeStroke.size / 4);
     addInterpolatedStrokePoints(activeStroke, previous, point, spacing);
     render();
+    return;
+  }
+
+  if (draggingFrame) {
+    const native = toNativePoint(event);
+    state.playerView.cx = native.x + dragGrab.dx;
+    state.playerView.cy = native.y + dragGrab.dy;
+    syncPlayerViewControls();
+    renderAndSyncView(); // pans the player display live
     return;
   }
 
@@ -3391,6 +3436,11 @@ function onPointerUp(event) {
   if (draggingNote) {
     draggingNote = null;
     render(); // notes are GM-only
+  }
+
+  if (draggingFrame) {
+    draggingFrame = false;
+    renderAndSync(); // persist the player view position
   }
 
   if (measureLine && mode === "measure") {
