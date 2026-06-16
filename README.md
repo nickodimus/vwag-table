@@ -69,7 +69,7 @@ Tested on current Chromium-based browsers (Chrome, Edge). Requires `BroadcastCha
 
 ## Credits
 
-See [CREDITS.md](CREDITS.md) for third-party icon attributions.
+See [CREDITS.md](CREDITS.md) for third-party icon attributions, demo artwork, and thanks to the community members whose ideas shaped Lodestar's features.
 
 ## License
 
