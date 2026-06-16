@@ -12,8 +12,7 @@ Thanks to **u/Odd_Maybe2168** on Reddit for sharing their Lodestar experiments, 
 inspired the initiative tracker, the red "player frame" indicator, and the area-of-effect
 tool added in this version.
 
-Thanks to **u/D3XR** on Reddit for describing Owlbear Rodeo's "Mystic Mirror" in-person
-workflow, which inspired two features: a draggable player-view frame (grab the red rectangle
+Thanks to **u/D3XR** on Reddit for sharing ideas, which inspired two features: a draggable player-view frame (grab the red rectangle
 on the GM screen to pan the player display in real time) and a player-square lock that keeps
 one grid square a constant physical size on a TV battlemap across maps of different
 resolutions.
