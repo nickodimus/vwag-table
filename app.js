@@ -10,10 +10,18 @@
 
 const canvas = document.getElementById("battlemap");
 const ctx = canvas.getContext("2d");
+// Fog is composited from two independent layers so erasing freeform fog can never get
+// "stuck": polyCanvas holds the polygon/stamp areas, strokeCanvas holds the freeform
+// brush/bucket layer (its own erases baked in chronologically), and fogCanvas is their
+// union (what's drawn). liveCanvas previews the in-progress brush stroke.
 const fogCanvas = document.createElement("canvas");
 const fogCtx = fogCanvas.getContext("2d");
 const liveCanvas = document.createElement("canvas");
 const liveCtx = liveCanvas.getContext("2d");
+const polyCanvas = document.createElement("canvas");
+const polyCtx = polyCanvas.getContext("2d");
+const strokeCanvas = document.createElement("canvas");
+const strokeCtx = strokeCanvas.getContext("2d");
 const shell = document.querySelector(".app-shell");
 const emptyState = document.getElementById("emptyState");
 const channel = new BroadcastChannel("fog-table-state");
@@ -71,7 +79,6 @@ const controls = {
   fogRibbon: document.getElementById("fogRibbon"),
   polygonMode: document.getElementById("polygonMode"),
   namedPolygonMode: document.getElementById("namedPolygonMode"),
-  revealMode: document.getElementById("revealMode"),
   brushMode: document.getElementById("brushMode"),
   eraserMode: document.getElementById("eraserMode"),
   stampMode: document.getElementById("stampMode"),
@@ -104,6 +111,7 @@ const controls = {
   stampCircle: document.getElementById("stampCircle"),
   stampTriangle: document.getElementById("stampTriangle"),
   clearFog: document.getElementById("clearFog"),
+  bucketFill: document.getElementById("bucketFill"),
   undo: document.getElementById("undoBtn"),
   redo: document.getElementById("redoBtn"),
   brushOptions: document.getElementById("brushOptions"),
@@ -546,7 +554,6 @@ function bindControls() {
   controls.fogToggle.addEventListener("click", toggleFogRibbon);
   controls.polygonMode.addEventListener("click", () => setMode("polygon"));
   controls.namedPolygonMode.addEventListener("click", () => setMode("namedPolygon"));
-  controls.revealMode.addEventListener("click", () => setMode("reveal"));
   controls.brushMode.addEventListener("click", () => setMode("brush"));
   controls.eraserMode.addEventListener("click", () => setMode("eraser"));
   controls.stampMode?.addEventListener("click", () => setMode("stamp"));
@@ -654,6 +661,10 @@ function bindControls() {
   });
   controls.clearFog.addEventListener("click", () => {
     clearFog();
+    closeFogRibbon();
+  });
+  controls.bucketFill?.addEventListener("click", () => {
+    fillAllFog();
     closeFogRibbon();
   });
   controls.undo?.addEventListener("click", undo);
@@ -1574,7 +1585,7 @@ function renderAndSyncView() {
 
 /* ----------------------------- modes / tools ----------------------------- */
 
-const FOG_MODES = ["polygon", "namedPolygon", "reveal", "brush", "eraser", "stamp"];
+const FOG_MODES = ["polygon", "namedPolygon", "brush", "eraser", "stamp"];
 // Modes that use the shared fog-options popover (tint/opacity, plus tool-specific rows).
 const FOG_TOOL_MODES = ["brush", "eraser", "stamp", "polygon", "namedPolygon"];
 
@@ -1605,7 +1616,7 @@ function setMode(nextMode) {
   updateSelectionPanels();
   canvas.style.cursor = ""; // clear any frame-hover cursor
   controls.fogToggle?.classList.toggle("active", FOG_MODES.includes(nextMode));
-  [controls.panMode, controls.polygonMode, controls.namedPolygonMode, controls.revealMode, controls.brushMode, controls.eraserMode, controls.stampMode, controls.tokenMode, controls.aoeMode, controls.measureMode, controls.stairMode].forEach(
+  [controls.panMode, controls.polygonMode, controls.namedPolygonMode, controls.brushMode, controls.eraserMode, controls.stampMode, controls.tokenMode, controls.aoeMode, controls.measureMode, controls.stairMode].forEach(
     (button) => button?.classList.remove("active"),
   );
   controls[`${nextMode}Mode`]?.classList.add("active");
@@ -1613,9 +1624,8 @@ function setMode(nextMode) {
     pan: "Drag to move the map. Click a token to select it, then nudge it with the arrow keys. Middle-drag pans in any tool. Wheel to zoom. Alt+click to ping.",
     polygon: "Click corners, Enter to place. Ctrl+Z or Backspace removes the last point.",
     namedPolygon: "Click corners, Enter to place and name (GM-only label). Ctrl+Z removes the last point.",
-    reveal: "Click a fog area to reveal or hide it for players.",
     brush: "Drag to paint fog. Alt+click to ping.",
-    eraser: "Drag over fog to erase it.",
+    eraser: "Drag over fog to erase brush/bucket fog. Right-click a polygon to clear its area.",
     stamp: "Drag to draw a fog shape. Right-click an area to remove it.",
     token: "Click to drop a token, drag to move it, right-click to remove it.",
     aoe: "Hover over the map to preview the area of effect. Mouse wheel rotates the cone.",
@@ -1672,6 +1682,16 @@ function clearFog() {
   drawingRoom = [];
   state.fog.rooms = [];
   state.fog.strokes = [];
+  fogDirty = true;
+  renderAndSync();
+}
+
+// Bucket: cover the whole map in fog. Appended as a freeform "fill" op so later erases
+// (and right-click area clears) carve through it normally.
+function fillAllFog() {
+  if (!state.imageData) return;
+  pushHistory();
+  state.fog.strokes.push({ id: uuid(), kind: "fill" });
   fogDirty = true;
   renderAndSync();
 }
@@ -2156,54 +2176,80 @@ function resizeFogLayer() {
   fogResScale = Math.min(1, FOG_MAX_EDGE / maxEdge);
   const w = Math.max(1, Math.round(state.imageWidth * fogResScale));
   const h = Math.max(1, Math.round(state.imageHeight * fogResScale));
-  if (fogCanvas.width !== w || fogCanvas.height !== h) {
-    fogCanvas.width = w;
-    fogCanvas.height = h;
-    liveCanvas.width = w;
-    liveCanvas.height = h;
-  }
+  [fogCanvas, liveCanvas, polyCanvas, strokeCanvas].forEach((c) => {
+    if (c.width !== w || c.height !== h) {
+      c.width = w;
+      c.height = h;
+    }
+  });
 }
 
-// Rebuild the committed fog bitmap from rooms + strokes. Full opacity; the GM tint /
-// opacity is applied once at composite time so overlapping fog never darkens.
+// Build the freeform layer (brush paint, bucket fill, brush erase, and the polygon-shaped
+// erases produced by right-clicking an area). Replayed in creation order, so an erase only
+// affects fog that already existed — painting back over an erased spot works as expected.
+function buildStrokeLayer() {
+  const color = isPlayer ? "#080909" : state.fog.gmColor;
+  strokeCtx.setTransform(1, 0, 0, 1, 0, 0);
+  strokeCtx.clearRect(0, 0, strokeCanvas.width, strokeCanvas.height);
+  state.fog.strokes.forEach((stroke) => {
+    strokeCtx.save();
+    strokeCtx.globalAlpha = 1;
+    strokeCtx.fillStyle = color;
+    strokeCtx.globalCompositeOperation = stroke.kind === "erase" ? "destination-out" : "source-over";
+    if (stroke.kind === "fill") {
+      strokeCtx.fillRect(0, 0, strokeCanvas.width, strokeCanvas.height);
+    } else if (stroke.region === "polygon" && stroke.points) {
+      strokeCtx.fill(roomPathFog(stroke.points));
+    } else {
+      strokeCtx.fill(strokePathFog(stroke));
+    }
+    strokeCtx.restore();
+  });
+}
+
+// Rebuild the committed fog bitmap as the union of the polygon layer and the freeform layer.
+// Full opacity; the GM tint/opacity is applied once at composite time so overlap never darkens.
 function rebuildFog() {
   resizeFogLayer();
   const color = isPlayer ? "#080909" : state.fog.gmColor;
-  fogCtx.setTransform(1, 0, 0, 1, 0, 0);
-  fogCtx.clearRect(0, 0, fogCanvas.width, fogCanvas.height);
-  fogCtx.save();
-  fogCtx.globalAlpha = 1;
-  fogCtx.fillStyle = color;
+  // Polygon/stamp areas.
+  polyCtx.setTransform(1, 0, 0, 1, 0, 0);
+  polyCtx.clearRect(0, 0, polyCanvas.width, polyCanvas.height);
+  polyCtx.save();
+  polyCtx.globalAlpha = 1;
+  polyCtx.fillStyle = color;
   state.fog.rooms.forEach((room) => {
     if (room.revealed) return;
-    fogCtx.fill(roomPathFog(room.points));
+    polyCtx.fill(roomPathFog(room.points));
   });
-  fogCtx.restore();
-  state.fog.strokes.forEach(stampStroke);
+  polyCtx.restore();
+  // Freeform layer.
+  buildStrokeLayer();
+  // Union the two into the displayed fog bitmap.
+  fogCtx.setTransform(1, 0, 0, 1, 0, 0);
+  fogCtx.clearRect(0, 0, fogCanvas.width, fogCanvas.height);
+  fogCtx.drawImage(polyCanvas, 0, 0);
+  fogCtx.drawImage(strokeCanvas, 0, 0);
   fogDirty = false;
-}
-
-function stampStroke(stroke) {
-  const color = isPlayer ? "#080909" : state.fog.gmColor;
-  fogCtx.save();
-  fogCtx.globalCompositeOperation = stroke.kind === "erase" ? "destination-out" : "source-over";
-  fogCtx.globalAlpha = 1;
-  fogCtx.fillStyle = color;
-  fogCtx.fill(strokePathFog(stroke));
-  fogCtx.restore();
 }
 
 function compositeFog() {
   let source = fogCanvas;
   if (activeStroke) {
+    // Preview the in-progress brush stroke on the freeform layer only, then re-union the
+    // polygon layer beneath it so an erase preview never appears to remove polygon fog.
     liveCtx.setTransform(1, 0, 0, 1, 0, 0);
     liveCtx.clearRect(0, 0, liveCanvas.width, liveCanvas.height);
-    liveCtx.drawImage(fogCanvas, 0, 0);
+    liveCtx.drawImage(strokeCanvas, 0, 0);
     liveCtx.save();
     liveCtx.globalCompositeOperation = activeStroke.kind === "erase" ? "destination-out" : "source-over";
     liveCtx.globalAlpha = 1;
     liveCtx.fillStyle = isPlayer ? "#080909" : state.fog.gmColor;
     liveCtx.fill(strokePathFog(activeStroke));
+    liveCtx.restore();
+    liveCtx.save();
+    liveCtx.globalCompositeOperation = "destination-over";
+    liveCtx.drawImage(polyCanvas, 0, 0);
     liveCtx.restore();
     source = liveCanvas;
   }
@@ -2920,6 +2966,8 @@ function deleteTokenOrRoom(native) {
   if (room) {
     pushHistory();
     state.fog.rooms = state.fog.rooms.filter((item) => item !== room);
+    // Also clear freeform (brush/bucket) fog inside this area — other polygons are unaffected.
+    state.fog.strokes.push({ id: uuid(), kind: "erase", region: "polygon", points: room.points });
     fogDirty = true;
     renderAndSync();
     return true;
@@ -3352,17 +3400,6 @@ function onPointerDown(event) {
     return;
   }
 
-  if (mode === "reveal") {
-    const room = [...state.fog.rooms].reverse().find((item) => pointInPolygon(native, item.points));
-    if (room) {
-      pushHistory();
-      room.revealed = !room.revealed;
-      fogDirty = true;
-      renderAndSync();
-    }
-    return;
-  }
-
   // pan
   if (!state.imageData) return;
   isDragging = true;
@@ -3500,8 +3537,8 @@ function onPointerUp(event) {
 
   if (activeStroke) {
     state.fog.strokes.push(activeStroke);
-    stampStroke(activeStroke); // commit incrementally; avoids a full fog rebuild
     activeStroke = null;
+    fogDirty = true; // re-bake the freeform layer so the committed stroke composites correctly
     renderAndSync();
   }
 
@@ -3693,7 +3730,7 @@ function onKeyDown(event) {
     return;
   }
 
-  const shortcuts = { v: "pan", h: "pan", p: "polygon", n: "namedPolygon", r: "reveal", b: "brush", e: "eraser", t: "token", a: "aoe", m: "measure", s: "stair" };
+  const shortcuts = { v: "pan", h: "pan", p: "polygon", n: "namedPolygon", b: "brush", e: "eraser", t: "token", a: "aoe", m: "measure", s: "stair" };
   const key = event.key.toLowerCase();
   if (shortcuts[key]) {
     setMode(shortcuts[key]);

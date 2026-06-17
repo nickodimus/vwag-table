@@ -19,10 +19,11 @@ A local-first battlemap display tool for game masters. Cast a map with fog of wa
 - **Initiative tracker** — a dockable turn-order panel: add players, NPCs, and monsters with initiative and HP, advance turns and rounds, track damage/healing with HP bars, and optionally mirror a compact order overlay onto the player display.
 - **Area of effect** — hover a live spell template (circle, square, or cone) over the map in any color and size; it mirrors to the player display in real time. The cone rotates with the mouse wheel or a direction slider.
 - **Fog of war**
-  - Trace polygon areas and click them in reveal mode to show/hide on the player display.
-  - Name polygon areas with a GM-only label.
+  - Trace polygon areas, or name them with a GM-only label.
   - Drag-draw fog shapes (rectangle, square, ellipse, circle, triangle) for quick rooms.
-  - Paint or erase fog with a round or square brush of adjustable size.
+  - Paint fog with a round or square brush of adjustable size, or fill the whole map at once with the bucket.
+  - Erase freeform (brush/bucket) fog with the eraser — erased areas can be painted over again normally.
+  - Right-click a polygon area to remove it and clear the brush/bucket fog inside it (other polygon areas are left intact).
   - GM sees fog as an adjustable tint/opacity; players see solid black.
 - **Multi-floor** — build multi-level locations; each floor has its own map, fog, tokens, and stairs. Navigate with the on-screen floor widget.
 - **Stairs** — place GM-only staircase arrows (color adjustable in the Floors section) that link floors; they scale with the grid and zoom and are invisible to players.
@@ -53,7 +54,7 @@ For anything you want to keep, use **Export** in the GM panel to save your whole
 
 ## Keyboard shortcuts (GM)
 
-- `V` move · `P` polygon fog · `N` named fog area · `R` reveal · `B` brush · `E` eraser · `T` tokens · `A` area of effect · `M` measure · `S` stairs
+- `V` move · `P` polygon fog · `N` named fog area · `B` brush · `E` eraser · `T` tokens · `A` area of effect · `M` measure · `S` stairs
 - `F` fit map · `[` / `]` brush size · `Ctrl+Z` undo · `Ctrl+Shift+Z` redo
 - **Middle-mouse drag** pans the map in any tool, so you never have to switch tools just to reposition.
 - Polygon mode: click corners, `Enter` to place, `Esc` to cancel. `Ctrl+Z` or `Backspace` removes just the last point you placed.
