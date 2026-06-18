@@ -345,11 +345,12 @@ function handleMessage(message, source) {
     }
   }
   if (message.type === "token-drop" && !isPlayer) {
-    // Commit: set the snapped position and broadcast authoritative state to all displays.
+    // Commit: snap against the GM's authoritative grid, then broadcast to all displays.
     const token = state.tokens.find((t) => t.id === message.id);
     if (token) {
-      token.x = message.x;
-      token.y = message.y;
+      const snapped = snapNative({ x: message.x, y: message.y });
+      token.x = snapped.x;
+      token.y = snapped.y;
       renderAndSync();
     }
   }
@@ -1616,14 +1617,13 @@ function broadcastView() {
 
 // Player -> GM live token streaming: coalesce many pointermove events into at most one
 // position message per animation frame, so a fast drag never floods the channel.
-let tokenMoveQueued = false;
+let tokenMoveRaf = 0;
 let pendingTokenMove = null;
 function streamTokenMove(id, x, y) {
   pendingTokenMove = { id, x, y };
-  if (tokenMoveQueued) return;
-  tokenMoveQueued = true;
-  requestAnimationFrame(() => {
-    tokenMoveQueued = false;
+  if (tokenMoveRaf) return;
+  tokenMoveRaf = requestAnimationFrame(() => {
+    tokenMoveRaf = 0;
     if (pendingTokenMove) {
       relay({ type: "token-move", id: pendingTokenMove.id, x: pendingTokenMove.x, y: pendingTokenMove.y });
     }
@@ -3660,12 +3660,16 @@ function onPointerMove(event) {
 function onPointerUp(event) {
   if (isPlayer) {
     if (draggingToken) {
-      const snapped = snapNative({ x: draggingToken.x, y: draggingToken.y });
-      draggingToken.x = snapped.x;
-      draggingToken.y = snapped.y;
-      // Commit: the GM owns state.tokens, applies the snapped position, and broadcasts
-      // the authoritative state back to reconcile every display.
-      relay({ type: "token-drop", id: draggingToken.id, x: snapped.x, y: snapped.y });
+      // Cancel any live update still queued for this frame so the drop is the final word —
+      // otherwise a trailing raw position lands after the drop and undoes the snap.
+      if (tokenMoveRaf) {
+        cancelAnimationFrame(tokenMoveRaf);
+        tokenMoveRaf = 0;
+      }
+      pendingTokenMove = null;
+      // Send the raw drop position; the GM snaps it against the authoritative grid and
+      // broadcasts the canonical position back to reconcile every display.
+      relay({ type: "token-drop", id: draggingToken.id, x: draggingToken.x, y: draggingToken.y });
       draggingToken = null;
     }
     isDragging = false;
