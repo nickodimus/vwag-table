@@ -57,7 +57,7 @@ Behavior by kind (all overridable):
 | door | toggle | toggle | toggle | yes | openable; session tracks open by id |
 | window | pass | pass | block | yes | see-through, not walkable |
 | invisible | block | block | block | **no** | LoS wall with no drawn line |
-| ethereal | (reserved) | (reserved) | block? | ? | uncertain in DTT; import as move-only barrier, confirm later |
+| ethereal | (reserved) | (reserved) | block? | ? | low priority — see note; default-map on import |
 
 ## Lights (authored) + ambient
 
@@ -123,6 +123,13 @@ Read DTT's five files and convert into a vwag-table module + initial session:
 
 No reverse direction. vwag-only concepts (floors, stairs, named fog rooms, splash, measure)
 just don't exist on a freshly imported DTT map; you add them in vwag-table afterward.
+
+Note on **ethereal**: a Caves of Chaos export taken *after* adding an ethereal section still
+had an empty `ethereals` array (byte-identical to the original). So DTT likely does not
+serialize ethereals to the export (or they must be committed via Save and Exit first). For
+the one-way import this means ethereal geometry will rarely or never arrive — treat the kind
+as low priority and default-map it (to a wall, or a move-only barrier) rather than blocking
+on its exact semantics. Revisit only if a confirmed-saved export ever contains one.
 
 ## VWAG linkage (long-game seam)
 
