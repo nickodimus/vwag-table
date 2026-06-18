@@ -2740,9 +2740,20 @@ function drawTokenLabel(token, r, below) {
   ctx.fillText(text, token.x, y);
 }
 
+// Bright "whose turn it is" ring, drawn outermost on the active combatant's token on both
+// the GM and player views. Static (no animation) to stay light on the off-grid power budget.
+function drawActiveTurnRing(token, r) {
+  ctx.beginPath();
+  tokenOutline(token, r + 3.5 / (curK * curMs));
+  ctx.lineWidth = Math.max(2, 4 / (curK * curMs));
+  ctx.strokeStyle = "#ffd24a";
+  ctx.stroke();
+}
+
 function drawTokens() {
   const lineW = Math.max(1, 2 / (curK * curMs));
   const rot = currentViewRotation();
+  const activeTokenId = activeTurnTokenId();
   state.tokens.forEach((token) => {
     const r = tokenRadius(token);
     ctx.save();
@@ -2786,6 +2797,7 @@ function drawTokens() {
       ctx.strokeStyle = "#b1c301";
       ctx.stroke();
     }
+    if (token.id === activeTokenId) drawActiveTurnRing(token, r);
     ctx.restore();
   });
 }
@@ -3178,6 +3190,15 @@ function sortedCombatants() {
   return [...state.initiative.combatants].sort((a, b) => b.init - a.init);
 }
 
+// The token (if any) of the combatant whose turn it currently is — drives the active-turn
+// highlight on both screens. Null when initiative is off/empty or the combatant has no token.
+function activeTurnTokenId() {
+  const init = state.initiative;
+  if (!init.active || !init.combatants.length) return null;
+  const c = sortedCombatants()[init.turn];
+  return c ? c.tokenId || null : null;
+}
+
 function clampInitiativeTurn() {
   const n = state.initiative.combatants.length;
   state.initiative.turn = n ? Math.min(Math.max(0, state.initiative.turn), n - 1) : 0;
@@ -3323,6 +3344,7 @@ function resetInitiative() {
 function updateInitiativeUI() {
   if (!isPlayer) renderInitiativePanel();
   renderInitiativeOverlay();
+  render(); // refresh the canvas so the active-turn token highlight tracks the current turn
 }
 
 function renderInitiativePanel() {
