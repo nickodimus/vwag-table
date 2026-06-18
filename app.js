@@ -330,6 +330,15 @@ function handleMessage(message, source) {
     playerViewport = { w: message.w, h: message.h };
     render();
   }
+  if (message.type === "token-move" && !isPlayer) {
+    const token = state.tokens.find((t) => t.id === message.id);
+    if (token) {
+      pushHistory();
+      token.x = message.x;
+      token.y = message.y;
+      renderAndSync();
+    }
+  }
 }
 
 // Player -> GM: report this display's pixel size so the GM can draw the "player frame".
@@ -3334,8 +3343,19 @@ function drawMeasureLabel() {
 function onPointerDown(event) {
   lastPointer = { clientX: event.clientX, clientY: event.clientY };
 
-  // Player display: view-only, fully driven by the GM.
-  if (isPlayer) return;
+  // Player display: tokens can be picked up and moved by touch; everything else stays
+  // GM-driven. A touch on a token grabs it for dragging; empty space does nothing
+  // (players never create tokens or edit fog).
+  if (isPlayer) {
+    const native = toNativePoint(event);
+    const hit = hitToken(native);
+    if (hit) {
+      draggingToken = hit;
+      isDragging = true;
+      capturePointer(event.pointerId);
+    }
+    return;
+  }
 
   // Middle-mouse drags the map in ANY tool, so you can reposition the view without
   // switching tools or accidentally dropping fog.
@@ -3497,8 +3517,16 @@ function onPointerDown(event) {
 function onPointerMove(event) {
   lastPointer = { clientX: event.clientX, clientY: event.clientY };
 
-  // Player display is view-only.
-  if (isPlayer) return;
+  // Player display: drive a grabbed token locally for feedback; ignore everything else.
+  if (isPlayer) {
+    if (draggingToken) {
+      const native = toNativePoint(event);
+      draggingToken.x = native.x;
+      draggingToken.y = native.y;
+      render();
+    }
+    return;
+  }
 
   if (!isDragging) {
     if (["brush", "eraser"].includes(mode)) render(); // live tool preview
@@ -3597,6 +3625,15 @@ function onPointerMove(event) {
 
 function onPointerUp(event) {
   if (isPlayer) {
+    if (draggingToken) {
+      const snapped = snapNative({ x: draggingToken.x, y: draggingToken.y });
+      draggingToken.x = snapped.x;
+      draggingToken.y = snapped.y;
+      // Player is not authoritative: report the move to the GM, which owns state.tokens
+      // and broadcasts the canonical position back to reconcile this local drag.
+      relay({ type: "token-move", id: draggingToken.id, x: snapped.x, y: snapped.y });
+      draggingToken = null;
+    }
     isDragging = false;
     return;
   }
