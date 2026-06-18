@@ -27,7 +27,7 @@ const emptyState = document.getElementById("emptyState");
 const channel = new BroadcastChannel("fog-table-state");
 const APP_NAME = "Battlemap Screen and GM Streaming Tool";
 const LEGACY_APP_NAME = "Fog Table";
-const SAVE_FILE_VERSION = 6;
+const SAVE_FILE_VERSION = 7;
 const DB_NAME = "fog-table-library";
 const DB_VERSION = 3;
 const MAP_STORE = "maps";
@@ -125,6 +125,10 @@ const controls = {
   redo: document.getElementById("redoBtn"),
   brushOptions: document.getElementById("brushOptions"),
   tokenOptions: document.getElementById("tokenOptions"),
+  drawOptions: document.getElementById("drawOptions"),
+  drawMode: document.getElementById("drawMode"),
+  obstacleKind: document.getElementById("obstacleKind"),
+  showObstacles: document.getElementById("showObstacles"),
   fitMap: document.getElementById("fitMap"),
   playerMatchDM: document.getElementById("playerMatchDM"),
   playerFrameToggle: document.getElementById("playerFrameToggle"),
@@ -210,6 +214,7 @@ function makeFloor(id) {
     strokes: [],
     tokens: [],
     stairs: [],
+    obstacles: [],
     images: [],
     notes: [],
     view: { scale: 1, cx: 0, cy: 0, rotation: 0 },
@@ -237,6 +242,9 @@ const state = {
   },
   tokens: [],
   stairs: [],
+  // Obstacle geometry (walls/doors/windows…) for the current floor — authored, mirrors the
+  // floor record like tokens/stairs. Points are stored in cell units.
+  obstacles: [],
   // Droppable map images (synced to players; only those with showPlayers render there) and
   // GM-only floating notes (never synced). Both are per-floor like tokens/stairs.
   images: [],
@@ -262,6 +270,9 @@ let mapImage = new Image();
 let splashImage = new Image();
 let mode = "pan";
 let drawingRoom = [];
+let drawingObstacle = []; // in-progress obstacle polyline (native px) while drawing in Draw Mode
+let obstacleKind = "wall"; // kind applied to newly drawn obstacles
+let showObstacles = true; // GM-only obstacle overlay toggle ("Walls Visible to DM")
 let activeStroke = null;
 let stampDraft = null; // {shape, start, end} preview while drag-drawing a fog shape
 let calibrating = null; // 'grid' | 'measure' while waiting for a drag-a-square calibration
@@ -608,6 +619,9 @@ function bindControls() {
   controls.aoeMode?.addEventListener("click", () => setMode("aoe"));
   controls.measureMode.addEventListener("click", () => setMode("measure"));
   controls.stairMode?.addEventListener("click", () => setMode("stair"));
+  controls.drawMode?.addEventListener("click", () => setMode("draw"));
+  controls.obstacleKind?.addEventListener("change", () => { obstacleKind = controls.obstacleKind.value; });
+  controls.showObstacles?.addEventListener("change", () => { showObstacles = controls.showObstacles.checked; render(); });
 
   // Floor navigation
   controls.floorUp?.addEventListener("click", () => goToFloor(currentFloorIndex() + 1));
@@ -1318,6 +1332,7 @@ function splitState(stateObj) {
     imageHeight: f.imageHeight || 0,
     mapScale: f.mapScale || 1,
     stairs: JSON.parse(JSON.stringify(f.stairs || [])),
+    obstacles: JSON.parse(JSON.stringify(f.obstacles || [])),
   }));
   const sessionFloors = floors.map((f) => ({
     id: f.id,
@@ -1336,8 +1351,8 @@ function splitState(stateObj) {
     measure: JSON.parse(JSON.stringify(stateObj.measure || {})),
     stairColor: stateObj.stairColor || "#ffffff",
     floors: moduleFloors,
-    // Forward-empty — filled by later steps (obstacle geometry, lights, room pins, VWAG linkage).
-    obstacles: [],
+    // Forward-empty — filled by later steps (lights, room pins, VWAG linkage). Obstacle geometry
+    // is per-floor (module.floors[].obstacles), authored via Draw Mode.
     lights: [],
     pins: [],
     ambient: { timeOfDay: 12 },
@@ -1349,6 +1364,7 @@ function splitState(stateObj) {
     initiative: JSON.parse(JSON.stringify(stateObj.initiative || {})),
     playerView: JSON.parse(JSON.stringify(stateObj.playerView || {})),
     currentFloorId: stateObj.currentFloorId,
+    openDoors: [], // session-tracked open door ids (forward; the toggle that uses it is step 5)
     floorPosition: stateObj.floorPosition || 1,
     floorCount: stateObj.floorCount || floors.length || 1,
     fog: {
@@ -1378,6 +1394,7 @@ function mergeModuleSession(module, session) {
       imageHeight: mf.imageHeight || 0,
       mapScale: mf.mapScale || 1,
       stairs: JSON.parse(JSON.stringify(mf.stairs || [])),
+      obstacles: JSON.parse(JSON.stringify(mf.obstacles || [])),
       rooms: JSON.parse(JSON.stringify(sf.rooms || [])),
       strokes: JSON.parse(JSON.stringify(sf.strokes || [])),
       tokens: JSON.parse(JSON.stringify(sf.tokens || [])),
@@ -1663,6 +1680,7 @@ function captureCurrentFloor() {
   floor.strokes = JSON.parse(JSON.stringify(state.fog.strokes));
   floor.tokens = JSON.parse(JSON.stringify(state.tokens));
   floor.stairs = JSON.parse(JSON.stringify(state.stairs));
+  floor.obstacles = JSON.parse(JSON.stringify(state.obstacles));
   floor.images = JSON.parse(JSON.stringify(state.images));
   floor.notes = JSON.parse(JSON.stringify(state.notes));
   floor.view = { ...state.view };
@@ -1682,6 +1700,7 @@ function applyFloor(floor) {
   state.fog.strokes = JSON.parse(JSON.stringify(floor.strokes || []));
   state.tokens = JSON.parse(JSON.stringify(floor.tokens || []));
   state.stairs = JSON.parse(JSON.stringify(floor.stairs || []));
+  state.obstacles = JSON.parse(JSON.stringify(floor.obstacles || []));
   state.images = JSON.parse(JSON.stringify(floor.images || []));
   state.notes = JSON.parse(JSON.stringify(floor.notes || []));
   Object.assign(state.view, floor.view || { scale: 1, cx: 0, cy: 0 });
@@ -2003,13 +2022,14 @@ function setMode(nextMode) {
   mode = nextMode;
   closeFogRibbon();
   drawingRoom = [];
+  drawingObstacle = [];
   stampDraft = null;
   selectedToken = null;
   selectedImage = selectedNote = null;
   updateSelectionPanels();
   canvas.style.cursor = ""; // clear any frame-hover cursor
   controls.fogToggle?.classList.toggle("active", FOG_MODES.includes(nextMode));
-  [controls.panMode, controls.polygonMode, controls.namedPolygonMode, controls.brushMode, controls.eraserMode, controls.stampMode, controls.tokenMode, controls.aoeMode, controls.measureMode, controls.stairMode].forEach(
+  [controls.panMode, controls.polygonMode, controls.namedPolygonMode, controls.brushMode, controls.eraserMode, controls.stampMode, controls.tokenMode, controls.aoeMode, controls.measureMode, controls.stairMode, controls.drawMode].forEach(
     (button) => button?.classList.remove("active"),
   );
   controls[`${nextMode}Mode`]?.classList.add("active");
@@ -2024,6 +2044,7 @@ function setMode(nextMode) {
     aoe: "Hover over the map to preview the area of effect. Mouse wheel rotates the cone.",
     measure: "Drag to measure distance across the grid.",
     stair: "Click to place a staircase. Right-click a stair to remove it.",
+    draw: "Click corners to draw a wall/obstacle; Enter or double-click to place. Right-click an obstacle to delete. Set a grid first so points land on cells.",
   }[nextMode] ?? "";
 
   // Shared fog-options popover: shown for all fog tools, with tool-specific rows toggled.
@@ -2038,6 +2059,7 @@ function setMode(nextMode) {
       nextMode === "stamp" ? "Fog Shape" : isBrush ? "Fog Brush" : "Fog Area";
   }
   controls.tokenOptions.classList.toggle("hidden", nextMode !== "token");
+  controls.drawOptions?.classList.toggle("hidden", nextMode !== "draw");
   controls.aoeOptions?.classList.toggle("hidden", nextMode !== "aoe");
   controls.measureOptions?.classList.toggle("hidden", nextMode !== "measure");
   if (nextMode === "measure") updateMeasureCalibrateRow();
@@ -2465,8 +2487,10 @@ function render() {
   compositeFog();
   drawAoeTemplate(); // hover template sits above fog; visible to both GM and player
   if (!isPlayer) drawRoomOutlines();
+  if (!isPlayer) drawObstacleOutlines();
   if (!isPlayer) drawStairs(); // stairs are a GM-only navigation aid stays above fog
   if (!isPlayer) drawDraftRoom();
+  if (!isPlayer) drawDraftObstacle();
   if (!isPlayer) drawStampDraft();
   if (!isPlayer) drawCalibrationDraft();
   if (measureLine) drawMeasureLine();
@@ -2688,6 +2712,57 @@ function drawRoomOutlines() {
     ctx.strokeStyle = "rgba(214,169,77,0.72)";
     ctx.lineWidth = 2 / (curK * curMs);
     ctx.stroke();
+  });
+  ctx.restore();
+}
+
+const OBSTACLE_COLORS = {
+  wall: "rgba(214,169,77,0.9)",
+  object: "rgba(214,169,77,0.9)",
+  door: "rgba(120,200,140,0.95)",
+  window: "rgba(120,200,220,0.95)",
+  invisible: "rgba(180,150,220,0.85)",
+  ethereal: "rgba(190,190,190,0.75)",
+};
+
+// GM-only overlay of authored obstacle geometry ("Walls Visible to DM"). Points are in cells;
+// convert to native to draw. Invisible obstacles render dashed (no in-world line).
+function drawObstacleOutlines() {
+  if (!showObstacles || !state.obstacles.length) return;
+  ctx.save();
+  ctx.lineWidth = 2.5 / (curK * curMs);
+  ctx.lineJoin = "round";
+  state.obstacles.forEach((ob) => {
+    const pts = (ob.points || []).map((p) => cellsToNative({ x: p[0], y: p[1] }));
+    if (pts.length < 2) return;
+    ctx.strokeStyle = OBSTACLE_COLORS[ob.kind] || OBSTACLE_COLORS.wall;
+    ctx.setLineDash(ob.drawn === false ? [9 / (curK * curMs), 6 / (curK * curMs)] : []);
+    ctx.beginPath();
+    ctx.moveTo(pts[0].x, pts[0].y);
+    for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
+    ctx.stroke();
+  });
+  ctx.setLineDash([]);
+  ctx.restore();
+}
+
+function drawDraftObstacle() {
+  if (!drawingObstacle.length) return;
+  ctx.save();
+  ctx.strokeStyle = OBSTACLE_COLORS[obstacleKind] || OBSTACLE_COLORS.wall;
+  ctx.lineWidth = 2.5 / (curK * curMs);
+  ctx.lineJoin = "round";
+  if (drawingObstacle.length > 1) {
+    ctx.beginPath();
+    ctx.moveTo(drawingObstacle[0].x, drawingObstacle[0].y);
+    for (let i = 1; i < drawingObstacle.length; i++) ctx.lineTo(drawingObstacle[i].x, drawingObstacle[i].y);
+    ctx.stroke();
+  }
+  drawingObstacle.forEach((point) => {
+    ctx.beginPath();
+    ctx.arc(point.x, point.y, 4 / (curK * curMs), 0, Math.PI * 2);
+    ctx.fillStyle = OBSTACLE_COLORS[obstacleKind] || OBSTACLE_COLORS.wall;
+    ctx.fill();
   });
   ctx.restore();
 }
@@ -3925,6 +4000,12 @@ function onPointerDown(event) {
     return;
   }
 
+  if (mode === "draw") {
+    drawingObstacle.push(native);
+    render();
+    return;
+  }
+
   if (mode === "token") {
     const hit = hitToken(native);
     if (hit) {
@@ -4289,6 +4370,7 @@ function onDoubleClick(event) {
     return;
   }
   if (mode === "polygon" || mode === "namedPolygon") finishRoom();
+  if (mode === "draw") finishObstacle();
 }
 
 function onContextMenu(event) {
@@ -4300,6 +4382,15 @@ function onContextMenu(event) {
     if (note === selectedNote) { selectedNote = null; updateSelectionPanels(); }
     state.notes = state.notes.filter((n) => n !== note);
     render();
+    return;
+  }
+  if (mode === "draw") {
+    const ob = hitObstacle(toNativePoint(event));
+    if (ob) {
+      pushHistory();
+      state.obstacles = state.obstacles.filter((o) => o !== ob);
+      renderAndSync();
+    }
     return;
   }
   deleteTokenOrRoom(toNativePoint(event));
@@ -4328,6 +4419,11 @@ function onKeyDown(event) {
       render();
       return;
     }
+    if (!event.shiftKey && mode === "draw" && drawingObstacle.length) {
+      drawingObstacle.pop();
+      render();
+      return;
+    }
     if (event.shiftKey) redo();
     else undo();
     return;
@@ -4342,6 +4438,12 @@ function onKeyDown(event) {
   if ((event.key === "Backspace" || event.key === "Delete") && drawingPolygon && drawingRoom.length) {
     event.preventDefault();
     drawingRoom.pop();
+    render();
+    return;
+  }
+  if ((event.key === "Backspace" || event.key === "Delete") && mode === "draw" && drawingObstacle.length) {
+    event.preventDefault();
+    drawingObstacle.pop();
     render();
     return;
   }
@@ -4384,14 +4486,25 @@ function onKeyDown(event) {
     finishRoom();
     return;
   }
+  if (event.key === "Enter" && mode === "draw") {
+    event.preventDefault();
+    finishObstacle();
+    return;
+  }
   if (event.key === "Escape" && drawingPolygon && drawingRoom.length) {
     event.preventDefault();
     drawingRoom = [];
     render();
     return;
   }
+  if (event.key === "Escape" && mode === "draw" && drawingObstacle.length) {
+    event.preventDefault();
+    drawingObstacle = [];
+    render();
+    return;
+  }
 
-  const shortcuts = { v: "pan", h: "pan", p: "polygon", n: "namedPolygon", b: "brush", e: "eraser", t: "token", a: "aoe", m: "measure", s: "stair" };
+  const shortcuts = { v: "pan", h: "pan", p: "polygon", n: "namedPolygon", b: "brush", e: "eraser", t: "token", a: "aoe", m: "measure", s: "stair", d: "draw" };
   const key = event.key.toLowerCase();
   if (shortcuts[key]) {
     setMode(shortcuts[key]);
@@ -4408,6 +4521,66 @@ function adjustBrush(delta) {
   state.fog.toolSize = next;
   controls.brushSize.value = next;
   render();
+}
+
+// ----- Obstacle geometry (Draw Mode) -----
+
+// Closed-state behavior flags per kind. Doors block until opened (the session tracks open doors);
+// windows are see-through but block movement; invisible walls block sight/light but draw no line.
+function obstacleDefaults(kind) {
+  switch (kind) {
+    case "window":    return { blocksSight: false, blocksLight: false, blocksMove: true, drawn: true, openable: false };
+    case "door":      return { blocksSight: true, blocksLight: true, blocksMove: true, drawn: true, openable: true };
+    case "invisible": return { blocksSight: true, blocksLight: true, blocksMove: true, drawn: false, openable: false };
+    default:          return { blocksSight: true, blocksLight: true, blocksMove: true, drawn: true, openable: false }; // wall/object/ethereal
+  }
+}
+
+// Commit the in-progress polyline as an obstacle of the current kind. Points convert to cell units
+// (the step-3 bridge) so geometry is resolution-independent and DTT-import-compatible.
+function finishObstacle() {
+  if (isPlayer || drawingObstacle.length < 2) return;
+  pushHistory();
+  const obstacle = {
+    id: uuid(),
+    kind: obstacleKind,
+    points: drawingObstacle.map((p) => {
+      const c = nativeToCells(p);
+      return [c.x, c.y];
+    }),
+    ...obstacleDefaults(obstacleKind),
+    defaultOpen: false,
+  };
+  state.obstacles.push(obstacle);
+  drawingObstacle = [];
+  renderAndSync();
+}
+
+// Shortest distance from a point to a line segment (native px); used for right-click delete.
+function distToSegment(p, a, b) {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const len2 = dx * dx + dy * dy;
+  if (len2 === 0) return Math.hypot(p.x - a.x, p.y - a.y);
+  let t = ((p.x - a.x) * dx + (p.y - a.y) * dy) / len2;
+  t = Math.max(0, Math.min(1, t));
+  return Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy));
+}
+
+// The obstacle nearest a native click within a small threshold, or null. Stored points are in
+// cells, so convert to native before measuring.
+function hitObstacle(native) {
+  const threshold = Math.max(10, gridCellNative() / 3);
+  let best = null;
+  let bestDist = threshold;
+  state.obstacles.forEach((ob) => {
+    const pts = (ob.points || []).map((p) => cellsToNative({ x: p[0], y: p[1] }));
+    for (let i = 0; i < pts.length - 1; i++) {
+      const d = distToSegment(native, pts[i], pts[i + 1]);
+      if (d < bestDist) { bestDist = d; best = ob; }
+    }
+  });
+  return best;
 }
 
 function finishRoom() {
