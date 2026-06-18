@@ -165,6 +165,7 @@ const controls = {
   initiativePanel: document.getElementById("initiativePanel"),
   initiativeOverlay: document.getElementById("initiativeOverlay"),
   initShowPlayers: document.getElementById("initShowPlayers"),
+  initShowOverlay: document.getElementById("initShowOverlay"),
   initClose: document.getElementById("initClose"),
   initPrev: document.getElementById("initPrev"),
   initNext: document.getElementById("initNext"),
@@ -233,7 +234,7 @@ const state = {
   stairColor: "#ffffff", // GM-only stair marker color (stairs never show on the player display)
   // Initiative tracker: a turn order shared across all floors. When showPlayers is on, a
   // compact order overlay is mirrored to the player display.
-  initiative: { active: false, showPlayers: false, round: 1, turn: 0, combatants: [] },
+  initiative: { active: false, showPlayers: false, showOverlay: true, round: 1, turn: 0, combatants: [] },
   // Measurement: unit system + an optional calibrated cell size (world px) used when the
   // grid overlay is off but the map has its own printed grid.
   measure: { unit: "imperial", cellSize: 0 },
@@ -631,6 +632,18 @@ function bindControls() {
     state.initiative.showPlayers = controls.initShowPlayers.checked;
     updateInitiativeUI();
     broadcastState();
+  });
+  controls.initShowOverlay?.addEventListener("input", () => {
+    state.initiative.showOverlay = controls.initShowOverlay.checked;
+    updateInitiativeUI();
+    broadcastState();
+  });
+  // Turn arrows / hide button on the bottom-left overlay (GM only).
+  controls.initiativeOverlay?.addEventListener("click", (event) => {
+    const act = event.target.closest("[data-act]")?.dataset.act;
+    if (act === "ov-next") stepInitiative(1);
+    else if (act === "ov-prev") stepInitiative(-1);
+    else if (act === "ov-hide") setOverlayVisible(false);
   });
   controls.initAddForm?.addEventListener("submit", (event) => {
     event.preventDefault();
@@ -1108,7 +1121,7 @@ function loadSnapshot(snapshot) {
   if (snapshot.stairColor) state.stairColor = snapshot.stairColor;
   if (snapshot.measure) Object.assign(state.measure, snapshot.measure);
   if (snapshot.initiative) {
-    state.initiative = { active: false, showPlayers: false, round: 1, turn: 0, combatants: [], ...snapshot.initiative };
+    state.initiative = { active: false, showPlayers: false, showOverlay: true, round: 1, turn: 0, combatants: [], ...snapshot.initiative };
   }
   if (snapshot.fog) {
     state.fog.toolSize = snapshot.fog.toolSize ?? state.fog.toolSize;
@@ -3151,6 +3164,7 @@ function renderInitiativePanel() {
   shell.classList.toggle("has-initiative", init.active);
   controls.initToggle?.classList.toggle("active", init.active);
   if (controls.initShowPlayers) controls.initShowPlayers.checked = init.showPlayers;
+  if (controls.initShowOverlay) controls.initShowOverlay.checked = init.showOverlay !== false;
   if (controls.initRoundLabel) controls.initRoundLabel.textContent = `Round ${init.round}`;
   if (!controls.initList) return;
   const list = sortedCombatants();
@@ -3183,7 +3197,9 @@ function renderInitiativeOverlay() {
   const ov = controls.initiativeOverlay;
   if (!ov) return;
   const init = state.initiative;
-  const show = init.active && init.combatants.length > 0 && (!isPlayer || init.showPlayers);
+  // The overlay is independent of the docked panel: on the GM it shows when the GM overlay
+  // toggle is on and the panel is closed; on the player when the players toggle is on.
+  const show = init.combatants.length > 0 && (isPlayer ? init.showPlayers : init.showOverlay !== false && !init.active);
   ov.hidden = !show;
   if (!show) return;
   const list = sortedCombatants();
@@ -3193,7 +3209,24 @@ function renderInitiativeOverlay() {
       return `<li class="${i === init.turn ? "current" : ""}"><span class="init-dot ${c.type}"></span><span class="init-ov-name">${escapeHtml(c.name)}</span>${hp}</li>`;
     })
     .join("");
-  ov.innerHTML = `<div class="init-ov-round">Round ${init.round}</div><ol>${rows}</ol>`;
+  // GM gets turn arrows + a hide button in the header; the player just sees the round label.
+  const head = isPlayer
+    ? `<div class="init-ov-round">Round ${init.round}</div>`
+    : `<div class="init-ov-head">
+        <button type="button" class="init-ov-btn" data-act="ov-prev" title="Previous turn" aria-label="Previous turn">‹</button>
+        <span class="init-ov-round">Round ${init.round}</span>
+        <button type="button" class="init-ov-btn" data-act="ov-next" title="Next turn" aria-label="Next turn">›</button>
+        <button type="button" class="init-ov-btn" data-act="ov-hide" title="Hide overlay" aria-label="Hide overlay">×</button>
+      </div>`;
+  ov.innerHTML = `${head}<ol>${rows}</ol>`;
+}
+
+// Hide/show the GM order overlay (the bottom-left box's × button and the GM toggle).
+function setOverlayVisible(on) {
+  state.initiative.showOverlay = on;
+  if (controls.initShowOverlay) controls.initShowOverlay.checked = on;
+  updateInitiativeUI();
+  broadcastState();
 }
 
 /* ----------------------------- ping / measure ----------------------------- */
