@@ -330,10 +330,24 @@ function handleMessage(message, source) {
     playerViewport = { w: message.w, h: message.h };
     render();
   }
+  if (message.type === "token-grab" && !isPlayer) {
+    // Snapshot once at the start of a remote drag so the whole move is one undo step.
+    pushHistory();
+  }
   if (message.type === "token-move" && !isPlayer) {
+    // Live position during a drag: update and render locally, but do NOT broadcast — a
+    // full state sync mid-drag would replace the player's tokens and orphan its drag.
     const token = state.tokens.find((t) => t.id === message.id);
     if (token) {
-      pushHistory();
+      token.x = message.x;
+      token.y = message.y;
+      render();
+    }
+  }
+  if (message.type === "token-drop" && !isPlayer) {
+    // Commit: set the snapped position and broadcast authoritative state to all displays.
+    const token = state.tokens.find((t) => t.id === message.id);
+    if (token) {
       token.x = message.x;
       token.y = message.y;
       renderAndSync();
@@ -1597,6 +1611,22 @@ function broadcastView() {
         color: aoeColor,
       },
     });
+  });
+}
+
+// Player -> GM live token streaming: coalesce many pointermove events into at most one
+// position message per animation frame, so a fast drag never floods the channel.
+let tokenMoveQueued = false;
+let pendingTokenMove = null;
+function streamTokenMove(id, x, y) {
+  pendingTokenMove = { id, x, y };
+  if (tokenMoveQueued) return;
+  tokenMoveQueued = true;
+  requestAnimationFrame(() => {
+    tokenMoveQueued = false;
+    if (pendingTokenMove) {
+      relay({ type: "token-move", id: pendingTokenMove.id, x: pendingTokenMove.x, y: pendingTokenMove.y });
+    }
   });
 }
 
@@ -3353,6 +3383,8 @@ function onPointerDown(event) {
       draggingToken = hit;
       isDragging = true;
       capturePointer(event.pointerId);
+      // Tell the GM a drag is starting so it snapshots history once for the whole move.
+      relay({ type: "token-grab", id: hit.id });
     }
     return;
   }
@@ -3524,6 +3556,8 @@ function onPointerMove(event) {
       draggingToken.x = native.x;
       draggingToken.y = native.y;
       render();
+      // Stream the live position to the GM (coalesced to one message per frame).
+      streamTokenMove(draggingToken.id, native.x, native.y);
     }
     return;
   }
@@ -3629,9 +3663,9 @@ function onPointerUp(event) {
       const snapped = snapNative({ x: draggingToken.x, y: draggingToken.y });
       draggingToken.x = snapped.x;
       draggingToken.y = snapped.y;
-      // Player is not authoritative: report the move to the GM, which owns state.tokens
-      // and broadcasts the canonical position back to reconcile this local drag.
-      relay({ type: "token-move", id: draggingToken.id, x: snapped.x, y: snapped.y });
+      // Commit: the GM owns state.tokens, applies the snapped position, and broadcasts
+      // the authoritative state back to reconcile every display.
+      relay({ type: "token-drop", id: draggingToken.id, x: snapped.x, y: snapped.y });
       draggingToken = null;
     }
     isDragging = false;
