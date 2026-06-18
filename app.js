@@ -179,6 +179,7 @@ const controls = {
   initRoundLabel: document.getElementById("initRoundLabel"),
   initList: document.getElementById("initList"),
   initAddForm: document.getElementById("initAddForm"),
+  initAddTokens: document.getElementById("initAddTokens"),
   initName: document.getElementById("initName"),
   initRoll: document.getElementById("initRoll"),
   initHp: document.getElementById("initHp"),
@@ -679,6 +680,7 @@ function bindControls() {
     event.preventDefault();
     addCombatant();
   });
+  controls.initAddTokens?.addEventListener("click", addTokensToInitiative);
   controls.initList?.addEventListener("click", (event) => {
     const row = event.target.closest("[data-id]");
     if (!row) return;
@@ -3133,6 +3135,7 @@ function deleteTokenOrRoom(native) {
     pushHistory();
     if (token === selectedToken) selectedToken = null;
     state.tokens = state.tokens.filter((item) => item !== token);
+    removeCombatantByToken(token.id);
     renderAndSync();
     return true;
   }
@@ -3220,6 +3223,48 @@ function addCombatant() {
 
 function removeCombatant(id) {
   state.initiative.combatants = state.initiative.combatants.filter((c) => c.id !== id);
+  clampInitiativeTurn();
+  updateInitiativeUI();
+  broadcastState();
+}
+
+// Import every board token into the initiative tracker as a linked combatant. Name comes
+// from the token label (auto-named by type when blank), type from the token, and a tokenId
+// link ties the two so deleting the token later removes its row. Deduped by tokenId, so
+// running it again only pulls in tokens that aren't already tracked.
+function addTokensToInitiative() {
+  const existing = new Set(state.initiative.combatants.map((c) => c.tokenId).filter(Boolean));
+  const typeLabel = { player: "Player", npc: "NPC", monster: "Monster" };
+  const counts = {};
+  state.initiative.combatants.forEach((c) => { counts[c.type] = (counts[c.type] || 0) + 1; });
+  let added = 0;
+  state.tokens.forEach((token) => {
+    if (existing.has(token.id)) return;
+    const type = token.type || "monster";
+    let name = (token.label || "").trim();
+    if (!name) {
+      counts[type] = (counts[type] || 0) + 1;
+      name = `${typeLabel[type] || "Monster"} ${counts[type]}`;
+    }
+    state.initiative.combatants.push({ id: uuid(), name, type, init: 0, hp: null, maxHp: null, tokenId: token.id });
+    added += 1;
+  });
+  if (!added) return;
+  if (!state.initiative.active) {
+    setInitiativeActive(true);
+  } else {
+    updateInitiativeUI();
+    broadcastState();
+  }
+}
+
+// Remove any combatant linked to this token (used when a token is deleted from the board).
+// Manual combatants have no tokenId and are never touched; the link is one-way.
+function removeCombatantByToken(tokenId) {
+  if (!tokenId) return;
+  const before = state.initiative.combatants.length;
+  state.initiative.combatants = state.initiative.combatants.filter((c) => c.tokenId !== tokenId);
+  if (state.initiative.combatants.length === before) return;
   clampInitiativeTurn();
   updateInitiativeUI();
   broadcastState();
@@ -3937,8 +3982,10 @@ function onKeyDown(event) {
   if (selectedToken && (event.key === "Delete" || event.key === "Backspace")) {
     event.preventDefault();
     pushHistory();
+    const removedTokenId = selectedToken.id;
     state.tokens = state.tokens.filter((t) => t !== selectedToken);
     selectedToken = null;
+    removeCombatantByToken(removedTokenId);
     renderAndSync();
     return;
   }
