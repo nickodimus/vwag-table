@@ -2660,6 +2660,29 @@ function tokenOutline(token, r) {
   }
 }
 
+// Draw a token's label centered in the token, auto-shrinking the font so the whole label
+// fits inside the token (down to a floor), with a light outline so it stays legible over
+// token art as well as flat color.
+function drawTokenLabel(token, r) {
+  const text = String(token.label);
+  if (!text) return;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.lineJoin = "round";
+  const maxWidth = r * 1.7; // token is ~2r wide; leave padding inside the ring
+  let fontPx = Math.round(gridCellNative() / 2);
+  ctx.font = `700 ${fontPx}px Inter, sans-serif`;
+  while (fontPx > 6 && ctx.measureText(text).width > maxWidth) {
+    fontPx -= 1;
+    ctx.font = `700 ${fontPx}px Inter, sans-serif`;
+  }
+  ctx.lineWidth = Math.max(1, fontPx / 6);
+  ctx.strokeStyle = "rgba(255,255,255,0.9)";
+  ctx.strokeText(text, token.x, token.y);
+  ctx.fillStyle = "#0c0d0d";
+  ctx.fillText(text, token.x, token.y);
+}
+
 function drawTokens() {
   const lineW = Math.max(1, 2 / (curK * curMs));
   const rot = currentViewRotation();
@@ -2684,6 +2707,7 @@ function drawTokens() {
       ctx.lineWidth = lineW;
       ctx.strokeStyle = "rgba(0,0,0,0.65)";
       ctx.stroke();
+      if (token.label) drawTokenLabel(token, r);
     } else {
       ctx.beginPath();
       tokenOutline(token, r);
@@ -2694,13 +2718,7 @@ function drawTokens() {
       ctx.lineWidth = lineW;
       ctx.strokeStyle = "rgba(0,0,0,0.65)";
       ctx.stroke();
-      if (token.label) {
-        ctx.fillStyle = "#0c0d0d";
-        ctx.textAlign = "center";
-        ctx.textBaseline = "middle";
-        ctx.font = `700 ${Math.round(gridCellNative() / 2)}px Inter, sans-serif`;
-        ctx.fillText(String(token.label).slice(0, 3), token.x, token.y);
-      }
+      if (token.label) drawTokenLabel(token, r);
     }
     // Selection highlight (GM only): an accent outline around the active token.
     if (!isPlayer && token === selectedToken) {
