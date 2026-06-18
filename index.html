@@ -468,14 +468,22 @@
       <aside class="initiative-panel" id="initiativePanel" aria-label="Initiative tracker">
         <div class="init-head">
           <h2>Initiative</h2>
-          <label class="switch with-label" title="Show the turn order on the player display">
+          <button id="initClose" class="init-close" type="button" title="Close tracker" aria-label="Close tracker">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+          </button>
+        </div>
+        <div class="init-visibility">
+          <span class="label">Order overlay:</span>
+          <label class="switch with-label" title="Show the turn-order overlay on the GM screen (stays even when this panel is closed)">
+            GM
+            <input id="initShowOverlay" type="checkbox" checked>
+            <span></span>
+          </label>
+          <label class="switch with-label" title="Show the turn-order overlay on the player display">
             Players
             <input id="initShowPlayers" type="checkbox">
             <span></span>
           </label>
-          <button id="initClose" class="init-close" type="button" title="Close tracker" aria-label="Close tracker">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
-          </button>
         </div>
         <div class="init-round">
           <button id="initPrev" type="button" title="Previous turn" aria-label="Previous turn">
