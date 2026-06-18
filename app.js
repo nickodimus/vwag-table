@@ -491,6 +491,13 @@ function setup() {
       renderAndSyncView();
     }
   });
+  // While any drag is in progress, block the browser's native touch scrolling/cancel so a
+  // finger drag isn't stolen after the first cell. This is the imperative backstop to the
+  // canvas `touch-action: none`, which some touch stacks (e.g. Chromium on Linux with IR
+  // touch panels) don't fully honor. Must be non-passive so preventDefault is allowed.
+  canvas.addEventListener("touchmove", (event) => {
+    if (isDragging) event.preventDefault();
+  }, { passive: false });
   canvas.addEventListener("dblclick", onDoubleClick);
   canvas.addEventListener("contextmenu", onContextMenu);
   canvas.addEventListener("wheel", onWheel, { passive: false });
@@ -3502,6 +3509,8 @@ function onPointerDown(event) {
     const native = toNativePoint(event);
     const hit = hitToken(native);
     if (hit) {
+      // On touch/pen, stop the browser from claiming the gesture (scroll/cancel) for itself.
+      if (event.pointerType !== "mouse") event.preventDefault();
       draggingToken = hit;
       isDragging = true;
       capturePointer(event.pointerId);
