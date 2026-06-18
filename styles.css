@@ -1081,6 +1081,10 @@ input:disabled {
   display: block;
   height: 100%;
   width: 100%;
+  /* Opt out of the browser's built-in touch gestures (pan/zoom) on the map so a finger
+     drag delivers pointer events to us for the whole drag instead of being stolen as a
+     scroll after the first cell. Also a prerequisite for multi-finger token dragging. */
+  touch-action: none;
 }
 
 .empty-state {
