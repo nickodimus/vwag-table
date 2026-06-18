@@ -27,7 +27,7 @@ const emptyState = document.getElementById("emptyState");
 const channel = new BroadcastChannel("fog-table-state");
 const APP_NAME = "Battlemap Screen and GM Streaming Tool";
 const LEGACY_APP_NAME = "Fog Table";
-const SAVE_FILE_VERSION = 5;
+const SAVE_FILE_VERSION = 6;
 const DB_NAME = "fog-table-library";
 const DB_VERSION = 3;
 const MAP_STORE = "maps";
@@ -464,8 +464,11 @@ function setup() {
     loadSquareLock();
     syncControlsFromState();
     updateSquareLockUI();
-    // One-time, idempotent: split any legacy single-record maps into module + session pairs.
-    migrateMapsToModulesAndSessions().finally(() => refreshLibraryButtonState());
+    // One-time, idempotent: split any legacy single-record maps into module + session pairs,
+    // then give any pre-v6 modules a cell-space declaration.
+    migrateMapsToModulesAndSessions()
+      .then(() => backfillModuleCellGrids())
+      .finally(() => refreshLibraryButtonState());
     updateUndoButtons();
     setupCollapsibleSections();
     updateInitiativeUI();
@@ -1325,8 +1328,11 @@ function splitState(stateObj) {
     notes: JSON.parse(JSON.stringify(f.notes || [])),
     view: { ...(f.view || { scale: 1, cx: 0, cy: 0, rotation: 0 }) },
   }));
+  const primaryModuleFloor = moduleFloors.find((f) => f.imageWidth) || moduleFloors[0] || null;
+  const moduleGrid = JSON.parse(JSON.stringify(stateObj.grid || {}));
+  Object.assign(moduleGrid, deriveCellGrid(moduleGrid, stateObj.measure || {}, primaryModuleFloor));
   const module = {
-    grid: JSON.parse(JSON.stringify(stateObj.grid || {})),
+    grid: moduleGrid,
     measure: JSON.parse(JSON.stringify(stateObj.measure || {})),
     stairColor: stateObj.stairColor || "#ffffff",
     floors: moduleFloors,
@@ -1436,6 +1442,30 @@ async function migrateMapsToModulesAndSessions() {
       await deleteMapRecord(record.id);
     } catch {
       // Leave this record in place for a later attempt; never block startup.
+    }
+  }
+}
+
+// One-time, idempotent: give pre-v6 modules a cell-space declaration (cellsX/cellsY/pxPerCell).
+// The declaration is derived data, so this just makes every module self-describing immediately
+// rather than waiting for a re-save. Best-effort per module so it never blocks startup.
+async function backfillModuleCellGrids() {
+  let modules;
+  try {
+    modules = await listModuleRecords();
+  } catch {
+    return;
+  }
+  if (!Array.isArray(modules) || !modules.length) return;
+  for (const module of modules) {
+    try {
+      if (!module || !module.grid || module.grid.pxPerCell !== undefined) continue;
+      const primaryFloor = (module.floors || []).find((f) => f.imageWidth) || (module.floors || [])[0] || null;
+      Object.assign(module.grid, deriveCellGrid(module.grid, module.measure || {}, primaryFloor));
+      module.version = SAVE_FILE_VERSION;
+      await saveModuleRecord(module);
+    } catch {
+      // Skip this module; never block startup.
     }
   }
 }
@@ -2946,6 +2976,41 @@ function drawPolygon(points) {
 
 function gridCellNative() {
   return (state.grid.size || 70) / (state.map.scale || 1);
+}
+
+// Native px that represent one grid cell on the current map (the calibrated grid size, else the
+// measured cell). This is the px<->cell bridge the obstacle/lighting work (steps 4-5) authors
+// against; cellWorldPx() supplies the world cell size so there's no duplicate calibration logic.
+function pxPerCellNative() {
+  const world = cellWorldPx();
+  return world > 0 ? world / (state.map.scale || 1) : 0;
+}
+function nativeToCells(p) {
+  const ppc = pxPerCellNative();
+  return ppc > 0 ? { x: p.x / ppc, y: p.y / ppc } : { x: p.x, y: p.y };
+}
+function cellsToNative(c) {
+  const ppc = pxPerCellNative();
+  return ppc > 0 ? { x: c.x * ppc, y: c.y * ppc } : { x: c.x, y: c.y };
+}
+
+// Derive a module's cell-space declaration (DTT-style) from its grid/measure calibration and its
+// primary floor image, for record processing (splitState + the backfill) where there's no live
+// state. pxPerCell is native px/cell = world cell size / mapScale; cellsX/Y are the image divided
+// by that. Degrades to zeros when there's no grid and no calibration yet.
+function deriveCellGrid(gridObj, measureObj, floor) {
+  const cellWorld = gridObj.size > 0 ? gridObj.size : (measureObj && measureObj.cellSize > 0 ? measureObj.cellSize : 0);
+  const mapScale = (floor && floor.mapScale) || 1;
+  const pxPerCell = cellWorld > 0 ? cellWorld / mapScale : 0;
+  const w = (floor && floor.imageWidth) || 0;
+  const h = (floor && floor.imageHeight) || 0;
+  return {
+    pxPerCell,
+    cellsX: pxPerCell > 0 ? Math.round(w / pxPerCell) : 0,
+    cellsY: pxPerCell > 0 ? Math.round(h / pxPerCell) : 0,
+    type: gridObj.type || "square",
+    display: gridObj.display || "both",
+  };
 }
 
 function tokenRadius(token) {
