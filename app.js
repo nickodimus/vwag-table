@@ -2678,24 +2678,32 @@ function drawTokenTypeRing(token, r) {
 // Draw a token's label centered in the token, auto-shrinking the font so the whole label
 // fits inside the token (down to a floor), with a light outline so it stays legible over
 // token art as well as flat color.
-function drawTokenLabel(token, r) {
+function drawTokenLabel(token, r, below) {
   const text = String(token.label);
   if (!text) return;
   ctx.textAlign = "center";
-  ctx.textBaseline = "middle";
   ctx.lineJoin = "round";
-  const maxWidth = r * 1.7; // token is ~2r wide; leave padding inside the ring
+  // Centered labels must fit inside the token; labels below have lateral room to breathe.
+  const maxWidth = below ? r * 2.4 : r * 1.7;
   let fontPx = Math.round(gridCellNative() / 2);
   ctx.font = `700 ${fontPx}px Inter, sans-serif`;
   while (fontPx > 6 && ctx.measureText(text).width > maxWidth) {
     fontPx -= 1;
     ctx.font = `700 ${fontPx}px Inter, sans-serif`;
   }
+  let y = token.y;
+  if (below) {
+    // Sit just under the type ring so the art stays clear and the name is readable.
+    ctx.textBaseline = "top";
+    y = token.y + r + 4 / (curK * curMs);
+  } else {
+    ctx.textBaseline = "middle";
+  }
   ctx.lineWidth = Math.max(1, fontPx / 6);
   ctx.strokeStyle = "rgba(255,255,255,0.9)";
-  ctx.strokeText(text, token.x, token.y);
+  ctx.strokeText(text, token.x, y);
   ctx.fillStyle = "#0c0d0d";
-  ctx.fillText(text, token.x, token.y);
+  ctx.fillText(text, token.x, y);
 }
 
 function drawTokens() {
@@ -2722,7 +2730,7 @@ function drawTokens() {
       ctx.lineWidth = lineW;
       ctx.strokeStyle = "rgba(0,0,0,0.65)";
       ctx.stroke();
-      if (token.label) drawTokenLabel(token, r);
+      if (token.label) drawTokenLabel(token, r, true);
     } else {
       ctx.beginPath();
       tokenOutline(token, r);
@@ -2733,7 +2741,7 @@ function drawTokens() {
       ctx.lineWidth = lineW;
       ctx.strokeStyle = "rgba(0,0,0,0.65)";
       ctx.stroke();
-      if (token.label) drawTokenLabel(token, r);
+      if (token.label) drawTokenLabel(token, r, false);
     }
     drawTokenTypeRing(token, r);
     // Selection highlight (GM only): an accent outline around the active token.
