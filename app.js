@@ -71,6 +71,7 @@ const controls = {
   tokenColor: document.getElementById("tokenColor"),
   tokenCells: document.getElementById("tokenCells"),
   tokenLabel: document.getElementById("tokenLabel"),
+  tokenType: document.getElementById("tokenType"),
   tokenImage: document.getElementById("tokenImage"),
   tokenImagePreview: document.getElementById("tokenImagePreview"),
   tokenImageClear: document.getElementById("tokenImageClear"),
@@ -330,12 +331,27 @@ function handleMessage(message, source) {
     playerViewport = { w: message.w, h: message.h };
     render();
   }
+  if (message.type === "token-grab" && !isPlayer) {
+    // Snapshot once at the start of a remote drag so the whole move is one undo step.
+    pushHistory();
+  }
   if (message.type === "token-move" && !isPlayer) {
+    // Live position during a drag: update and render locally, but do NOT broadcast — a
+    // full state sync mid-drag would replace the player's tokens and orphan its drag.
     const token = state.tokens.find((t) => t.id === message.id);
     if (token) {
-      pushHistory();
       token.x = message.x;
       token.y = message.y;
+      render();
+    }
+  }
+  if (message.type === "token-drop" && !isPlayer) {
+    // Commit: snap against the GM's authoritative grid, then broadcast to all displays.
+    const token = state.tokens.find((t) => t.id === message.id);
+    if (token) {
+      const snapped = snapNative({ x: message.x, y: message.y });
+      token.x = snapped.x;
+      token.y = snapped.y;
       renderAndSync();
     }
   }
@@ -1600,6 +1616,21 @@ function broadcastView() {
   });
 }
 
+// Player -> GM live token streaming: coalesce many pointermove events into at most one
+// position message per animation frame, so a fast drag never floods the channel.
+let tokenMoveRaf = 0;
+let pendingTokenMove = null;
+function streamTokenMove(id, x, y) {
+  pendingTokenMove = { id, x, y };
+  if (tokenMoveRaf) return;
+  tokenMoveRaf = requestAnimationFrame(() => {
+    tokenMoveRaf = 0;
+    if (pendingTokenMove) {
+      relay({ type: "token-move", id: pendingTokenMove.id, x: pendingTokenMove.x, y: pendingTokenMove.y });
+    }
+  });
+}
+
 function renderAndSync() {
   render();
   broadcastState();
@@ -2630,6 +2661,43 @@ function tokenOutline(token, r) {
   }
 }
 
+// Type -> ring color, so player / npc / monster read at a glance on the board.
+const TOKEN_TYPE_RING = { player: "#3fb950", npc: "#539bf5", monster: "#e5534b" };
+
+// A colored ring just outside a token's outline indicating its type. Drawn for every token
+// on both the GM and player views. Tokens from before typing existed default to monster.
+function drawTokenTypeRing(token, r) {
+  const color = TOKEN_TYPE_RING[token.type] || TOKEN_TYPE_RING.monster;
+  ctx.beginPath();
+  tokenOutline(token, r + 1.5 / (curK * curMs));
+  ctx.lineWidth = Math.max(1.5, 2.5 / (curK * curMs));
+  ctx.strokeStyle = color;
+  ctx.stroke();
+}
+
+// Draw a token's label centered in the token, auto-shrinking the font so the whole label
+// fits inside the token (down to a floor), with a light outline so it stays legible over
+// token art as well as flat color.
+function drawTokenLabel(token, r) {
+  const text = String(token.label);
+  if (!text) return;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.lineJoin = "round";
+  const maxWidth = r * 1.7; // token is ~2r wide; leave padding inside the ring
+  let fontPx = Math.round(gridCellNative() / 2);
+  ctx.font = `700 ${fontPx}px Inter, sans-serif`;
+  while (fontPx > 6 && ctx.measureText(text).width > maxWidth) {
+    fontPx -= 1;
+    ctx.font = `700 ${fontPx}px Inter, sans-serif`;
+  }
+  ctx.lineWidth = Math.max(1, fontPx / 6);
+  ctx.strokeStyle = "rgba(255,255,255,0.9)";
+  ctx.strokeText(text, token.x, token.y);
+  ctx.fillStyle = "#0c0d0d";
+  ctx.fillText(text, token.x, token.y);
+}
+
 function drawTokens() {
   const lineW = Math.max(1, 2 / (curK * curMs));
   const rot = currentViewRotation();
@@ -2654,6 +2722,7 @@ function drawTokens() {
       ctx.lineWidth = lineW;
       ctx.strokeStyle = "rgba(0,0,0,0.65)";
       ctx.stroke();
+      if (token.label) drawTokenLabel(token, r);
     } else {
       ctx.beginPath();
       tokenOutline(token, r);
@@ -2664,14 +2733,9 @@ function drawTokens() {
       ctx.lineWidth = lineW;
       ctx.strokeStyle = "rgba(0,0,0,0.65)";
       ctx.stroke();
-      if (token.label) {
-        ctx.fillStyle = "#0c0d0d";
-        ctx.textAlign = "center";
-        ctx.textBaseline = "middle";
-        ctx.font = `700 ${Math.round(gridCellNative() / 2)}px Inter, sans-serif`;
-        ctx.fillText(String(token.label).slice(0, 3), token.x, token.y);
-      }
+      if (token.label) drawTokenLabel(token, r);
     }
+    drawTokenTypeRing(token, r);
     // Selection highlight (GM only): an accent outline around the active token.
     if (!isPlayer && token === selectedToken) {
       ctx.beginPath();
@@ -2727,6 +2791,7 @@ function addToken(native) {
     cells: Number(controls.tokenCells?.value) || 1,
     color: controls.tokenColor?.value || "#d6a94d",
     label: controls.tokenLabel?.value?.trim() || "",
+    type: controls.tokenType?.value || "monster",
     image: tokenImageData || "",
   });
   renderAndSync();
@@ -3353,6 +3418,8 @@ function onPointerDown(event) {
       draggingToken = hit;
       isDragging = true;
       capturePointer(event.pointerId);
+      // Tell the GM a drag is starting so it snapshots history once for the whole move.
+      relay({ type: "token-grab", id: hit.id });
     }
     return;
   }
@@ -3524,6 +3591,8 @@ function onPointerMove(event) {
       draggingToken.x = native.x;
       draggingToken.y = native.y;
       render();
+      // Stream the live position to the GM (coalesced to one message per frame).
+      streamTokenMove(draggingToken.id, native.x, native.y);
     }
     return;
   }
@@ -3626,12 +3695,16 @@ function onPointerMove(event) {
 function onPointerUp(event) {
   if (isPlayer) {
     if (draggingToken) {
-      const snapped = snapNative({ x: draggingToken.x, y: draggingToken.y });
-      draggingToken.x = snapped.x;
-      draggingToken.y = snapped.y;
-      // Player is not authoritative: report the move to the GM, which owns state.tokens
-      // and broadcasts the canonical position back to reconcile this local drag.
-      relay({ type: "token-move", id: draggingToken.id, x: snapped.x, y: snapped.y });
+      // Cancel any live update still queued for this frame so the drop is the final word —
+      // otherwise a trailing raw position lands after the drop and undoes the snap.
+      if (tokenMoveRaf) {
+        cancelAnimationFrame(tokenMoveRaf);
+        tokenMoveRaf = 0;
+      }
+      pendingTokenMove = null;
+      // Send the raw drop position; the GM snaps it against the authoritative grid and
+      // broadcasts the canonical position back to reconcile every display.
+      relay({ type: "token-drop", id: draggingToken.id, x: draggingToken.x, y: draggingToken.y });
       draggingToken = null;
     }
     isDragging = false;
