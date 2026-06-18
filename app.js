@@ -27,11 +27,13 @@ const emptyState = document.getElementById("emptyState");
 const channel = new BroadcastChannel("fog-table-state");
 const APP_NAME = "Battlemap Screen and GM Streaming Tool";
 const LEGACY_APP_NAME = "Fog Table";
-const SAVE_FILE_VERSION = 4;
+const SAVE_FILE_VERSION = 5;
 const DB_NAME = "fog-table-library";
-const DB_VERSION = 2;
+const DB_VERSION = 3;
 const MAP_STORE = "maps";
 const IMAGE_STORE = "images";
+const MODULE_STORE = "modules";
+const SESSION_STORE = "sessions";
 const FOG_MAX_EDGE = 4096; // cap fog raster resolution so huge maps stay within canvas/memory limits
 const HISTORY_LIMIT = 80;
 
@@ -462,7 +464,8 @@ function setup() {
     loadSquareLock();
     syncControlsFromState();
     updateSquareLockUI();
-    refreshLibraryButtonState();
+    // One-time, idempotent: split any legacy single-record maps into module + session pairs.
+    migrateMapsToModulesAndSessions().finally(() => refreshLibraryButtonState());
     updateUndoButtons();
     setupCollapsibleSections();
     updateInitiativeUI();
@@ -924,26 +927,22 @@ async function saveSession() {
   const currentFloor = state.floors.find((f) => f.id === state.currentFloorId);
   if (currentFloor && currentFloor.imageId) state.imageId = currentFloor.imageId;
 
-  const snapshot = JSON.parse(JSON.stringify(state));
-
   try {
-    // De-embed: write each floor's image into the image store, then strip the bytes from the
-    // record so only the imageId reference is persisted.
-    for (const floor of snapshot.floors) {
+    // De-embed: each floor's image into the image store (step 1), keyed by imageId.
+    for (const floor of state.floors) {
       if (floor.imageData && floor.imageId) await putImage(floor.imageId, floor.imageData);
     }
-    stripFloorImages(snapshot);
-
-    const saveData = {
-      id: makeMapId(mapName),
-      app: APP_NAME,
-      version: SAVE_FILE_VERSION,
-      name: mapName,
-      savedAt: new Date().toISOString(),
-      state: snapshot,
-    };
-    await saveMapRecord(saveData);
-    window.alert(`Saved "${saveData.name}" to the local map library.`);
+    // Split the live state into an authored module + a session that references it. 1:1 for now:
+    // module and session share the name-derived id, which preserves overwrite-by-name, while the
+    // two-store + moduleId reference is already 1:many-ready.
+    const id = makeMapId(mapName);
+    const now = new Date().toISOString();
+    const { module, session } = splitState(state);
+    Object.assign(module, { id, app: APP_NAME, version: SAVE_FILE_VERSION, kind: "module", name: mapName, savedAt: now });
+    Object.assign(session, { id, moduleId: id, app: APP_NAME, version: SAVE_FILE_VERSION, kind: "session", name: mapName, savedAt: now });
+    await saveModuleRecord(module);
+    await saveSessionRecord(session);
+    window.alert(`Saved "${mapName}" to the local map library.`);
     refreshLibraryButtonState();
   } catch (error) {
     window.alert(`Could not save this map: ${error.message}`);
@@ -1007,17 +1006,17 @@ function migrateState(snapshot, version) {
 
 async function openLibrary() {
   try {
-    const maps = await listMapRecords();
-    renderLibraryList(maps);
+    const sessions = await listSessionRecords();
+    renderLibraryList(sessions);
     controls.libraryDialog.showModal();
   } catch (error) {
     window.alert(`Could not open the map library: ${error.message}`);
   }
 }
 
-function renderLibraryList(maps) {
+function renderLibraryList(records) {
   controls.savedMapList.replaceChildren();
-  if (!maps.length) {
+  if (!records.length) {
     const empty = document.createElement("p");
     empty.className = "hint";
     empty.textContent = "No saved maps yet.";
@@ -1025,17 +1024,17 @@ function renderLibraryList(maps) {
     return;
   }
 
-  maps
+  records
     .sort((a, b) => new Date(b.savedAt) - new Date(a.savedAt))
-    .forEach((map) => {
+    .forEach((record) => {
       const row = document.createElement("div");
       row.className = "saved-map-row";
 
       const text = document.createElement("div");
       const name = document.createElement("strong");
-      name.textContent = map.name;
+      name.textContent = record.name;
       const meta = document.createElement("span");
-      meta.textContent = `${map.state.imageName || "Map image"} - ${new Date(map.savedAt).toLocaleString()}`;
+      meta.textContent = record.savedAt ? new Date(record.savedAt).toLocaleString() : "Saved map";
       text.append(name, meta);
 
       const actions = document.createElement("div");
@@ -1043,11 +1042,11 @@ function renderLibraryList(maps) {
       const load = document.createElement("button");
       load.type = "button";
       load.textContent = "Load";
-      load.addEventListener("click", () => loadLibraryMap(map.id));
+      load.addEventListener("click", () => loadLibraryMap(record.id));
       const remove = document.createElement("button");
       remove.type = "button";
       remove.textContent = "Delete";
-      remove.addEventListener("click", () => deleteLibraryMap(map.id, map.name));
+      remove.addEventListener("click", () => deleteLibraryMap(record.id, record.name));
       actions.append(load, remove);
 
       row.append(text, actions);
@@ -1057,9 +1056,12 @@ function renderLibraryList(maps) {
 
 async function loadLibraryMap(id) {
   try {
-    const data = await getMapRecord(id);
-    const snapshot = validateSessionData(data);
-    await hydrateFloorImages(snapshot); // v4 records carry only imageId; pull the bytes back in
+    const session = await getSessionRecord(id);
+    if (!session) throw new Error("saved game not found");
+    const module = await getModuleRecord(session.moduleId || id);
+    if (!module) throw new Error("the map module for this saved game is missing");
+    const snapshot = mergeModuleSession(module, session);
+    await hydrateFloorImages(snapshot); // floors carry only imageId; pull the bytes back in
     drawingRoom = [];
     activeStroke = null;
     undoStack.length = 0;
@@ -1070,11 +1072,6 @@ async function loadLibraryMap(id) {
     broadcastAssets();
     renderAndSync();
     controls.libraryDialog.close();
-    // Lazily upgrade a pre-v4 record to a lean v4 one. Fire-and-forget on a fresh fetch so it
-    // can never disturb the map we just loaded.
-    if ((data.version || 1) < SAVE_FILE_VERSION) {
-      migrateRecordToLeanV4(id).catch(() => {});
-    }
   } catch (error) {
     window.alert(`Could not load this map: ${error.message}`);
   }
@@ -1082,23 +1079,29 @@ async function loadLibraryMap(id) {
 
 async function deleteLibraryMap(id, name) {
   if (!window.confirm(`Delete "${name}" from the local map library?`)) return;
-  await deleteMapRecord(id);
-  const maps = await listMapRecords();
-  renderLibraryList(maps);
-  refreshLibraryButtonState(maps);
+  const session = await getSessionRecord(id);
+  await deleteSessionRecord(id);
+  // 1:1 — drop the referenced module too. (Its image blob is left in the image store; orphan
+  // cleanup is a separate backlog chunk so a shared image is never nuked out from under another
+  // map.)
+  await deleteModuleRecord(session?.moduleId || id);
+  const sessions = await listSessionRecords();
+  renderLibraryList(sessions);
+  refreshLibraryButtonState(sessions);
 }
 
 async function exportLibrary() {
   try {
-    const maps = await listMapRecords();
-    if (!maps.length) {
+    const sessions = await listSessionRecords();
+    if (!sessions.length) {
       window.alert("There are no saved maps to export.");
       return;
     }
-    // Images are de-embedded into their own store, so gather the referenced blobs and bundle
-    // them with the (lean) records — otherwise an exported library would lose its images.
+    const modules = await listModuleRecords();
+    // Images live in their own store, so gather the blobs referenced by every module and bundle
+    // them with the records — otherwise an exported library would lose its images.
     const imageIds = new Set();
-    maps.forEach((map) => (map.state?.floors || []).forEach((floor) => {
+    modules.forEach((module) => (module.floors || []).forEach((floor) => {
       if (floor.imageId) imageIds.add(floor.imageId);
     }));
     const images = [];
@@ -1106,7 +1109,7 @@ async function exportLibrary() {
       const record = await getImageRecord(imageId);
       if (record) images.push(record);
     }
-    const payload = { app: APP_NAME, version: SAVE_FILE_VERSION, exportedAt: new Date().toISOString(), maps, images };
+    const payload = { app: APP_NAME, version: SAVE_FILE_VERSION, exportedAt: new Date().toISOString(), modules, sessions, images };
     const blob = new Blob([JSON.stringify(payload)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
@@ -1126,23 +1129,39 @@ function importLibrary(event) {
   reader.onload = async () => {
     try {
       const parsed = JSON.parse(reader.result);
-      const maps = Array.isArray(parsed) ? parsed : parsed.maps;
-      if (!Array.isArray(maps) || !maps.length) throw new Error("no maps found in that file");
-      // Restore de-embedded images first so the records can reference them. Older exports
-      // (pre-v4) have no images array and carry their bytes inline — those still import, and
-      // get migrated to lean v4 on first load.
       const images = Array.isArray(parsed?.images) ? parsed.images : [];
+      const modules = Array.isArray(parsed?.modules) ? parsed.modules : [];
+      const sessions = Array.isArray(parsed?.sessions) ? parsed.sessions : [];
+      // Legacy exports are a bare array, {maps:[...]}, or {maps, images} — single records.
+      const legacyMaps = Array.isArray(parsed) ? parsed : (Array.isArray(parsed?.maps) ? parsed.maps : []);
+      if (!modules.length && !sessions.length && !legacyMaps.length) {
+        throw new Error("no maps found in that file");
+      }
+      // Restore images first so module records can reference them.
       for (const image of images) {
         if (image?.id && image?.data) await putImage(image.id, image.data);
       }
       let imported = 0;
-      for (const record of maps) {
+      for (const module of modules) {
+        if (module?.id) await saveModuleRecord(module);
+      }
+      for (const session of sessions) {
+        if (session?.id) {
+          await saveSessionRecord(session);
+          imported += 1;
+        }
+      }
+      // Legacy single-record maps: store them, then split into module + session pairs.
+      for (const record of legacyMaps) {
         if (!record?.id || !record?.state) continue;
         await saveMapRecord(record);
-        imported += 1;
+      }
+      if (legacyMaps.length) {
+        await migrateMapsToModulesAndSessions();
+        imported += legacyMaps.length;
       }
       window.alert(`Imported ${imported} map${imported === 1 ? "" : "s"}.`);
-      const updated = await listMapRecords();
+      const updated = await listSessionRecords();
       renderLibraryList(updated);
       refreshLibraryButtonState(updated);
     } catch (error) {
@@ -1154,11 +1173,11 @@ function importLibrary(event) {
   reader.readAsText(file);
 }
 
-async function refreshLibraryButtonState(existingMaps) {
+async function refreshLibraryButtonState(existingSessions) {
   if (isPlayer) return;
   try {
-    const maps = existingMaps || (await listMapRecords());
-    const hasMaps = maps.length > 0;
+    const sessions = existingSessions || (await listSessionRecords());
+    const hasMaps = sessions.length > 0;
     controls.loadLibrary.classList.toggle("empty", !hasMaps);
     controls.loadLibrary.disabled = !hasMaps;
     if (controls.exportLibrary) controls.exportLibrary.disabled = !hasMaps;
@@ -1179,17 +1198,25 @@ function openMapDatabase() {
       if (!db.objectStoreNames.contains(IMAGE_STORE)) {
         db.createObjectStore(IMAGE_STORE, { keyPath: "id" });
       }
+      if (!db.objectStoreNames.contains(MODULE_STORE)) {
+        db.createObjectStore(MODULE_STORE, { keyPath: "id" });
+      }
+      if (!db.objectStoreNames.contains(SESSION_STORE)) {
+        db.createObjectStore(SESSION_STORE, { keyPath: "id" });
+      }
     };
     request.onsuccess = () => resolve(request.result);
     request.onerror = () => reject(request.error);
   });
 }
 
-async function withMapStore(modeName, action) {
+// Generic IndexedDB transaction wrapper — all four stores (maps/images/modules/sessions) run
+// through this so the boilerplate lives in one place.
+async function withStore(storeName, modeName, action) {
   const db = await openMapDatabase();
   return new Promise((resolve, reject) => {
-    const transaction = db.transaction(MAP_STORE, modeName);
-    const store = transaction.objectStore(MAP_STORE);
+    const transaction = db.transaction(storeName, modeName);
+    const store = transaction.objectStore(storeName);
     const request = action(store);
     request.onsuccess = () => resolve(request.result);
     request.onerror = () => reject(request.error);
@@ -1201,62 +1228,63 @@ async function withMapStore(modeName, action) {
   });
 }
 
+// Legacy single-record map store — read-only in practice now; kept only so the v4->v5 migration
+// can drain it into modules + sessions. (Dropping the store + these helpers is a backlog cleanup
+// for once every library has been migrated.)
 function saveMapRecord(record) {
-  return withMapStore("readwrite", (store) => store.put(record));
+  return withStore(MAP_STORE, "readwrite", (store) => store.put(record));
 }
 function listMapRecords() {
-  return withMapStore("readonly", (store) => store.getAll());
-}
-function getMapRecord(id) {
-  return withMapStore("readonly", (store) => store.get(id));
+  return withStore(MAP_STORE, "readonly", (store) => store.getAll());
 }
 function deleteMapRecord(id) {
-  return withMapStore("readwrite", (store) => store.delete(id));
+  return withStore(MAP_STORE, "readwrite", (store) => store.delete(id));
+}
+
+// Module store — authored maps (shareable, /maps/-ready).
+function saveModuleRecord(record) {
+  return withStore(MODULE_STORE, "readwrite", (store) => store.put(record));
+}
+function listModuleRecords() {
+  return withStore(MODULE_STORE, "readonly", (store) => store.getAll());
+}
+function getModuleRecord(id) {
+  return withStore(MODULE_STORE, "readonly", (store) => store.get(id));
+}
+function deleteModuleRecord(id) {
+  return withStore(MODULE_STORE, "readwrite", (store) => store.delete(id));
+}
+
+// Session store — per-play state referencing a module by id. The library lists these.
+function saveSessionRecord(record) {
+  return withStore(SESSION_STORE, "readwrite", (store) => store.put(record));
+}
+function listSessionRecords() {
+  return withStore(SESSION_STORE, "readonly", (store) => store.getAll());
+}
+function getSessionRecord(id) {
+  return withStore(SESSION_STORE, "readonly", (store) => store.get(id));
+}
+function deleteSessionRecord(id) {
+  return withStore(SESSION_STORE, "readwrite", (store) => store.delete(id));
 }
 
 /* ----------------------------- image store (de-embedded map images) ----------------------------- */
 
-// Map images live once in their own object store keyed by imageId, so a saved map record
-// carries only the reference (imageId) rather than the base64 bytes. This keeps records
-// tiny, dedupes reused images, and gives a clean id-addressed seam for later serving.
-async function withImageStore(modeName, action) {
-  const db = await openMapDatabase();
-  return new Promise((resolve, reject) => {
-    const transaction = db.transaction(IMAGE_STORE, modeName);
-    const store = transaction.objectStore(IMAGE_STORE);
-    const request = action(store);
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error);
-    transaction.oncomplete = () => db.close();
-    transaction.onerror = () => {
-      db.close();
-      reject(transaction.error);
-    };
-  });
-}
-
+// Map images live once in their own store keyed by imageId, so a record carries only the
+// reference (imageId) rather than the base64 bytes.
 function putImage(id, data) {
-  return withImageStore("readwrite", (store) => store.put({ id, data }));
+  return withStore(IMAGE_STORE, "readwrite", (store) => store.put({ id, data }));
 }
 function getImageRecord(id) {
-  return withImageStore("readonly", (store) => store.get(id));
+  return withStore(IMAGE_STORE, "readonly", (store) => store.get(id));
 }
 async function getImage(id) {
   const record = await getImageRecord(id);
   return record ? record.data : "";
 }
 
-// Blank the de-embeddable image bytes out of a state object before it is persisted. The
-// imageId, dimensions, and name stay on the record; the bytes live in the image store.
-function stripFloorImages(stateObj) {
-  (stateObj.floors || []).forEach((floor) => {
-    floor.imageData = "";
-  });
-  stateObj.imageData = ""; // top-level mirror is redundant once floors reference images by id
-}
-
-// Fill each floor's imageData back in from the image store (v4 records carry only imageId).
-// Pre-v4 records still have inline imageData, so this only fills the gaps it actually finds.
+// Fill each floor's imageData back in from the image store (records carry only imageId).
 async function hydrateFloorImages(snapshot) {
   const floors = Array.isArray(snapshot.floors) ? snapshot.floors : [];
   for (const floor of floors) {
@@ -1271,22 +1299,145 @@ async function hydrateFloorImages(snapshot) {
   }
 }
 
-// One-time, best-effort: rewrite a pre-v4 record (inline base64) into a lean v4 record with
-// its images moved into the image store. Operates on a fresh fetch so it never disturbs the
-// map currently being loaded; safe to fire-and-forget.
-async function migrateRecordToLeanV4(id) {
-  const record = await getMapRecord(id);
-  if (!record || (record.version || 1) >= SAVE_FILE_VERSION || !record.state) return;
-  const floors = record.state.floors || [];
-  for (const floor of floors) {
-    if (floor.imageData) {
-      if (!floor.imageId) floor.imageId = uuid();
-      await putImage(floor.imageId, floor.imageData);
+/* ----------------------------- module / session split ----------------------------- */
+
+// Partition a full live-state snapshot into an authored module body + a session body. Floors
+// split by id: the authored half (image ref + dimensions + scale + stairs) goes to the module,
+// the play half (fog/tokens/dropped images/notes/view) goes to the session. Neither carries the
+// image bytes — those live in the image store, keyed by imageId.
+function splitState(stateObj) {
+  const floors = stateObj.floors || [];
+  const moduleFloors = floors.map((f) => ({
+    id: f.id,
+    imageId: f.imageId || "",
+    imageName: f.imageName || "",
+    imageWidth: f.imageWidth || 0,
+    imageHeight: f.imageHeight || 0,
+    mapScale: f.mapScale || 1,
+    stairs: JSON.parse(JSON.stringify(f.stairs || [])),
+  }));
+  const sessionFloors = floors.map((f) => ({
+    id: f.id,
+    rooms: JSON.parse(JSON.stringify(f.rooms || [])),
+    strokes: JSON.parse(JSON.stringify(f.strokes || [])),
+    tokens: JSON.parse(JSON.stringify(f.tokens || [])),
+    images: JSON.parse(JSON.stringify(f.images || [])),
+    notes: JSON.parse(JSON.stringify(f.notes || [])),
+    view: { ...(f.view || { scale: 1, cx: 0, cy: 0, rotation: 0 }) },
+  }));
+  const module = {
+    grid: JSON.parse(JSON.stringify(stateObj.grid || {})),
+    measure: JSON.parse(JSON.stringify(stateObj.measure || {})),
+    stairColor: stateObj.stairColor || "#ffffff",
+    floors: moduleFloors,
+    // Forward-empty — filled by later steps (obstacle geometry, lights, room pins, VWAG linkage).
+    obstacles: [],
+    lights: [],
+    pins: [],
+    ambient: { timeOfDay: 12 },
+    vwag: {},
+  };
+  const session = {
+    blackout: Boolean(stateObj.blackout),
+    splash: JSON.parse(JSON.stringify(stateObj.splash || { enabled: false, imageData: "", imageName: "" })),
+    initiative: JSON.parse(JSON.stringify(stateObj.initiative || {})),
+    playerView: JSON.parse(JSON.stringify(stateObj.playerView || {})),
+    currentFloorId: stateObj.currentFloorId,
+    floorPosition: stateObj.floorPosition || 1,
+    floorCount: stateObj.floorCount || floors.length || 1,
+    fog: {
+      gmColor: stateObj.fog?.gmColor || "#080909",
+      gmOpacity: stateObj.fog?.gmOpacity ?? DEFAULT_GM_FOG_OPACITY,
+      toolSize: stateObj.fog?.toolSize ?? 70,
+      toolShape: stateObj.fog?.toolShape ?? "round",
+      stampShape: stateObj.fog?.stampShape ?? "rectangle",
+    },
+    floors: sessionFloors,
+  };
+  return { module, session };
+}
+
+// Recombine a module + session into a single snapshot loadSnapshot() can consume. Floors are
+// re-merged by id; imageData is left blank for hydrateFloorImages() to fill from the store.
+function mergeModuleSession(module, session) {
+  const sessionById = new Map((session.floors || []).map((f) => [f.id, f]));
+  const floors = (module.floors || []).map((mf) => {
+    const sf = sessionById.get(mf.id) || {};
+    return {
+      id: mf.id,
+      imageId: mf.imageId || "",
+      imageData: "",
+      imageName: mf.imageName || "",
+      imageWidth: mf.imageWidth || 0,
+      imageHeight: mf.imageHeight || 0,
+      mapScale: mf.mapScale || 1,
+      stairs: JSON.parse(JSON.stringify(mf.stairs || [])),
+      rooms: JSON.parse(JSON.stringify(sf.rooms || [])),
+      strokes: JSON.parse(JSON.stringify(sf.strokes || [])),
+      tokens: JSON.parse(JSON.stringify(sf.tokens || [])),
+      images: JSON.parse(JSON.stringify(sf.images || [])),
+      notes: JSON.parse(JSON.stringify(sf.notes || [])),
+      view: { ...(sf.view || { scale: 1, cx: 0, cy: 0, rotation: 0 }) },
+    };
+  });
+  return {
+    grid: JSON.parse(JSON.stringify(module.grid || {})),
+    measure: JSON.parse(JSON.stringify(module.measure || {})),
+    stairColor: module.stairColor || "#ffffff",
+    blackout: Boolean(session.blackout),
+    splash: JSON.parse(JSON.stringify(session.splash || { enabled: false, imageData: "", imageName: "" })),
+    initiative: JSON.parse(JSON.stringify(session.initiative || {})),
+    playerView: JSON.parse(JSON.stringify(session.playerView || {})),
+    fog: {
+      rooms: [],
+      strokes: [],
+      gmColor: session.fog?.gmColor || "#080909",
+      gmOpacity: session.fog?.gmOpacity ?? DEFAULT_GM_FOG_OPACITY,
+      toolSize: session.fog?.toolSize ?? 70,
+      toolShape: session.fog?.toolShape ?? "round",
+      stampShape: session.fog?.stampShape ?? "rectangle",
+    },
+    currentFloorId: session.currentFloorId || (floors[0] && floors[0].id),
+    floorPosition: session.floorPosition || 1,
+    floorCount: session.floorCount || floors.length,
+    floors,
+  };
+}
+
+// One-time, idempotent: drain the legacy single-record map store into module + session pairs.
+// Runs on GM startup and after a legacy import. Per record: normalize its shape, de-embed any
+// still-inline image bytes into the image store, split it, write the pair, delete the original.
+// Best-effort per record so a single bad record never blocks startup.
+async function migrateMapsToModulesAndSessions() {
+  let records;
+  try {
+    records = await listMapRecords();
+  } catch {
+    return;
+  }
+  if (!Array.isArray(records) || !records.length) return;
+  for (const record of records) {
+    try {
+      if (!record || !record.id || !record.state) continue;
+      const snapshot = validateSessionData(record); // app check + shape migration -> floors guaranteed
+      for (const floor of snapshot.floors || []) {
+        if (floor.imageData) {
+          if (!floor.imageId) floor.imageId = uuid();
+          await putImage(floor.imageId, floor.imageData);
+        }
+      }
+      const { module, session } = splitState(snapshot);
+      const now = record.savedAt || new Date().toISOString();
+      const name = record.name || record.id;
+      Object.assign(module, { id: record.id, app: APP_NAME, version: SAVE_FILE_VERSION, kind: "module", name, savedAt: now });
+      Object.assign(session, { id: record.id, moduleId: record.id, app: APP_NAME, version: SAVE_FILE_VERSION, kind: "session", name, savedAt: now });
+      await saveModuleRecord(module);
+      await saveSessionRecord(session);
+      await deleteMapRecord(record.id);
+    } catch {
+      // Leave this record in place for a later attempt; never block startup.
     }
   }
-  stripFloorImages(record.state);
-  record.version = SAVE_FILE_VERSION;
-  await saveMapRecord(record);
 }
 
 /* ----------------------------- snapshots / sync ----------------------------- */
