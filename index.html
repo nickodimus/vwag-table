@@ -358,8 +358,16 @@
               </label>
             </div>
             <label>
+              Type
+              <select id="tokenType">
+                <option value="player">Player</option>
+                <option value="npc">NPC</option>
+                <option value="monster" selected>Monster</option>
+              </select>
+            </label>
+            <label>
               Label
-              <input id="tokenLabel" type="text" maxlength="3" placeholder="e.g. G1" autocomplete="off">
+              <input id="tokenLabel" type="text" maxlength="12" placeholder="e.g. Goblin 3" autocomplete="off">
             </label>
             <div class="token-image-row">
               <img id="tokenImagePreview" class="token-image-preview hidden" alt="Token image preview">
