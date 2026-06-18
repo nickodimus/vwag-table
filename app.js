@@ -27,10 +27,11 @@ const emptyState = document.getElementById("emptyState");
 const channel = new BroadcastChannel("fog-table-state");
 const APP_NAME = "Battlemap Screen and GM Streaming Tool";
 const LEGACY_APP_NAME = "Fog Table";
-const SAVE_FILE_VERSION = 3;
+const SAVE_FILE_VERSION = 4;
 const DB_NAME = "fog-table-library";
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 const MAP_STORE = "maps";
+const IMAGE_STORE = "images";
 const FOG_MAX_EDGE = 4096; // cap fog raster resolution so huge maps stay within canvas/memory limits
 const HISTORY_LIMIT = 80;
 
@@ -903,7 +904,7 @@ function loadSplashFile(event) {
 
 /* ----------------------------- library / IndexedDB ----------------------------- */
 
-function saveSession() {
+async function saveSession() {
   captureCurrentFloor();
   if (!state.floors.some((floor) => floor.imageData)) {
     window.alert("Load a map image before saving.");
@@ -915,21 +916,38 @@ function saveSession() {
   const mapName = enteredName?.trim();
   if (!mapName) return;
 
-  const saveData = {
-    id: makeMapId(mapName),
-    app: APP_NAME,
-    version: SAVE_FILE_VERSION,
-    name: mapName,
-    savedAt: new Date().toISOString(),
-    state: JSON.parse(JSON.stringify(state)),
-  };
+  // Make sure every floor that has an image carries a stable id (on the live state, so future
+  // saves reuse it and the image store stays deduped), then mirror the current one up.
+  state.floors.forEach((floor) => {
+    if (floor.imageData && !floor.imageId) floor.imageId = uuid();
+  });
+  const currentFloor = state.floors.find((f) => f.id === state.currentFloorId);
+  if (currentFloor && currentFloor.imageId) state.imageId = currentFloor.imageId;
 
-  saveMapRecord(saveData)
-    .then(() => {
-      window.alert(`Saved "${saveData.name}" to the local map library.`);
-      refreshLibraryButtonState();
-    })
-    .catch((error) => window.alert(`Could not save this map: ${error.message}`));
+  const snapshot = JSON.parse(JSON.stringify(state));
+
+  try {
+    // De-embed: write each floor's image into the image store, then strip the bytes from the
+    // record so only the imageId reference is persisted.
+    for (const floor of snapshot.floors) {
+      if (floor.imageData && floor.imageId) await putImage(floor.imageId, floor.imageData);
+    }
+    stripFloorImages(snapshot);
+
+    const saveData = {
+      id: makeMapId(mapName),
+      app: APP_NAME,
+      version: SAVE_FILE_VERSION,
+      name: mapName,
+      savedAt: new Date().toISOString(),
+      state: snapshot,
+    };
+    await saveMapRecord(saveData);
+    window.alert(`Saved "${saveData.name}" to the local map library.`);
+    refreshLibraryButtonState();
+  } catch (error) {
+    window.alert(`Could not save this map: ${error.message}`);
+  }
 }
 
 function makeMapId(name) {
@@ -1041,6 +1059,7 @@ async function loadLibraryMap(id) {
   try {
     const data = await getMapRecord(id);
     const snapshot = validateSessionData(data);
+    await hydrateFloorImages(snapshot); // v4 records carry only imageId; pull the bytes back in
     drawingRoom = [];
     activeStroke = null;
     undoStack.length = 0;
@@ -1051,6 +1070,11 @@ async function loadLibraryMap(id) {
     broadcastAssets();
     renderAndSync();
     controls.libraryDialog.close();
+    // Lazily upgrade a pre-v4 record to a lean v4 one. Fire-and-forget on a fresh fetch so it
+    // can never disturb the map we just loaded.
+    if ((data.version || 1) < SAVE_FILE_VERSION) {
+      migrateRecordToLeanV4(id).catch(() => {});
+    }
   } catch (error) {
     window.alert(`Could not load this map: ${error.message}`);
   }
@@ -1071,7 +1095,18 @@ async function exportLibrary() {
       window.alert("There are no saved maps to export.");
       return;
     }
-    const payload = { app: APP_NAME, version: SAVE_FILE_VERSION, exportedAt: new Date().toISOString(), maps };
+    // Images are de-embedded into their own store, so gather the referenced blobs and bundle
+    // them with the (lean) records — otherwise an exported library would lose its images.
+    const imageIds = new Set();
+    maps.forEach((map) => (map.state?.floors || []).forEach((floor) => {
+      if (floor.imageId) imageIds.add(floor.imageId);
+    }));
+    const images = [];
+    for (const imageId of imageIds) {
+      const record = await getImageRecord(imageId);
+      if (record) images.push(record);
+    }
+    const payload = { app: APP_NAME, version: SAVE_FILE_VERSION, exportedAt: new Date().toISOString(), maps, images };
     const blob = new Blob([JSON.stringify(payload)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
@@ -1093,6 +1128,13 @@ function importLibrary(event) {
       const parsed = JSON.parse(reader.result);
       const maps = Array.isArray(parsed) ? parsed : parsed.maps;
       if (!Array.isArray(maps) || !maps.length) throw new Error("no maps found in that file");
+      // Restore de-embedded images first so the records can reference them. Older exports
+      // (pre-v4) have no images array and carry their bytes inline — those still import, and
+      // get migrated to lean v4 on first load.
+      const images = Array.isArray(parsed?.images) ? parsed.images : [];
+      for (const image of images) {
+        if (image?.id && image?.data) await putImage(image.id, image.data);
+      }
       let imported = 0;
       for (const record of maps) {
         if (!record?.id || !record?.state) continue;
@@ -1134,6 +1176,9 @@ function openMapDatabase() {
       if (!db.objectStoreNames.contains(MAP_STORE)) {
         db.createObjectStore(MAP_STORE, { keyPath: "id" });
       }
+      if (!db.objectStoreNames.contains(IMAGE_STORE)) {
+        db.createObjectStore(IMAGE_STORE, { keyPath: "id" });
+      }
     };
     request.onsuccess = () => resolve(request.result);
     request.onerror = () => reject(request.error);
@@ -1167,6 +1212,81 @@ function getMapRecord(id) {
 }
 function deleteMapRecord(id) {
   return withMapStore("readwrite", (store) => store.delete(id));
+}
+
+/* ----------------------------- image store (de-embedded map images) ----------------------------- */
+
+// Map images live once in their own object store keyed by imageId, so a saved map record
+// carries only the reference (imageId) rather than the base64 bytes. This keeps records
+// tiny, dedupes reused images, and gives a clean id-addressed seam for later serving.
+async function withImageStore(modeName, action) {
+  const db = await openMapDatabase();
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction(IMAGE_STORE, modeName);
+    const store = transaction.objectStore(IMAGE_STORE);
+    const request = action(store);
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+    transaction.oncomplete = () => db.close();
+    transaction.onerror = () => {
+      db.close();
+      reject(transaction.error);
+    };
+  });
+}
+
+function putImage(id, data) {
+  return withImageStore("readwrite", (store) => store.put({ id, data }));
+}
+function getImageRecord(id) {
+  return withImageStore("readonly", (store) => store.get(id));
+}
+async function getImage(id) {
+  const record = await getImageRecord(id);
+  return record ? record.data : "";
+}
+
+// Blank the de-embeddable image bytes out of a state object before it is persisted. The
+// imageId, dimensions, and name stay on the record; the bytes live in the image store.
+function stripFloorImages(stateObj) {
+  (stateObj.floors || []).forEach((floor) => {
+    floor.imageData = "";
+  });
+  stateObj.imageData = ""; // top-level mirror is redundant once floors reference images by id
+}
+
+// Fill each floor's imageData back in from the image store (v4 records carry only imageId).
+// Pre-v4 records still have inline imageData, so this only fills the gaps it actually finds.
+async function hydrateFloorImages(snapshot) {
+  const floors = Array.isArray(snapshot.floors) ? snapshot.floors : [];
+  for (const floor of floors) {
+    if (!floor.imageData && floor.imageId) {
+      floor.imageData = await getImage(floor.imageId);
+    }
+  }
+  const current = floors.find((f) => f.id === (snapshot.currentFloorId || (floors[0] && floors[0].id)));
+  if (current) {
+    snapshot.imageId = current.imageId || snapshot.imageId;
+    snapshot.imageData = current.imageData || snapshot.imageData;
+  }
+}
+
+// One-time, best-effort: rewrite a pre-v4 record (inline base64) into a lean v4 record with
+// its images moved into the image store. Operates on a fresh fetch so it never disturbs the
+// map currently being loaded; safe to fire-and-forget.
+async function migrateRecordToLeanV4(id) {
+  const record = await getMapRecord(id);
+  if (!record || (record.version || 1) >= SAVE_FILE_VERSION || !record.state) return;
+  const floors = record.state.floors || [];
+  for (const floor of floors) {
+    if (floor.imageData) {
+      if (!floor.imageId) floor.imageId = uuid();
+      await putImage(floor.imageId, floor.imageData);
+    }
+  }
+  stripFloorImages(record.state);
+  record.version = SAVE_FILE_VERSION;
+  await saveMapRecord(record);
 }
 
 /* ----------------------------- snapshots / sync ----------------------------- */
