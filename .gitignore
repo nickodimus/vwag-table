@@ -16,3 +16,6 @@ launch.json
 # Logs / temp
 *.log
 tmp/
+
+# Private working docs (design specs, handoffs, prompt notes) — local / Claude project only
+notes/
