@@ -3585,8 +3585,14 @@ function onPointerDown(event) {
   if (mode === "pan") {
     const token = hitToken(native);
     if (token) {
+      // Select it (edit panel + arrow-key nudge) AND start a drag, so a click-drag moves the
+      // token like every other VTT; a plain click with no movement just selects + snaps in place.
+      pushHistory();
       selectedToken = token;
       selectedImage = selectedNote = null;
+      draggingToken = token;
+      isDragging = true;
+      capturePointer(event.pointerId);
       updateSelectionPanels();
       render();
       return;
