@@ -128,6 +128,7 @@ const controls = {
   stairColor: document.getElementById("stairColor"),
   addImageInput: document.getElementById("addImageInput"),
   addNoteBtn: document.getElementById("addNoteBtn"),
+  imageSnap: document.getElementById("imageSnap"),
   imageSelPanel: document.getElementById("imageSelPanel"),
   imageShowPlayers: document.getElementById("imageShowPlayers"),
   imageSize: document.getElementById("imageSize"),
@@ -212,7 +213,7 @@ const state = {
   imageHeight: 0,
   splash: { enabled: false, imageData: "", imageName: "" },
   blackout: false,
-  grid: { enabled: true, snap: true, size: 70, offsetX: 0, offsetY: 0, color: "#000000", opacity: 0.45 },
+  grid: { enabled: true, snap: true, snapImages: false, size: 70, offsetX: 0, offsetY: 0, color: "#000000", opacity: 0.45 },
   map: { scale: 1 },
   fog: {
     rooms: [],
@@ -705,6 +706,9 @@ function bindControls() {
     event.target.value = "";
   });
   controls.addNoteBtn?.addEventListener("click", addNote);
+  controls.imageSnap?.addEventListener("input", () => {
+    state.grid.snapImages = controls.imageSnap.checked;
+  });
   controls.imageShowPlayers?.addEventListener("input", () => {
     if (!selectedImage) return;
     selectedImage.showPlayers = controls.imageShowPlayers.checked;
@@ -1215,6 +1219,7 @@ function syncControlsFromState() {
   if (isPlayer) return;
   controls.gridEnabled.checked = state.grid.enabled;
   controls.gridSnap.checked = state.grid.snap;
+  if (controls.imageSnap) controls.imageSnap.checked = !!state.grid.snapImages;
   controls.gridSize.value = state.grid.size;
   controls.gridOffsetX.value = state.grid.offsetX;
   controls.gridOffsetY.value = state.grid.offsetY;
@@ -2065,12 +2070,14 @@ function render() {
   ctx.save();
   ctx.scale(t.ms, t.ms);
   if (fogDirty) rebuildFog();
-  compositeFog();
-  drawImages(); // droppable map images sit above fog and below tokens
-  drawAoeTemplate(); // hover template sits above fog and below tokens; visible to both GM and player
-  if (!isPlayer) drawRoomOutlines();
+  // Images and tokens sit BELOW the fog so anything in an unrevealed area is hidden (solid
+  // black for players, dimmed under the GM tint).
+  drawImages();
   drawTokens();
-  if (!isPlayer) drawStairs(); // stairs are a GM-only navigation aid
+  compositeFog();
+  drawAoeTemplate(); // hover template sits above fog; visible to both GM and player
+  if (!isPlayer) drawRoomOutlines();
+  if (!isPlayer) drawStairs(); // stairs are a GM-only navigation aid stays above fog
   if (!isPlayer) drawDraftRoom();
   if (!isPlayer) drawStampDraft();
   if (!isPlayer) drawCalibrationDraft();
@@ -2307,8 +2314,36 @@ function polygonCentroid(points) {
   return { x: x / points.length, y: y / points.length };
 }
 
-// GM-only labels for named fog areas. Drawn in screen space so they stay readable at any
-// zoom. Players never call this, so the names are never shown on the player display.
+// Wrap text to maxW screen px (ctx.font must already be set). Hard-breaks words longer than
+// the line, and caps at maxLines with an ellipsis so a long name never overflows its label.
+function wrapLabel(text, maxW, maxLines) {
+  const fits = (s) => ctx.measureText(s).width <= maxW;
+  const lines = [];
+  let line = "";
+  for (let word of String(text).trim().split(/\s+/).filter(Boolean)) {
+    while (!fits(word) && word.length > 1) {
+      let cut = word.length;
+      while (cut > 1 && !fits(word.slice(0, cut))) cut--;
+      if (line) { lines.push(line); line = ""; }
+      lines.push(word.slice(0, cut));
+      word = word.slice(cut);
+    }
+    const test = line ? line + " " + word : word;
+    if (line && !fits(test)) { lines.push(line); line = word; } else line = test;
+  }
+  if (line) lines.push(line);
+  if (lines.length > maxLines) {
+    lines.length = maxLines;
+    let last = lines[maxLines - 1];
+    while (last && !fits(last + "…")) last = last.slice(0, -1);
+    lines[maxLines - 1] = last + "…";
+  }
+  return lines.length ? lines : [""];
+}
+
+// GM-only labels ("cartouches") for named fog areas. Drawn in screen space so they stay
+// readable at any zoom; long names wrap (up to 3 lines) and truncate instead of overflowing.
+// Players never call this, so the names are never shown on the player display.
 function drawRoomNames() {
   const named = state.fog.rooms.filter((room) => room.name);
   if (!named.length) return;
@@ -2316,13 +2351,21 @@ function drawRoomNames() {
   ctx.font = "600 13px Inter, ui-sans-serif, sans-serif";
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
+  const maxW = 200;
+  const lh = 16;
+  const padX = 7;
+  const padY = 5;
   named.forEach((room) => {
     const screen = nativeToScreen(polygonCentroid(room.points));
-    const width = ctx.measureText(room.name).width + 14;
+    const lines = wrapLabel(room.name, maxW, 3);
+    const textW = Math.max(...lines.map((l) => ctx.measureText(l).width));
+    const boxW = Math.min(maxW, textW) + padX * 2;
+    const boxH = lines.length * lh + padY * 2;
+    const top = screen.y - boxH / 2;
     ctx.fillStyle = "rgba(8, 9, 9, 0.78)";
-    ctx.fillRect(screen.x - width / 2, screen.y - 11, width, 22);
+    ctx.fillRect(screen.x - boxW / 2, top, boxW, boxH);
     ctx.fillStyle = room.revealed ? "rgba(244, 232, 200, 0.5)" : "#f4e8c8";
-    ctx.fillText(room.name, screen.x, screen.y);
+    lines.forEach((line, i) => ctx.fillText(line, screen.x, top + padY + lh / 2 + i * lh));
   });
   ctx.restore();
 }
@@ -2632,8 +2675,8 @@ function hitToken(native) {
   return null;
 }
 
-function snapNative(native) {
-  if (!state.grid.snap) return native;
+// Snap a native point to the nearest grid cell center (ungated).
+function snapToGrid(native) {
   const ms = state.map.scale || 1;
   const size = state.grid.size || 70;
   const wx = native.x * ms;
@@ -2641,6 +2684,15 @@ function snapNative(native) {
   const cx = Math.floor((wx - state.grid.offsetX) / size) * size + state.grid.offsetX + size / 2;
   const cy = Math.floor((wy - state.grid.offsetY) / size) * size + state.grid.offsetY + size / 2;
   return { x: cx / ms, y: cy / ms };
+}
+
+function snapNative(native) {
+  return state.grid.snap ? snapToGrid(native) : native;
+}
+
+// Snap an image's center when the image snap toggle is on.
+function snapImage(native) {
+  return state.grid.snapImages ? snapToGrid(native) : native;
 }
 
 function addToken(native) {
@@ -2881,7 +2933,8 @@ function addImageFromDataURL(rawSrc, nx, ny) {
       const aspect = probe.naturalWidth / probe.naturalHeight || 1;
       const w = Math.max(40, (state.imageWidth || 1000) * 0.25);
       pushHistory();
-      const im = { id: uuid(), x: nx, y: ny, w, h: w / aspect, rotation: 0, src, showPlayers: false };
+      const pos = snapImage({ x: nx, y: ny });
+      const im = { id: uuid(), x: pos.x, y: pos.y, w, h: w / aspect, rotation: 0, src, showPlayers: false };
       state.images.push(im);
       selectedToken = selectedNote = null;
       selectedImage = im;
@@ -3551,6 +3604,9 @@ function onPointerUp(event) {
   }
 
   if (draggingImage) {
+    const snapped = snapImage({ x: draggingImage.x, y: draggingImage.y });
+    draggingImage.x = snapped.x;
+    draggingImage.y = snapped.y;
     draggingImage = null;
     renderAndSync(); // sync the moved image to players
   }
