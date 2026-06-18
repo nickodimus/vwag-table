@@ -72,6 +72,11 @@ const controls = {
   tokenCells: document.getElementById("tokenCells"),
   tokenLabel: document.getElementById("tokenLabel"),
   tokenType: document.getElementById("tokenType"),
+  tokenSelPanel: document.getElementById("tokenSelPanel"),
+  tokenSelType: document.getElementById("tokenSelType"),
+  tokenSelLabel: document.getElementById("tokenSelLabel"),
+  tokenSelColor: document.getElementById("tokenSelColor"),
+  tokenSelCells: document.getElementById("tokenSelCells"),
   tokenImage: document.getElementById("tokenImage"),
   tokenImagePreview: document.getElementById("tokenImagePreview"),
   tokenImageClear: document.getElementById("tokenImageClear"),
@@ -768,6 +773,26 @@ function bindControls() {
     if (!selectedNote) return;
     selectedNote.scale = Number(controls.noteSize.value);
     render(); // notes are GM-only
+  });
+  controls.tokenSelType?.addEventListener("input", () => {
+    if (!selectedToken) return;
+    selectedToken.type = controls.tokenSelType.value;
+    renderAndSync();
+  });
+  controls.tokenSelLabel?.addEventListener("input", () => {
+    if (!selectedToken) return;
+    selectedToken.label = controls.tokenSelLabel.value.trim();
+    renderAndSync();
+  });
+  controls.tokenSelColor?.addEventListener("input", () => {
+    if (!selectedToken) return;
+    selectedToken.color = controls.tokenSelColor.value;
+    renderAndSync();
+  });
+  controls.tokenSelCells?.addEventListener("input", () => {
+    if (!selectedToken) return;
+    selectedToken.cells = Number(controls.tokenSelCells.value) || 1;
+    renderAndSync();
   });
   controls.copyDMView.addEventListener("click", () => snapPlayerViewToGM(true));
   controls.playerZoom.addEventListener("input", () => {
@@ -3072,6 +3097,15 @@ function editNote(note) {
 // Show/populate the View-section panels for the currently selected image or note.
 function updateSelectionPanels() {
   if (isPlayer) return;
+  if (controls.tokenSelPanel) {
+    controls.tokenSelPanel.classList.toggle("hidden", !selectedToken);
+    if (selectedToken) {
+      if (controls.tokenSelType) controls.tokenSelType.value = selectedToken.type || "monster";
+      if (controls.tokenSelLabel) controls.tokenSelLabel.value = selectedToken.label || "";
+      if (controls.tokenSelColor) controls.tokenSelColor.value = selectedToken.color || "#d6a94d";
+      if (controls.tokenSelCells) controls.tokenSelCells.value = selectedToken.cells || 1;
+    }
+  }
   if (controls.imageSelPanel) {
     controls.imageSelPanel.classList.toggle("hidden", !selectedImage);
     if (selectedImage) {

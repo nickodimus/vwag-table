@@ -50,6 +50,35 @@
           </div>
         </section>
 
+        <section class="control-section hidden" id="tokenSelPanel">
+          <div class="section-title">
+            <h2>Selected Token</h2>
+          </div>
+          <div class="inline-fields">
+            <label>
+              Type
+              <select id="tokenSelType">
+                <option value="player">Player</option>
+                <option value="npc">NPC</option>
+                <option value="monster">Monster</option>
+              </select>
+            </label>
+            <label>
+              Color
+              <input id="tokenSelColor" type="color" value="#d6a94d">
+            </label>
+          </div>
+          <label>
+            Label
+            <input id="tokenSelLabel" type="text" maxlength="12" placeholder="Token name" autocomplete="off">
+          </label>
+          <label>
+            Size (cells)
+            <input id="tokenSelCells" type="range" min="1" max="4" step="1" value="1">
+          </label>
+          <p class="hint">Editing the selected token. Click empty space to deselect.</p>
+        </section>
+
         <section class="control-section">
           <div class="section-title">
             <h2>Splash Screen</h2>
