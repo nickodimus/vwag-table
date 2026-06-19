@@ -767,6 +767,49 @@ input:disabled {
   accent-color: var(--accent);
 }
 
+/* Line-of-sight options block (brightness + reset), shown under the LoS toggle. Matches the
+   player-toggles panel so it reads as part of the same control group. */
+.los-options {
+  background: rgba(25, 28, 29, 0.92);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--text);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 6px;
+  padding: 7px;
+  width: 96px;
+}
+
+.los-options label {
+  display: flex;
+  flex-direction: column;
+  font-size: 0.74rem;
+  gap: 4px;
+  line-height: 1.25;
+}
+
+.los-options input[type="range"] {
+  accent-color: var(--accent);
+  width: 100%;
+}
+
+.los-options button {
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--text);
+  cursor: pointer;
+  font-size: 0.74rem;
+  padding: 5px 6px;
+  width: 100%;
+}
+
+.los-options button:hover {
+  border-color: var(--accent);
+}
+
 .tool-popover {
   background: rgba(25, 28, 29, 0.94);
   border: 1px solid var(--line);

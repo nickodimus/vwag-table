@@ -26,12 +26,18 @@ const strokeCtx = strokeCanvas.getContext("2d");
 // cut out with the cast visibility polygons, composited over the player view only.
 const losCanvas = document.createElement("canvas");
 const losCtx = losCanvas.getContext("2d");
+// 5c: the darkness overlay actually drawn to the player view (unexplored black, explored dim,
+// visible clear), and a per-floor accumulating record of everywhere the party has ever seen.
+// exploredMasks is runtime-only (it resets on reload) and keyed by floor id.
+const darkCanvas = document.createElement("canvas");
+const darkCtx = darkCanvas.getContext("2d");
+const exploredMasks = new Map(); // floorId -> offscreen canvas at fog-buffer resolution
 const shell = document.querySelector(".app-shell");
 const emptyState = document.getElementById("emptyState");
 const channel = new BroadcastChannel("fog-table-state");
 const APP_NAME = "Battlemap Screen and GM Streaming Tool";
 const LEGACY_APP_NAME = "Fog Table";
-const SAVE_FILE_VERSION = 8;
+const SAVE_FILE_VERSION = 9;
 const DB_NAME = "fog-table-library";
 const DB_VERSION = 3;
 const MAP_STORE = "maps";
@@ -60,6 +66,7 @@ const controls = {
   splashEnabled: document.getElementById("splashEnabled"),
   blackoutEnabled: document.getElementById("blackoutEnabled"),
   losEnabled: document.getElementById("losEnabled"),
+  losOptions: document.getElementById("losOptions"),
   loadLibrary: document.getElementById("loadLibrary"),
   saveSession: document.getElementById("saveSession"),
   openPlayer: document.getElementById("openPlayer"),
@@ -76,6 +83,8 @@ const controls = {
   brushSize: document.getElementById("brushSize"),
   fogTint: document.getElementById("fogTint"),
   gmFogOpacity: document.getElementById("gmFogOpacity"),
+  losBrightness: document.getElementById("losBrightness"),
+  resetExplored: document.getElementById("resetExplored"),
   tokenColor: document.getElementById("tokenColor"),
   tokenCells: document.getElementById("tokenCells"),
   tokenLabel: document.getElementById("tokenLabel"),
@@ -235,7 +244,7 @@ const state = {
   imageHeight: 0,
   splash: { enabled: false, imageData: "", imageName: "" },
   blackout: false,
-  los: { enabled: false }, // line-of-sight: clip the player view to what player-type tokens can see
+  los: { enabled: false, brightness: 0.5 }, // line of sight + explored-memory dim level (0=no memory, 1=full clear)
   grid: { enabled: true, snap: true, snapImages: false, size: 70, offsetX: 0, offsetY: 0, color: "#000000", opacity: 0.45 },
   map: { scale: 1 },
   fog: {
@@ -350,6 +359,10 @@ function handleMessage(message, source) {
   if (message.type === "ping") addPing(message.x, message.y, message.color);
   if (message.type === "measure" && isPlayer) {
     measureLine = message.line;
+    render();
+  }
+  if (message.type === "reset-explored" && isPlayer) {
+    resetExplored();
     render();
   }
   if (message.type === "player-ready" && !isPlayer) {
@@ -580,6 +593,7 @@ function bindControls() {
   });
   controls.losEnabled?.addEventListener("input", () => {
     state.los.enabled = controls.losEnabled.checked;
+    controls.losOptions?.classList.toggle("hidden", !state.los.enabled);
     renderAndSync();
   });
   controls.loadLibrary.addEventListener("click", openLibrary);
@@ -617,6 +631,14 @@ function bindControls() {
   controls.gmFogOpacity.addEventListener("input", () => {
     state.fog.gmOpacity = Number(controls.gmFogOpacity.value);
     render();
+  });
+  controls.losBrightness?.addEventListener("input", () => {
+    state.los.brightness = Number(controls.losBrightness.value);
+    renderAndSync();
+  });
+  controls.resetExplored?.addEventListener("click", () => {
+    resetExplored(); // clear any GM-side memory (none today, but keeps behavior local-safe)
+    relay({ type: "reset-explored" }); // the player window holds the real explored memory
   });
   controls.mapScale.addEventListener("input", () => {
     state.map.scale = Number(controls.mapScale.value);
@@ -1641,10 +1663,12 @@ function syncControlsFromState() {
   controls.splashEnabled.checked = state.splash.enabled;
   controls.blackoutEnabled.checked = state.blackout;
   if (controls.losEnabled) controls.losEnabled.checked = state.los.enabled;
+  if (controls.losOptions) controls.losOptions.classList.toggle("hidden", !state.los.enabled);
   controls.mapScale.value = state.map.scale;
   controls.brushSize.value = state.fog.toolSize;
   controls.fogTint.value = state.fog.gmColor;
   controls.gmFogOpacity.value = state.fog.gmOpacity;
+  if (controls.losBrightness) controls.losBrightness.value = state.los.brightness ?? 0.5;
   setToolShape(state.fog.toolShape);
   setStampShape(state.fog.stampShape || "rectangle");
   setAoeShape(aoeShape);
@@ -2626,7 +2650,7 @@ function resizeFogLayer() {
   fogResScale = Math.min(1, FOG_MAX_EDGE / maxEdge);
   const w = Math.max(1, Math.round(state.imageWidth * fogResScale));
   const h = Math.max(1, Math.round(state.imageHeight * fogResScale));
-  [fogCanvas, liveCanvas, polyCanvas, strokeCanvas, losCanvas].forEach((c) => {
+  [fogCanvas, liveCanvas, polyCanvas, strokeCanvas, losCanvas, darkCanvas].forEach((c) => {
     if (c.width !== w || c.height !== h) {
       c.width = w;
       c.height = h;
@@ -4732,20 +4756,65 @@ function losPath(points) {
 // Player-view only: black out everything outside the players' shared field of view by filling
 // the mask black, cutting out each player token's visibility polygon, then drawing it over the
 // scene. Fails open — with no player tokens on the floor, nothing is hidden.
+// The current floor's explored canvas, lazily created at the fog-buffer resolution. Runtime-only:
+// it lives in memory keyed by floor and is gone on reload (persisting it to the save file is a
+// later chunk). If the fog buffer resized, the old memory is rescaled into the new dimensions.
+function getExploredCanvas() {
+  const id = state.currentFloorId;
+  let c = exploredMasks.get(id);
+  if (!c || c.width !== losCanvas.width || c.height !== losCanvas.height) {
+    const nc = document.createElement("canvas");
+    nc.width = losCanvas.width;
+    nc.height = losCanvas.height;
+    if (c && c.width && c.height) nc.getContext("2d").drawImage(c, 0, 0, c.width, c.height, 0, 0, nc.width, nc.height);
+    c = nc;
+    exploredMasks.set(id, c);
+  }
+  return c;
+}
+
+// Wipe explored memory for the current floor (the player's "Reset explored"). GM relays this to
+// the player window, where the actual memory lives.
+function resetExplored() {
+  exploredMasks.delete(state.currentFloorId);
+}
+
+// Player-view only: the three-state fog of war. Builds the current visibility mask, folds it into
+// the floor's explored memory, then paints a darkness overlay — unexplored stays black, explored
+// is dimmed to state.los.brightness, and currently-visible is fully clear. Fails open with no eyes.
+// The hand-painted fog (compositeFog) still draws over this, so the GM can re-hide anything.
 function compositeLoS() {
   const polys = playerVisionPolygons();
+  if (!polys.length) return; // fail-open: no player tokens, show everything
+
+  // Current visibility, opaque where seen.
   losCtx.setTransform(1, 0, 0, 1, 0, 0);
   losCtx.clearRect(0, 0, losCanvas.width, losCanvas.height);
-  if (!polys.length) return; // fail-open: no eyes, no mask
-  losCtx.fillStyle = "#080909";
-  losCtx.fillRect(0, 0, losCanvas.width, losCanvas.height);
-  losCtx.save();
-  losCtx.globalCompositeOperation = "destination-out";
+  losCtx.fillStyle = "#ffffff";
   polys.forEach((poly) => losCtx.fill(losPath(poly)));
-  losCtx.restore();
+
+  // Fold this frame's visibility into the floor's running memory.
+  const explored = getExploredCanvas();
+  const ectx = explored.getContext("2d");
+  ectx.globalCompositeOperation = "source-over";
+  ectx.drawImage(losCanvas, 0, 0);
+
+  // Darkness overlay: black everywhere, lift explored to a dim level, lift visible fully clear.
+  darkCtx.setTransform(1, 0, 0, 1, 0, 0);
+  darkCtx.clearRect(0, 0, darkCanvas.width, darkCanvas.height);
+  darkCtx.fillStyle = "#080909";
+  darkCtx.fillRect(0, 0, darkCanvas.width, darkCanvas.height);
+  darkCtx.save();
+  darkCtx.globalCompositeOperation = "destination-out";
+  darkCtx.globalAlpha = Math.max(0, Math.min(1, state.los.brightness ?? 0.5)); // explored -> dim
+  darkCtx.drawImage(explored, 0, 0);
+  darkCtx.globalAlpha = 1; // visible -> clear
+  darkCtx.drawImage(losCanvas, 0, 0);
+  darkCtx.restore();
+
   ctx.save();
   ctx.imageSmoothingEnabled = true;
-  ctx.drawImage(losCanvas, 0, 0, losCanvas.width, losCanvas.height, 0, 0, state.imageWidth, state.imageHeight);
+  ctx.drawImage(darkCanvas, 0, 0, darkCanvas.width, darkCanvas.height, 0, 0, state.imageWidth, state.imageHeight);
   ctx.restore();
 }
 
