@@ -665,7 +665,18 @@ function bindControls() {
     relay({ type: "reset-explored" }); // the player window holds the real explored memory
   });
   controls.mapScale.addEventListener("input", () => {
-    state.map.scale = Number(controls.mapScale.value);
+    const prev = state.map.scale || 1;
+    const next = Number(controls.mapScale.value) || 1;
+    const r = prev > 0 && next > 0 ? next / prev : 1;
+    if (r !== 1) {
+      // Keep the cell grid locked to the map as it resizes: scale the cell's world size by the
+      // same factor as the image, so obstacles/lights/notes anchored to the grid scale with it
+      // instead of detaching. Native px/cell (grid.size / map.scale) stays invariant.
+      if (state.grid.size > 0) state.grid.size *= r;
+      if (state.measure.cellSize > 0) state.measure.cellSize *= r;
+      if (controls.gridSize) controls.gridSize.value = state.grid.size;
+    }
+    state.map.scale = next;
     renderAndSync();
   });
 
