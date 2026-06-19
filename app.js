@@ -4865,19 +4865,28 @@ function getLightPolygon(pos) {
   return poly;
 }
 
-// Union every placed light's coverage into lightCanvas (fog-buffer resolution): the occluded
-// polygon clipped to the light's radius circle.
+// Inner share of a light's radius held at full brightness; the outer share fades to the rim.
+// Render-only tuning — not persisted, no schema impact. 0.5 = bright to half radius, dim beyond.
+const LIGHT_BRIGHT_FRACTION = 0.5;
+
+// Union every light's coverage into lightCanvas (fog-buffer resolution): the wall-occluded polygon
+// painted with a radial gradient — white (full reveal) out to the bright core, fading to transparent
+// at the rim. The gradient bounds the reach (no separate circle clip needed) and the alpha falloff
+// flows through compositeLoS's destination-out, giving a bright center and a soft dim halo (5d-3).
 function buildLightCoverage() {
   lightCtx.setTransform(1, 0, 0, 1, 0, 0);
   lightCtx.clearRect(0, 0, lightCanvas.width, lightCanvas.height);
-  lightCtx.fillStyle = "#ffffff";
   lightSources().forEach(({ pos, radius }) => {
     const poly = getLightPolygon(pos);
-    if (poly.length < 3) return;
+    if (poly.length < 3 || radius <= 0) return;
+    const cx = pos.x * fogResScale;
+    const cy = pos.y * fogResScale;
+    const rOuter = radius * fogResScale;
+    const grad = lightCtx.createRadialGradient(cx, cy, rOuter * LIGHT_BRIGHT_FRACTION, cx, cy, rOuter);
+    grad.addColorStop(0, "rgba(255,255,255,1)");
+    grad.addColorStop(1, "rgba(255,255,255,0)");
     lightCtx.save();
-    lightCtx.beginPath();
-    lightCtx.arc(pos.x * fogResScale, pos.y * fogResScale, radius * fogResScale, 0, Math.PI * 2);
-    lightCtx.clip();
+    lightCtx.fillStyle = grad;
     lightCtx.fill(losPath(poly));
     lightCtx.restore();
   });
