@@ -411,12 +411,14 @@ function handleMessage(message, source) {
     }
   }
   if (message.type === "token-drop" && !isPlayer) {
-    // Commit: snap against the GM's authoritative grid, then broadcast to all displays.
+    // Commit: snap against the GM's authoritative grid, clamp so the snap can't cross a wall,
+    // then broadcast to all displays.
     const token = state.tokens.find((t) => t.id === message.id);
     if (token) {
       const snapped = snapNative({ x: message.x, y: message.y });
-      token.x = snapped.x;
-      token.y = snapped.y;
+      const dest = resolveMove({ x: message.x, y: message.y }, snapped);
+      token.x = dest.x;
+      token.y = dest.y;
       renderAndSync();
     }
   }
@@ -4534,11 +4536,12 @@ function onPointerMove(event) {
   if (isPlayer) {
     if (draggingToken) {
       const native = toNativePoint(event);
-      draggingToken.x = native.x;
-      draggingToken.y = native.y;
+      const dest = resolveMove({ x: draggingToken.x, y: draggingToken.y }, native);
+      draggingToken.x = dest.x;
+      draggingToken.y = dest.y;
       render();
       // Stream the live position to the GM (coalesced to one message per frame).
-      streamTokenMove(draggingToken.id, native.x, native.y);
+      streamTokenMove(draggingToken.id, dest.x, dest.y);
     }
     return;
   }
@@ -5051,6 +5054,71 @@ function rayHit(origin, dir, seg) {
   const u = ((seg.a.x - origin.x) * dir.y - (seg.a.y - origin.y) * dir.x) / denom;
   if (t < 1e-6 || u < -1e-9 || u > 1 + 1e-9) return null;
   return { t, x: origin.x + dir.x * t, y: origin.y + dir.y * t };
+}
+
+// ---- token movement collision (wall-collision) ----------------------------------------------
+// Native-space segments that block movement: every obstacle with blocksMove (today all kinds),
+// skipping any OPEN door, plus the map boundary. Memoized by castVersion so it rebuilds only when
+// geometry changes — and the ob.open check means it cooperates with door-open-close once that lands.
+let moveSegCache = null;
+let moveSegVersion = -1;
+function moveSegments() {
+  if (moveSegCache && moveSegVersion === castVersion) return moveSegCache;
+  const segs = [];
+  state.obstacles.forEach((ob) => {
+    if (ob.blocksMove === false) return;
+    if (ob.kind === "door" && ob.open) return; // open doors let movement through
+    const pts = (ob.points || []).map((p) => cellsToNative({ x: p[0], y: p[1] }));
+    for (let i = 0; i < pts.length - 1; i++) segs.push({ a: pts[i], b: pts[i + 1] });
+  });
+  const w = state.imageWidth || 0;
+  const h = state.imageHeight || 0;
+  segs.push({ a: { x: 0, y: 0 }, b: { x: w, y: 0 } });
+  segs.push({ a: { x: w, y: 0 }, b: { x: w, y: h } });
+  segs.push({ a: { x: w, y: h }, b: { x: 0, y: h } });
+  segs.push({ a: { x: 0, y: h }, b: { x: 0, y: 0 } });
+  moveSegCache = segs;
+  moveSegVersion = castVersion;
+  return segs;
+}
+
+// Nearest wall the move (origin -> origin+move) crosses, as { t, seg } where t is the fraction
+// along `move` (rayHit returns origin + move*t); null if the whole move is clear.
+function firstMoveHit(origin, move, segs) {
+  let best = 1, hitSeg = null;
+  for (const seg of segs) {
+    const h = rayHit(origin, move, seg);
+    if (h && h.t < best) { best = h.t; hitSeg = seg; }
+  }
+  return hitSeg ? { t: best, seg: hitSeg } : null;
+}
+
+// Resolve a token move from -> to against move-blocking walls: stop just short of the first wall
+// crossed, then slide the leftover motion along that wall (one pass, so a perpendicular wall still
+// stops the slide). Center-path — the token is a point at its center; radius is a future chunk.
+function resolveMove(from, to) {
+  const move = { x: to.x - from.x, y: to.y - from.y };
+  const len = Math.hypot(move.x, move.y);
+  if (len < 1e-9) return { x: to.x, y: to.y };
+  const segs = moveSegments();
+  const hit = firstMoveHit(from, move, segs);
+  if (!hit) return { x: to.x, y: to.y }; // clear path
+  const back = Math.max(0, hit.t - 0.5 / len); // rest ~0.5px off the wall
+  const contact = { x: from.x + move.x * back, y: from.y + move.y * back };
+  // Slide: project the leftover motion onto the wall's direction, then sweep that too.
+  const rem = { x: move.x * (1 - hit.t), y: move.y * (1 - hit.t) };
+  const wx = hit.seg.b.x - hit.seg.a.x, wy = hit.seg.b.y - hit.seg.a.y;
+  const wlen = Math.hypot(wx, wy);
+  if (wlen < 1e-9) return contact;
+  const ux = wx / wlen, uy = wy / wlen;
+  const d = rem.x * ux + rem.y * uy;
+  const slide = { x: ux * d, y: uy * d };
+  const slen = Math.hypot(slide.x, slide.y);
+  if (slen < 1e-9) return contact;
+  const sHit = firstMoveHit(contact, slide, segs);
+  if (!sHit) return { x: contact.x + slide.x, y: contact.y + slide.y };
+  const sBack = Math.max(0, sHit.t - 0.5 / slen);
+  return { x: contact.x + slide.x * sBack, y: contact.y + slide.y * sBack };
 }
 
 // Compute the visibility polygon from `origin` (native) against `segments`. Casts three rays
