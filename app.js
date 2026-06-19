@@ -100,6 +100,13 @@ const controls = {
   paletteGrid: document.getElementById("paletteGrid"),
   paletteAdd: document.getElementById("paletteAdd"),
   paletteSize: document.getElementById("paletteSize"),
+  paletteImport: document.getElementById("paletteImport"),
+  paletteFolder: document.getElementById("paletteFolder"),
+  paletteExport: document.getElementById("paletteExport"),
+  paletteJson: document.getElementById("paletteJson"),
+  paletteSelected: document.getElementById("paletteSelected"),
+  paletteSelectedName: document.getElementById("paletteSelectedName"),
+  paletteDelete: document.getElementById("paletteDelete"),
   tokenLightVal: document.getElementById("tokenLightVal"),
   tokenSelPanel: document.getElementById("tokenSelPanel"),
   tokenSelType: document.getElementById("tokenSelType"),
@@ -696,6 +703,23 @@ function bindControls() {
 
   controls.paletteAdd?.addEventListener("click", addCurrentToPalette);
   controls.paletteSize?.addEventListener("input", () => setPaletteThumb(Number(controls.paletteSize.value) || 64));
+  controls.paletteImport?.addEventListener("change", (e) => {
+    importImageFiles(e.target.files);
+    e.target.value = "";
+  });
+  controls.paletteFolder?.addEventListener("change", (e) => {
+    importImageFiles(e.target.files);
+    e.target.value = "";
+  });
+  controls.paletteExport?.addEventListener("click", exportPalette);
+  controls.paletteJson?.addEventListener("change", (e) => {
+    importPaletteJson(e.target.files[0]);
+    e.target.value = "";
+  });
+  controls.paletteDelete?.addEventListener("click", () => {
+    if (activePaletteId) deletePaletteEntry(activePaletteId);
+  });
+  controls.paletteSelectedName?.addEventListener("change", (e) => renameSelectedEntry(e.target.value));
 
   controls.panMode.addEventListener("click", () => setMode("pan"));
   controls.fogToggle.addEventListener("click", toggleFogRibbon);
@@ -3872,8 +3896,9 @@ function renderPalette() {
   if (!paletteEntries.length) {
     const empty = document.createElement("p");
     empty.className = "hint palette-empty";
-    empty.textContent = "No saved tokens yet. Set up a token above, then press \u201CAdd current.\u201D";
+    empty.textContent = "No saved tokens yet. Set up a token, press Add, or import images.";
     grid.appendChild(empty);
+    updatePaletteSelectedBar();
     return;
   }
   for (const entry of paletteEntries) {
@@ -3896,26 +3921,144 @@ function renderPalette() {
     }
     swatch.addEventListener("click", () => usePaletteEntry(entry));
 
-    const del = document.createElement("button");
-    del.type = "button";
-    del.className = "palette-del";
-    del.title = "Remove from palette";
-    del.setAttribute("aria-label", "Remove " + (entry.name || "token") + " from palette");
-    del.textContent = "\u00D7";
-    del.addEventListener("click", (e) => {
-      e.stopPropagation();
-      deletePaletteEntry(entry.id);
-    });
-
     const name = document.createElement("span");
     name.className = "palette-name";
     name.textContent = entry.name || "Token";
 
     cell.appendChild(swatch);
-    cell.appendChild(del);
     cell.appendChild(name);
     grid.appendChild(cell);
   }
+  updatePaletteSelectedBar();
+}
+
+// Rename the selected entry; saving re-alphabetizes the grid.
+async function renameSelectedEntry(value) {
+  const entry = paletteEntries.find((e) => e.id === activePaletteId);
+  if (!entry) return;
+  const name = (value || "").trim() || "Token";
+  if (name === entry.name) return;
+  entry.name = name;
+  try {
+    await saveTokenRecord(entry);
+  } catch {
+    window.alert("Could not rename that token.");
+    return;
+  }
+  if (controls.tokenLabel) controls.tokenLabel.value = name;
+  await loadPalette();
+}
+
+// Show the selected-entry bar (name field + delete) for the active template, if any. Skips
+// rewriting the name field while it's focused so it doesn't fight the user's typing.
+function updatePaletteSelectedBar() {
+  const bar = controls.paletteSelected;
+  if (!bar) return;
+  const entry = paletteEntries.find((e) => e.id === activePaletteId);
+  bar.classList.toggle("hidden", !entry);
+  if (entry && controls.paletteSelectedName && document.activeElement !== controls.paletteSelectedName) {
+    controls.paletteSelectedName.value = entry.name || "";
+  }
+}
+
+function fileBaseName(name) {
+  return (name || "Token").replace(/\.[^.]+$/, "").trim() || "Token";
+}
+
+function readFileAsDataURL(file) {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onerror = () => reject(r.error);
+    r.onload = () => resolve(r.result);
+    r.readAsDataURL(file);
+  });
+}
+
+function readFileAsText(file) {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onerror = () => reject(r.error);
+    r.onload = () => resolve(r.result);
+    r.readAsText(file);
+  });
+}
+
+// Turn image files (a selection or a whole folder) into palette entries, downscaled like token art.
+async function importImageFiles(fileList) {
+  const files = Array.from(fileList || []).filter((f) => f.type && f.type.startsWith("image/"));
+  if (!files.length) return;
+  for (const file of files) {
+    let dataUrl = "";
+    try {
+      dataUrl = await readFileAsDataURL(file);
+    } catch {
+      continue;
+    }
+    const image = await new Promise((res) => downscaleImage(dataUrl, TOKEN_IMAGE_MAX_EDGE, res));
+    try {
+      await saveTokenRecord({
+        id: uuid(),
+        name: fileBaseName(file.name),
+        image,
+        color: "#d6a94d",
+        type: "monster",
+        cells: 1,
+        light: 0,
+      });
+    } catch {}
+  }
+  await loadPalette();
+}
+
+// Write the whole palette to a JSON file (art embedded) for backup or sharing.
+function exportPalette() {
+  if (!paletteEntries.length) {
+    window.alert("The palette is empty.");
+    return;
+  }
+  const json = JSON.stringify({ version: 1, tokens: paletteEntries }, null, 2);
+  const blob = new Blob([json], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "vwag-token-palette.json";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+// Merge an exported palette JSON into the current one (fresh ids, so it never clobbers existing
+// entries). Accepts either a bare array or a { tokens: [...] } wrapper.
+async function importPaletteJson(file) {
+  if (!file) return;
+  let parsed;
+  try {
+    parsed = JSON.parse(await readFileAsText(file));
+  } catch {
+    window.alert("That file isn't a valid palette JSON.");
+    return;
+  }
+  const tokens = Array.isArray(parsed) ? parsed : Array.isArray(parsed && parsed.tokens) ? parsed.tokens : null;
+  if (!tokens) {
+    window.alert("That file isn't a valid palette JSON.");
+    return;
+  }
+  for (const t of tokens) {
+    if (!t || typeof t !== "object") continue;
+    try {
+      await saveTokenRecord({
+        id: uuid(),
+        name: (t.name == null ? "Token" : String(t.name)).slice(0, 64) || "Token",
+        image: typeof t.image === "string" ? t.image : "",
+        color: typeof t.color === "string" ? t.color : "#d6a94d",
+        type: typeof t.type === "string" ? t.type : "monster",
+        cells: Number(t.cells) || 1,
+        light: Number(t.light) || 0,
+      });
+    } catch {}
+  }
+  await loadPalette();
 }
 
 function nudgeSelectedToken(key) {

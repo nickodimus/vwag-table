@@ -566,10 +566,26 @@
 
         <aside class="token-palette-flyout hidden" id="tokenPalette" aria-label="Token palette">
           <div class="palette-head">
-            <h3>Palette</h3>
-            <div class="palette-tools">
+            <div class="palette-head-row">
+              <h3>Palette</h3>
               <input id="paletteSize" type="range" min="40" max="140" step="4" value="64" title="Browse size" aria-label="Palette thumbnail size">
-              <button id="paletteAdd" type="button" class="palette-add" title="Save the current token to the palette">Add current</button>
+            </div>
+            <div class="palette-tools">
+              <button id="paletteAdd" type="button" class="palette-btn" title="Save the current token to the palette">Add</button>
+              <label class="palette-btn" title="Import image files">Import
+                <input id="paletteImport" type="file" accept="image/*" multiple hidden>
+              </label>
+              <label class="palette-btn" title="Import a folder of images">Folder
+                <input id="paletteFolder" type="file" accept="image/*" multiple webkitdirectory hidden>
+              </label>
+              <button id="paletteExport" type="button" class="palette-btn" title="Export the palette to a JSON file">Export</button>
+              <label class="palette-btn" title="Load a palette JSON file">Load
+                <input id="paletteJson" type="file" accept=".json,application/json" hidden>
+              </label>
+            </div>
+            <div class="palette-selected hidden" id="paletteSelected">
+              <input id="paletteSelectedName" type="text" maxlength="24" class="palette-rename" placeholder="Token name" aria-label="Rename selected token">
+              <button id="paletteDelete" type="button" class="palette-btn danger" title="Delete the selected token">Delete</button>
             </div>
           </div>
           <div class="palette-grid" id="paletteGrid" role="list" aria-label="Saved tokens"></div>
