@@ -1092,9 +1092,55 @@ function blobToDataURL(blob) {
   });
 }
 
+// How aggressively imported polylines are thinned, in CELLS (resolution-independent). 0.2 = a
+// 1/5-cell deviation: invisible for line-of-sight, but it cuts a dense module like Caves of Chaos
+// from ~8,600 wall segments to ~1,900 (~20x cheaper cast). Tune here if a map needs more/less.
+const DTT_SIMPLIFY_TOLERANCE = 0.2;
+
+// Iterative Douglas-Peucker: keep endpoints, drop interior points that lie within `tolerance` of
+// the line between their kept neighbors. Iterative (explicit stack) so a 1,000+ point polyline
+// can't overflow recursion. Operates on [[x,y],...] in cell coordinates; compares squared
+// distances to avoid per-point square roots.
+function simplifyPolyline(points, tolerance) {
+  const n = points.length;
+  if (n < 3) return points.map((p) => [p[0], p[1]]);
+  const keep = new Uint8Array(n);
+  keep[0] = keep[n - 1] = 1;
+  const eps2 = tolerance * tolerance;
+  const stack = [[0, n - 1]];
+  while (stack.length) {
+    const seg = stack.pop();
+    const first = seg[0], last = seg[1];
+    const ax = points[first][0], ay = points[first][1];
+    const bx = points[last][0], by = points[last][1];
+    const dx = bx - ax, dy = by - ay;
+    const len2 = dx * dx + dy * dy;
+    let dmax = -1, idx = -1;
+    for (let i = first + 1; i < last; i++) {
+      const px = points[i][0], py = points[i][1];
+      let d2;
+      if (len2 === 0) {
+        const ex = px - ax, ey = py - ay;
+        d2 = ex * ex + ey * ey;
+      } else {
+        const cross = dx * (py - ay) - dy * (px - ax);
+        d2 = (cross * cross) / len2;
+      }
+      if (d2 > dmax) { dmax = d2; idx = i; }
+    }
+    if (dmax > eps2 && idx > first) {
+      keep[idx] = 1;
+      stack.push([first, idx], [idx, last]);
+    }
+  }
+  const out = [];
+  for (let i = 0; i < n; i++) if (keep[i]) out.push([points[i][0], points[i][1]]);
+  return out;
+}
+
 // Map a parsed DTT's six obstacle kinds into the obstacle store. DTT polylines are already open
-// polylines in cell coordinates — the exact shape state.obstacles holds — so geometry is 1:1 with
-// no transform. Each record draws its blocking rules from obstacleDefaults(kind), identical to a
+// polylines in cell coordinates — the exact shape state.obstacles holds — so geometry maps
+// directly; only Douglas-Peucker simplification (simplifyPolyline) thins the dense polylines. Each record draws its blocking rules from obstacleDefaults(kind), identical to a
 // hand-drawn obstacle (so wall/object/ethereal share the default profile, windows pass sight and
 // light, invisibles block but don't render, doors are openable). Replaces the store wholesale: a
 // fresh module import never appends to whatever was on the map before.
@@ -1114,7 +1160,7 @@ function importObstacles(dtt) {
       obstacles.push({
         id: uuid(),
         kind,
-        points: poly.map((p) => [p[0], p[1]]),
+        points: simplifyPolyline(poly, DTT_SIMPLIFY_TOLERANCE),
         ...obstacleDefaults(kind),
         defaultOpen: false,
       });
@@ -1174,13 +1220,27 @@ function importTokens(dtt) {
   state.tokens = tokens;
 }
 
-// Orchestrate a full DTT import into the live stores: geometry (6b), lights + tokens (6c), and the
-// line-of-sight flag. A single cast invalidation covers all of them; the LoS checkbox re-syncs
-// when installMap calls refreshFloorUI right after this runs.
+// Import room labels as GM-only floating notes. Position converts cells -> native px; text is 1:1.
+// (DTT calls these "notes"; they map to vwag's notes feature, not the reserved pins field, which
+// stays for Encounter-Area linkage.)
+function importNotes(dtt) {
+  const notes = [];
+  for (const nt of (dtt.save && dtt.save.notes) || []) {
+    const p = nt.position || {};
+    const n = cellsToNative({ x: p.x || 0, y: p.y || 0 });
+    notes.push({ id: uuid(), x: n.x, y: n.y, text: nt.text || "", scale: 1 });
+  }
+  state.notes = notes;
+}
+
+// Orchestrate a full DTT import into the live stores: geometry (6b), lights + tokens (6c), room
+// notes (6d), and the line-of-sight flag. A single cast invalidation covers all of them; the LoS
+// checkbox re-syncs when installMap calls refreshFloorUI right after this runs.
 function importDtt(dtt) {
   importObstacles(dtt);
   importLights(dtt);
   importTokens(dtt);
+  importNotes(dtt);
   if (dtt.save && typeof dtt.save.line_of_sight === "boolean") {
     state.los.enabled = dtt.save.line_of_sight;
   }
@@ -1189,8 +1249,8 @@ function importDtt(dtt) {
 
 // Import a DTT module (.zip): read it offline, derive the grid from the DTT key
 // (pxPerCell = imageWidth / size.x), install the map at the right scale, and — via installMap's
-// onReady seam — import the geometry, lights, and tokens (6b–6c). Notes (dtt.save.notes) remain
-// for 6d.
+// onReady seam — import the geometry, lights, tokens, and room notes (6b–6d). Only fog (6e) is
+// left, and it's deferred.
 async function loadDttFile(event) {
   const file = event.target.files[0];
   if (!file) return;
