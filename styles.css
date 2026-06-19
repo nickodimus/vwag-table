@@ -1715,12 +1715,16 @@ input:disabled {
   gap: 6px;
 }
 .palette-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   border: 1px solid var(--line);
   background: var(--panel-2);
   color: inherit;
   border-radius: 6px;
   padding: 4px 8px;
   font-size: 0.74rem;
+  line-height: 1.2;
   cursor: pointer;
   white-space: nowrap;
 }
