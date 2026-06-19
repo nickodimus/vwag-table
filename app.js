@@ -1121,13 +1121,76 @@ function importObstacles(dtt) {
     }
   }
   state.obstacles = obstacles;
+}
+
+// Named token colors seen in DTT exports map to vwag fill colors; anything unknown falls back to
+// the default token amber. (Samples only use "blue", but a small table keeps imports sane.)
+const DTT_TOKEN_COLORS = {
+  red: "#e24a4a", blue: "#3b82f6", green: "#3aa655", yellow: "#d6a94d",
+  orange: "#e08a3c", purple: "#8b5cf6", white: "#e8e8e8", black: "#222222",
+  cyan: "#3ec6c6", magenta: "#d4537e", gray: "#9aa0a6", grey: "#9aa0a6",
+};
+
+// DTT token types collapse to vwag's three: player / npc / monster (enemy and anything else read
+// as monster).
+function dttTokenType(t) {
+  if (t === "player") return "player";
+  if (t === "npc") return "npc";
+  return "monster";
+}
+
+// Import placed lights. Positions are cells (1:1 with the store); radii are feet, divided by 5 to
+// cells (DTT is 5 ft/cell). Inactive lights are skipped.
+function importLights(dtt) {
+  const lights = [];
+  for (const l of (dtt.save && dtt.save.lights) || []) {
+    if (l.active === false) continue;
+    const p = l.position || {};
+    lights.push({ id: uuid(), x: p.x || 0, y: p.y || 0, radius: (l.radius || 0) / 5 });
+  }
+  state.lights = lights;
+}
+
+// Import tokens. Position converts cells -> native px (vwag tokens carry native coords); size and
+// torch radii are feet -> cells (/5). A torch_on token carries a light of dim_radius cells. The
+// token art path is a local file outside the zip, so images import blank — type + color stand in.
+function importTokens(dtt) {
+  const tokens = [];
+  for (const t of (dtt.save && dtt.save.tokens) || []) {
+    const p = t.position || {};
+    const n = cellsToNative({ x: p.x || 0, y: p.y || 0 });
+    tokens.push({
+      id: uuid(),
+      x: n.x,
+      y: n.y,
+      cells: Math.max(1, Math.round((t.size || 5) / 5)),
+      color: DTT_TOKEN_COLORS[t.border_color] || "#d6a94d",
+      label: "",
+      type: dttTokenType(t.type),
+      light: t.torch_on ? (t.dim_radius || 0) / 5 : 0,
+      image: "",
+    });
+  }
+  state.tokens = tokens;
+}
+
+// Orchestrate a full DTT import into the live stores: geometry (6b), lights + tokens (6c), and the
+// line-of-sight flag. A single cast invalidation covers all of them; the LoS checkbox re-syncs
+// when installMap calls refreshFloorUI right after this runs.
+function importDtt(dtt) {
+  importObstacles(dtt);
+  importLights(dtt);
+  importTokens(dtt);
+  if (dtt.save && typeof dtt.save.line_of_sight === "boolean") {
+    state.los.enabled = dtt.save.line_of_sight;
+  }
   invalidateCast();
 }
 
 // Import a DTT module (.zip): read it offline, derive the grid from the DTT key
 // (pxPerCell = imageWidth / size.x), install the map at the right scale, and — via installMap's
-// onReady seam — import the obstacle geometry (6b). Lights, tokens, and notes (dtt.save) are
-// parsed and ready for 6c–6d.
+// onReady seam — import the geometry, lights, and tokens (6b–6c). Notes (dtt.save.notes) remain
+// for 6d.
 async function loadDttFile(event) {
   const file = event.target.files[0];
   if (!file) return;
@@ -1139,7 +1202,7 @@ async function loadDttFile(event) {
     if (!cellsX || !cellsY) throw new Error("module has no grid size");
     const name = file.name.replace(/\.[^.]+$/, ""); // drop the .zip extension for a clean name
     const dataURL = await blobToDataURL(new Blob([dtt.mapBytes], { type: "image/webp" }));
-    installMap(dataURL, name, { cellsX, cellsY }, () => importObstacles(dtt));
+    installMap(dataURL, name, { cellsX, cellsY }, () => importDtt(dtt));
   } catch (err) {
     window.alert(`Could not import that DTT module: ${err.message}`);
   } finally {
