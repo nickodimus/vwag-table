@@ -31,13 +31,18 @@ const losCtx = losCanvas.getContext("2d");
 // exploredMasks is runtime-only (it resets on reload) and keyed by floor id.
 const darkCanvas = document.createElement("canvas");
 const darkCtx = darkCanvas.getContext("2d");
+// 5d: light coverage for the current frame (union of every placed light, wall-occluded and
+// radius-clipped). When darkness is on, the player only sees line-of-sight INTERSECT this.
+const lightCanvas = document.createElement("canvas");
+const lightCtx = lightCanvas.getContext("2d");
 const exploredMasks = new Map(); // floorId -> offscreen canvas at fog-buffer resolution
+const lightCache = new Map(); // "version|lx|ly|radius" -> light visibility polygon (cleared on invalidateCast)
 const shell = document.querySelector(".app-shell");
 const emptyState = document.getElementById("emptyState");
 const channel = new BroadcastChannel("fog-table-state");
 const APP_NAME = "Battlemap Screen and GM Streaming Tool";
 const LEGACY_APP_NAME = "Fog Table";
-const SAVE_FILE_VERSION = 9;
+const SAVE_FILE_VERSION = 10;
 const DB_NAME = "fog-table-library";
 const DB_VERSION = 3;
 const MAP_STORE = "maps";
@@ -141,6 +146,10 @@ const controls = {
   tokenOptions: document.getElementById("tokenOptions"),
   drawOptions: document.getElementById("drawOptions"),
   drawMode: document.getElementById("drawMode"),
+  lightMode: document.getElementById("lightMode"),
+  lightOptions: document.getElementById("lightOptions"),
+  lightRadius: document.getElementById("lightRadius"),
+  darknessEnabled: document.getElementById("darknessEnabled"),
   obstacleKind: document.getElementById("obstacleKind"),
   showObstacles: document.getElementById("showObstacles"),
   castDebug: document.getElementById("castDebug"),
@@ -230,6 +239,7 @@ function makeFloor(id) {
     tokens: [],
     stairs: [],
     obstacles: [],
+    lights: [],
     images: [],
     notes: [],
     view: { scale: 1, cx: 0, cy: 0, rotation: 0 },
@@ -244,7 +254,7 @@ const state = {
   imageHeight: 0,
   splash: { enabled: false, imageData: "", imageName: "" },
   blackout: false,
-  los: { enabled: false, brightness: 0.5 }, // line of sight + explored-memory dim level (0=no memory, 1=full clear)
+  los: { enabled: false, brightness: 0.5, darkness: false }, // line of sight + explored dim level + lighting gate (darkness: only lit areas are seen)
   grid: { enabled: true, snap: true, snapImages: false, size: 70, offsetX: 0, offsetY: 0, color: "#000000", opacity: 0.45 },
   map: { scale: 1 },
   fog: {
@@ -261,6 +271,9 @@ const state = {
   // Obstacle geometry (walls/doors/windows…) for the current floor — authored, mirrors the
   // floor record like tokens/stairs. Points are stored in cell units.
   obstacles: [],
+  // Placed lights for the current floor (5d): { id, x, y, radius } in cell units. Authored,
+  // per-floor like obstacles. Token-carried lights come later (5d-2).
+  lights: [],
   // Droppable map images (synced to players; only those with showPlayers render there) and
   // GM-only floating notes (never synced). Both are per-floor like tokens/stairs.
   images: [],
@@ -288,6 +301,7 @@ let mode = "pan";
 let drawingRoom = [];
 let drawingObstacle = []; // in-progress obstacle polyline (native px) while drawing in Draw Mode
 let obstacleKind = "wall"; // kind applied to newly drawn obstacles
+let lightRadius = 4; // radius (cells) applied to newly placed lights — small=torch, large=firepit
 let showObstacles = true; // GM-only obstacle overlay toggle ("Walls Visible to DM")
 let activeStroke = null;
 let stampDraft = null; // {shape, start, end} preview while drag-drawing a fog shape
@@ -657,8 +671,11 @@ function bindControls() {
   controls.measureMode.addEventListener("click", () => setMode("measure"));
   controls.stairMode?.addEventListener("click", () => setMode("stair"));
   controls.drawMode?.addEventListener("click", () => setMode("draw"));
+  controls.lightMode?.addEventListener("click", () => setMode("light"));
   controls.obstacleKind?.addEventListener("change", () => { obstacleKind = controls.obstacleKind.value; });
   controls.showObstacles?.addEventListener("change", () => { showObstacles = controls.showObstacles.checked; render(); });
+  controls.lightRadius?.addEventListener("input", () => { lightRadius = Number(controls.lightRadius.value) || 1; });
+  controls.darknessEnabled?.addEventListener("input", () => { state.los.darkness = controls.darknessEnabled.checked; renderAndSync(); });
   controls.castDebug?.addEventListener("change", () => { castDebug = controls.castDebug.checked; render(); });
 
   // Floor navigation
@@ -1371,6 +1388,7 @@ function splitState(stateObj) {
     mapScale: f.mapScale || 1,
     stairs: JSON.parse(JSON.stringify(f.stairs || [])),
     obstacles: JSON.parse(JSON.stringify(f.obstacles || [])),
+    lights: JSON.parse(JSON.stringify(f.lights || [])),
   }));
   const sessionFloors = floors.map((f) => ({
     id: f.id,
@@ -1389,9 +1407,8 @@ function splitState(stateObj) {
     measure: JSON.parse(JSON.stringify(stateObj.measure || {})),
     stairColor: stateObj.stairColor || "#ffffff",
     floors: moduleFloors,
-    // Forward-empty — filled by later steps (lights, room pins, VWAG linkage). Obstacle geometry
-    // is per-floor (module.floors[].obstacles), authored via Draw Mode.
-    lights: [],
+    // Forward-empty — filled by later steps (room pins, VWAG linkage). Obstacle geometry and
+    // placed lights are per-floor (module.floors[].obstacles / .lights), authored on the map.
     pins: [],
     ambient: { timeOfDay: 12 },
     vwag: {},
@@ -1434,6 +1451,7 @@ function mergeModuleSession(module, session) {
       mapScale: mf.mapScale || 1,
       stairs: JSON.parse(JSON.stringify(mf.stairs || [])),
       obstacles: JSON.parse(JSON.stringify(mf.obstacles || [])),
+      lights: JSON.parse(JSON.stringify(mf.lights || [])),
       rooms: JSON.parse(JSON.stringify(sf.rooms || [])),
       strokes: JSON.parse(JSON.stringify(sf.strokes || [])),
       tokens: JSON.parse(JSON.stringify(sf.tokens || [])),
@@ -1566,6 +1584,7 @@ function loadSnapshot(snapshot) {
     // Obstacles now ride to the player too: the player computes its own line-of-sight locally
     // (cast against these walls), so without them its visibility would be the whole map.
     state.obstacles = Array.isArray(snapshot.obstacles) ? snapshot.obstacles : [];
+    state.lights = Array.isArray(snapshot.lights) ? snapshot.lights : [];
     invalidateCast();
     state.images = Array.isArray(snapshot.images) ? snapshot.images : [];
     state.notes = []; // notes are GM-only and never arrive on the player
@@ -1664,6 +1683,7 @@ function syncControlsFromState() {
   controls.blackoutEnabled.checked = state.blackout;
   if (controls.losEnabled) controls.losEnabled.checked = state.los.enabled;
   if (controls.losOptions) controls.losOptions.classList.toggle("hidden", !state.los.enabled);
+  if (controls.darknessEnabled) controls.darknessEnabled.checked = Boolean(state.los.darkness);
   controls.mapScale.value = state.map.scale;
   controls.brushSize.value = state.fog.toolSize;
   controls.fogTint.value = state.fog.gmColor;
@@ -1729,6 +1749,7 @@ function captureCurrentFloor() {
   floor.tokens = JSON.parse(JSON.stringify(state.tokens));
   floor.stairs = JSON.parse(JSON.stringify(state.stairs));
   floor.obstacles = JSON.parse(JSON.stringify(state.obstacles));
+  floor.lights = JSON.parse(JSON.stringify(state.lights));
   floor.images = JSON.parse(JSON.stringify(state.images));
   floor.notes = JSON.parse(JSON.stringify(state.notes));
   floor.view = { ...state.view };
@@ -1749,6 +1770,7 @@ function applyFloor(floor) {
   state.tokens = JSON.parse(JSON.stringify(floor.tokens || []));
   state.stairs = JSON.parse(JSON.stringify(floor.stairs || []));
   state.obstacles = JSON.parse(JSON.stringify(floor.obstacles || []));
+  state.lights = JSON.parse(JSON.stringify(floor.lights || []));
   invalidateCast();
   state.images = JSON.parse(JSON.stringify(floor.images || []));
   state.notes = JSON.parse(JSON.stringify(floor.notes || []));
@@ -2078,7 +2100,7 @@ function setMode(nextMode) {
   updateSelectionPanels();
   canvas.style.cursor = ""; // clear any frame-hover cursor
   controls.fogToggle?.classList.toggle("active", FOG_MODES.includes(nextMode));
-  [controls.panMode, controls.polygonMode, controls.namedPolygonMode, controls.brushMode, controls.eraserMode, controls.stampMode, controls.tokenMode, controls.aoeMode, controls.measureMode, controls.stairMode, controls.drawMode].forEach(
+  [controls.panMode, controls.polygonMode, controls.namedPolygonMode, controls.brushMode, controls.eraserMode, controls.stampMode, controls.tokenMode, controls.aoeMode, controls.measureMode, controls.stairMode, controls.drawMode, controls.lightMode].forEach(
     (button) => button?.classList.remove("active"),
   );
   controls[`${nextMode}Mode`]?.classList.add("active");
@@ -2094,6 +2116,7 @@ function setMode(nextMode) {
     measure: "Drag to measure distance across the grid.",
     stair: "Click to place a staircase. Right-click a stair to remove it.",
     draw: "Click corners to draw a wall/obstacle; Enter or double-click to place. Right-click an obstacle to delete. Set a grid first so points land on cells.",
+    light: "Click to place a light, right-click a light to remove it. Set its size with the radius slider. Turn on Darkness (under Line of sight) to see lights gate what players can see.",
   }[nextMode] ?? "";
 
   // Shared fog-options popover: shown for all fog tools, with tool-specific rows toggled.
@@ -2109,6 +2132,7 @@ function setMode(nextMode) {
   }
   controls.tokenOptions.classList.toggle("hidden", nextMode !== "token");
   controls.drawOptions?.classList.toggle("hidden", nextMode !== "draw");
+  controls.lightOptions?.classList.toggle("hidden", nextMode !== "light");
   controls.aoeOptions?.classList.toggle("hidden", nextMode !== "aoe");
   controls.measureOptions?.classList.toggle("hidden", nextMode !== "measure");
   if (nextMode === "measure") updateMeasureCalibrateRow();
@@ -2539,6 +2563,7 @@ function render() {
   drawAoeTemplate(); // hover template sits above fog; visible to both GM and player
   if (!isPlayer) drawRoomOutlines();
   if (!isPlayer) drawObstacleOutlines();
+  if (!isPlayer) drawLights();
   if (!isPlayer) drawCastDebug();
   if (!isPlayer) drawStairs(); // stairs are a GM-only navigation aid stays above fog
   if (!isPlayer) drawDraftRoom();
@@ -2650,7 +2675,7 @@ function resizeFogLayer() {
   fogResScale = Math.min(1, FOG_MAX_EDGE / maxEdge);
   const w = Math.max(1, Math.round(state.imageWidth * fogResScale));
   const h = Math.max(1, Math.round(state.imageHeight * fogResScale));
-  [fogCanvas, liveCanvas, polyCanvas, strokeCanvas, losCanvas, darkCanvas].forEach((c) => {
+  [fogCanvas, liveCanvas, polyCanvas, strokeCanvas, losCanvas, darkCanvas, lightCanvas].forEach((c) => {
     if (c.width !== w || c.height !== h) {
       c.width = w;
       c.height = h;
@@ -4061,6 +4086,11 @@ function onPointerDown(event) {
     return;
   }
 
+  if (mode === "light") {
+    addLight(native);
+    return;
+  }
+
   if (mode === "token") {
     const hit = hitToken(native);
     if (hit) {
@@ -4449,6 +4479,16 @@ function onContextMenu(event) {
     }
     return;
   }
+  if (mode === "light") {
+    const lt = hitLight(toNativePoint(event));
+    if (lt) {
+      pushHistory();
+      state.lights = state.lights.filter((l) => l !== lt);
+      invalidateCast();
+      renderAndSync();
+    }
+    return;
+  }
   deleteTokenOrRoom(toNativePoint(event));
 }
 
@@ -4560,7 +4600,7 @@ function onKeyDown(event) {
     return;
   }
 
-  const shortcuts = { v: "pan", h: "pan", p: "polygon", n: "namedPolygon", b: "brush", e: "eraser", t: "token", a: "aoe", m: "measure", s: "stair", d: "draw" };
+  const shortcuts = { v: "pan", h: "pan", p: "polygon", n: "namedPolygon", b: "brush", e: "eraser", t: "token", a: "aoe", m: "measure", s: "stair", d: "draw", l: "light" };
   const key = event.key.toLowerCase();
   if (shortcuts[key]) {
     setMode(shortcuts[key]);
@@ -4657,6 +4697,7 @@ function hitObstacle(native) {
 function invalidateCast() {
   castVersion++;
   castCache.clear();
+  lightCache.clear();
 }
 
 // Native-space segments that block sight on the current floor: every consecutive pair of
@@ -4756,6 +4797,109 @@ function losPath(points) {
 // Player-view only: black out everything outside the players' shared field of view by filling
 // the mask black, cutting out each player token's visibility polygon, then drawing it over the
 // scene. Fails open — with no player tokens on the floor, nothing is hidden.
+// ---------------------------------------------------------------------------
+// Lighting (5d-1). Placed lights illuminate their radius, occluded by light-blocking walls.
+// When darkness is on, the player only sees line-of-sight INTERSECT lit. Cached like sight.
+// ---------------------------------------------------------------------------
+
+// Native segments that block LIGHT (blocksLight; windows pass light), plus the map edges.
+function lightSegments() {
+  const segs = [];
+  state.obstacles.forEach((ob) => {
+    if (ob.blocksLight === false) return;
+    const pts = (ob.points || []).map((p) => cellsToNative({ x: p[0], y: p[1] }));
+    for (let i = 0; i < pts.length - 1; i++) segs.push({ a: pts[i], b: pts[i + 1] });
+  });
+  const w = state.imageWidth || 0;
+  const h = state.imageHeight || 0;
+  segs.push({ a: { x: 0, y: 0 }, b: { x: w, y: 0 } });
+  segs.push({ a: { x: w, y: 0 }, b: { x: w, y: h } });
+  segs.push({ a: { x: w, y: h }, b: { x: 0, y: h } });
+  segs.push({ a: { x: 0, y: h }, b: { x: 0, y: 0 } });
+  return segs;
+}
+
+// Cached wall-occluded visibility polygon cast from a light; lights are static so this is reused
+// until geometry or the light set changes (lightCache is cleared by invalidateCast).
+function getLightPolygon(light) {
+  const pos = cellsToNative({ x: light.x, y: light.y });
+  const key = castVersion + "|" + Math.round(pos.x) + "|" + Math.round(pos.y) + "|" + light.radius;
+  let poly = lightCache.get(key);
+  if (!poly) {
+    poly = castVisibility(pos, lightSegments());
+    lightCache.set(key, poly);
+  }
+  return { pos, poly };
+}
+
+// Union every placed light's coverage into lightCanvas (fog-buffer resolution): the occluded
+// polygon clipped to the light's radius circle.
+function buildLightCoverage() {
+  lightCtx.setTransform(1, 0, 0, 1, 0, 0);
+  lightCtx.clearRect(0, 0, lightCanvas.width, lightCanvas.height);
+  lightCtx.fillStyle = "#ffffff";
+  const ppc = pxPerCellNative();
+  state.lights.forEach((light) => {
+    const { pos, poly } = getLightPolygon(light);
+    if (poly.length < 3) return;
+    const rNative = (light.radius || 0) * ppc;
+    lightCtx.save();
+    lightCtx.beginPath();
+    lightCtx.arc(pos.x * fogResScale, pos.y * fogResScale, rNative * fogResScale, 0, Math.PI * 2);
+    lightCtx.clip();
+    lightCtx.fill(losPath(poly));
+    lightCtx.restore();
+  });
+}
+
+// Add / find / delete placed lights (GM only). Stored in cells like obstacles, DTT-import-ready.
+function addLight(native) {
+  if (isPlayer) return;
+  pushHistory();
+  const c = nativeToCells(native);
+  state.lights.push({ id: uuid(), x: c.x, y: c.y, radius: lightRadius });
+  invalidateCast();
+  renderAndSync();
+}
+
+function hitLight(native) {
+  const ppc = pxPerCellNative();
+  let best = null;
+  let bestDist = Math.max(12, ppc / 2);
+  state.lights.forEach((light) => {
+    const p = cellsToNative({ x: light.x, y: light.y });
+    const d = Math.hypot(native.x - p.x, native.y - p.y);
+    if (d < bestDist) { bestDist = d; best = light; }
+  });
+  return best;
+}
+
+// GM-only markers: a glow dot plus a dashed radius ring so the GM can see each light's reach.
+function drawLights() {
+  if (isPlayer || !state.lights.length) return;
+  const ppc = pxPerCellNative();
+  ctx.save();
+  state.lights.forEach((light) => {
+    const p = cellsToNative({ x: light.x, y: light.y });
+    const rNative = (light.radius || 0) * ppc;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, rNative, 0, Math.PI * 2);
+    ctx.strokeStyle = "rgba(255,210,120,0.45)";
+    ctx.lineWidth = 1.5 / (curK * curMs);
+    ctx.setLineDash([6 / (curK * curMs), 5 / (curK * curMs)]);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, 6 / (curK * curMs), 0, Math.PI * 2);
+    ctx.fillStyle = "rgba(255,200,90,0.95)";
+    ctx.fill();
+    ctx.strokeStyle = "rgba(70,45,0,0.85)";
+    ctx.lineWidth = 1 / (curK * curMs);
+    ctx.stroke();
+  });
+  ctx.restore();
+}
+
 // The current floor's explored canvas, lazily created at the fog-buffer resolution. Runtime-only:
 // it lives in memory keyed by floor and is gone on reload (persisting it to the save file is a
 // later chunk). If the fog buffer resized, the old memory is rescaled into the new dimensions.
@@ -4792,6 +4936,15 @@ function compositeLoS() {
   losCtx.clearRect(0, 0, losCanvas.width, losCanvas.height);
   losCtx.fillStyle = "#ffffff";
   polys.forEach((poly) => losCtx.fill(losPath(poly)));
+
+  // 5d: under darkness, you only see where line-of-sight AND light overlap.
+  if (state.los.darkness) {
+    buildLightCoverage();
+    losCtx.save();
+    losCtx.globalCompositeOperation = "destination-in";
+    losCtx.drawImage(lightCanvas, 0, 0);
+    losCtx.restore();
+  }
 
   // Fold this frame's visibility into the floor's running memory.
   const explored = getExploredCanvas();

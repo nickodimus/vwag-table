@@ -310,6 +310,9 @@
               <button id="drawMode" class="tool-button" type="button" title="Draw walls/obstacles (D)" aria-label="Draw obstacles">
                 <svg viewBox="0 0 24 24" aria-hidden="true"><polyline points="3 18 8 10 13 15 21 5"/><circle cx="3" cy="18" r="1.5"/><circle cx="21" cy="5" r="1.5"/></svg>
               </button>
+              <button id="lightMode" class="tool-button" type="button" title="Place lights (L)" aria-label="Place lights">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="M4.9 4.9l1.4 1.4"/><path d="M17.7 17.7l1.4 1.4"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="M4.9 19.1l1.4-1.4"/><path d="M17.7 6.3l1.4-1.4"/></svg>
+              </button>
               <button id="initToggle" class="tool-button" type="button" title="Initiative tracker" aria-label="Initiative tracker">
                 <svg viewBox="0 0 24 24" aria-hidden="true"><line x1="10" x2="21" y1="6" y2="6"/><line x1="10" x2="21" y1="12" y2="12"/><line x1="10" x2="21" y1="18" y2="18"/><path d="M4 6h1v4"/><path d="M4 10h2"/><path d="M6 18H4c0-1 2-2 2-3s-1-1.5-2-1"/></svg>
               </button>
@@ -398,6 +401,14 @@
               <input id="castDebug" type="checkbox">
               Cast debug: visibility from selected token (GM only)
             </label>
+          </div>
+          <div class="tool-popover hidden" id="lightOptions">
+            <h2>Place light</h2>
+            <label>
+              Radius (cells)
+              <input id="lightRadius" type="range" min="1" max="20" step="1" value="4">
+            </label>
+            <p class="hint">Small = torch, large = firepit. Right-click a light to remove it. Turn on Darkness (under Line of sight) so lights gate what players see.</p>
           </div>
           <div class="tool-popover hidden" id="tokenOptions">
             <h2>Token</h2>
@@ -500,6 +511,10 @@
             </label>
           </div>
           <div class="los-options hidden" id="losOptions">
+            <label class="toggle-chip">
+              <input id="darknessEnabled" type="checkbox">
+              <span>Darkness</span>
+            </label>
             <label>
               Explored brightness
               <input id="losBrightness" type="range" min="0" max="1" step="0.05" value="0.5">
