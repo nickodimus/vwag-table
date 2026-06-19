@@ -945,7 +945,9 @@ function openPlayerWindow() {
 // fit it to the view. Shared by the file picker (loadMapFile) and the DTT importer (loadDttFile).
 // gridOpts, when given as { cellsX, cellsY }, sets the cell grid from the module's known
 // cells-across so the overlay lines up with the map's printed grid (step 6a, the DTT "key").
-function installMap(dataURL, name, gridOpts) {
+// onReady, when given, runs once the image is decoded and the grid is set, before the floor is
+// captured — the seam the DTT importer uses to layer obstacles/lights/notes (6b–6d) onto the map.
+function installMap(dataURL, name, gridOpts, onReady) {
   state.imageData = dataURL;
   state.imageName = name;
   state.imageId = uuid();
@@ -962,6 +964,7 @@ function installMap(dataURL, name, gridOpts) {
     state.imageWidth = mapImage.naturalWidth;
     state.imageHeight = mapImage.naturalHeight;
     if (gridOpts) applyGridFromCells(gridOpts.cellsX, gridOpts.cellsY);
+    if (onReady) onReady(); // DTT import layers obstacles/lights/notes here (6b–6d); grid now set
     fogDirty = true;
     captureCurrentFloor(); // flush new image into the current floor record
     updatePlayerSliderRanges();
@@ -1089,9 +1092,42 @@ function blobToDataURL(blob) {
   });
 }
 
+// Map a parsed DTT's six obstacle kinds into the obstacle store. DTT polylines are already open
+// polylines in cell coordinates — the exact shape state.obstacles holds — so geometry is 1:1 with
+// no transform. Each record draws its blocking rules from obstacleDefaults(kind), identical to a
+// hand-drawn obstacle (so wall/object/ethereal share the default profile, windows pass sight and
+// light, invisibles block but don't render, doors are openable). Replaces the store wholesale: a
+// fresh module import never appends to whatever was on the map before.
+function importObstacles(dtt) {
+  const KINDS = [
+    ["walls", "wall"],
+    ["doors", "door"],
+    ["windows", "window"],
+    ["objects", "object"],
+    ["ethereals", "ethereal"],
+    ["invisibles", "invisible"],
+  ];
+  const obstacles = [];
+  for (const [src, kind] of KINDS) {
+    for (const poly of dtt[src] || []) {
+      if (!Array.isArray(poly) || poly.length < 2) continue;
+      obstacles.push({
+        id: uuid(),
+        kind,
+        points: poly.map((p) => [p[0], p[1]]),
+        ...obstacleDefaults(kind),
+        defaultOpen: false,
+      });
+    }
+  }
+  state.obstacles = obstacles;
+  invalidateCast();
+}
+
 // Import a DTT module (.zip): read it offline, derive the grid from the DTT key
-// (pxPerCell = imageWidth / size.x), and install the map at the right scale. Step 6a stops
-// here — obstacles, lights, and notes (dtt.walls/doors/…/save) are parsed and ready for 6b–6d.
+// (pxPerCell = imageWidth / size.x), install the map at the right scale, and — via installMap's
+// onReady seam — import the obstacle geometry (6b). Lights, tokens, and notes (dtt.save) are
+// parsed and ready for 6c–6d.
 async function loadDttFile(event) {
   const file = event.target.files[0];
   if (!file) return;
@@ -1103,7 +1139,7 @@ async function loadDttFile(event) {
     if (!cellsX || !cellsY) throw new Error("module has no grid size");
     const name = file.name.replace(/\.[^.]+$/, ""); // drop the .zip extension for a clean name
     const dataURL = await blobToDataURL(new Blob([dtt.mapBytes], { type: "image/webp" }));
-    installMap(dataURL, name, { cellsX, cellsY });
+    installMap(dataURL, name, { cellsX, cellsY }, () => importObstacles(dtt));
   } catch (err) {
     window.alert(`Could not import that DTT module: ${err.message}`);
   } finally {
