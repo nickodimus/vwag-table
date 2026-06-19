@@ -1667,17 +1667,32 @@ input:disabled {
 }
 
 /* ----------------------------- token palette ----------------------------- */
-.palette {
-  margin-top: 10px;
-  padding-top: 10px;
-  border-top: 1px solid var(--line);
+/* A scrollable flyout pinned just right of the token tool popover, inside the stage. Positioned
+   against .stage-wrap so it tracks the stage edge through panel-collapse and initiative changes. */
+.token-palette-flyout {
+  position: absolute;
+  top: 14px;
+  left: 288px; /* clears the 14px-left tool popover column (max-width 260px) + a small gap */
+  width: 248px;
+  max-height: calc(100vh - 28px);
+  overflow-y: auto;
+  z-index: 6;
+  background: rgba(25, 28, 29, 0.94);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px;
 }
 .palette-head {
+  position: sticky;
+  top: 0;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
   margin-bottom: 8px;
+  padding-bottom: 8px;
+  background: rgba(25, 28, 29, 0.94);
+  z-index: 1;
 }
 .palette-head h3 {
   margin: 0;

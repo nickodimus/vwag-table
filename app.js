@@ -153,6 +153,7 @@ const controls = {
   redo: document.getElementById("redoBtn"),
   brushOptions: document.getElementById("brushOptions"),
   tokenOptions: document.getElementById("tokenOptions"),
+  tokenPalette: document.getElementById("tokenPalette"),
   drawOptions: document.getElementById("drawOptions"),
   drawMode: document.getElementById("drawMode"),
   lightMode: document.getElementById("lightMode"),
@@ -2489,6 +2490,7 @@ function setMode(nextMode) {
       nextMode === "stamp" ? "Fog Shape" : isBrush ? "Fog Brush" : "Fog Area";
   }
   controls.tokenOptions.classList.toggle("hidden", nextMode !== "token");
+  controls.tokenPalette?.classList.toggle("hidden", nextMode !== "token");
   controls.drawOptions?.classList.toggle("hidden", nextMode !== "draw");
   controls.lightOptions?.classList.toggle("hidden", nextMode !== "light");
   controls.aoeOptions?.classList.toggle("hidden", nextMode !== "aoe");

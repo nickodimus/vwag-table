@@ -455,16 +455,6 @@
               <button id="tokenImageClear" class="hidden" type="button">Clear</button>
             </div>
             <p class="hint">Click to drop, drag to move, right-click to remove. In Move mode, click a token to select it, then use the arrow keys to nudge it cell by cell. Loading an image re-skins the selected token, or sets the art for new tokens.</p>
-            <div class="palette" id="tokenPalette">
-              <div class="palette-head">
-                <h3>Palette</h3>
-                <div class="palette-tools">
-                  <input id="paletteSize" type="range" min="40" max="140" step="4" value="64" title="Browse size" aria-label="Palette thumbnail size">
-                  <button id="paletteAdd" type="button" class="palette-add" title="Save the current token to the palette">Add current</button>
-                </div>
-              </div>
-              <div class="palette-grid" id="paletteGrid" role="list" aria-label="Saved tokens"></div>
-            </div>
           </div>
 
           <div class="tool-popover hidden" id="aoeOptions">
@@ -573,6 +563,17 @@
           <strong>No map loaded</strong>
           <span>Load a local image from the GM panel.</span>
         </div>
+
+        <aside class="token-palette-flyout hidden" id="tokenPalette" aria-label="Token palette">
+          <div class="palette-head">
+            <h3>Palette</h3>
+            <div class="palette-tools">
+              <input id="paletteSize" type="range" min="40" max="140" step="4" value="64" title="Browse size" aria-label="Palette thumbnail size">
+              <button id="paletteAdd" type="button" class="palette-add" title="Save the current token to the palette">Add current</button>
+            </div>
+          </div>
+          <div class="palette-grid" id="paletteGrid" role="list" aria-label="Saved tokens"></div>
+        </aside>
       </section>
 
       <aside class="initiative-panel" id="initiativePanel" aria-label="Initiative tracker">
