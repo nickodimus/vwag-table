@@ -347,6 +347,7 @@ let castDebug = false; // GM-only: draw the visibility polygon cast from the sel
 let castVersion = 0; // bumps when sight obstacles or the active floor change, invalidating the cast cache
 const castCache = new Map(); // "version|rx|ry" -> visibility polygon; reused until origin or geometry changes
 const castFrameKeys = new Set(); // cast origins requested during the current render, so the cache prunes to live use
+const lightFrameKeys = new Set(); // light origins requested this render, so lightCache prunes to live use (mirrors castFrameKeys)
 let curK = 1; // last rendered view scale (screen px per world px)
 let curMs = 1; // last rendered map.scale
 let viewSyncQueued = false;
@@ -2832,6 +2833,7 @@ function releasePointer(pointerId) {
 function render() {
   const rect = canvas.getBoundingClientRect();
   castFrameKeys.clear();
+  lightFrameKeys.clear();
   ctx.clearRect(0, 0, rect.width, rect.height);
   ctx.fillStyle = "#080909";
   ctx.fillRect(0, 0, rect.width, rect.height);
@@ -2899,8 +2901,9 @@ function render() {
   if (!isPlayer) drawNotes();
   if (!isPlayer) drawPlayerFrame();
 
-  // Keep the cast cache bounded to origins actually used this frame (~live token count).
+  // Keep the caches bounded to origins actually used this frame (~live token + light count).
   for (const k of castCache.keys()) if (!castFrameKeys.has(k)) castCache.delete(k);
+  for (const k of lightCache.keys()) if (!lightFrameKeys.has(k)) lightCache.delete(k);
 }
 
 // GM-only: a red rectangle marking the region the player display currently shows, so the
@@ -5154,6 +5157,7 @@ function lightSources() {
 // radius (radius only clips at composite), so the key is position + geometry version.
 function getLightPolygon(pos) {
   const key = castVersion + "|" + Math.round(pos.x) + "|" + Math.round(pos.y);
+  lightFrameKeys.add(key);
   let poly = lightCache.get(key);
   if (!poly) {
     poly = castVisibility(pos, lightSegments());
