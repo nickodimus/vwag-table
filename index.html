@@ -76,6 +76,10 @@
             Size (cells)
             <input id="tokenSelCells" type="range" min="1" max="4" step="1" value="1">
           </label>
+          <label>
+            Torch radius: <span id="tokenSelLightVal">0</span> cells
+            <input id="tokenSelLight" type="range" min="0" max="12" step="1" value="0">
+          </label>
           <p class="hint">Editing the selected token. Click empty space to deselect.</p>
         </section>
 
@@ -405,8 +409,8 @@
           <div class="tool-popover hidden" id="lightOptions">
             <h2>Place light</h2>
             <label>
-              Radius (cells)
-              <input id="lightRadius" type="range" min="1" max="20" step="1" value="4">
+              Radius: <span id="lightRadiusVal">3</span> cells
+              <input id="lightRadius" type="range" min="1" max="12" step="1" value="3">
             </label>
             <p class="hint">Small = torch, large = firepit. Right-click a light to remove it. Turn on Darkness (under Line of sight) so lights gate what players see.</p>
           </div>
@@ -429,6 +433,10 @@
                 <option value="npc">NPC</option>
                 <option value="monster" selected>Monster</option>
               </select>
+            </label>
+            <label>
+              Torch radius: <span id="tokenLightVal">0</span> cells
+              <input id="tokenLight" type="range" min="0" max="12" step="1" value="0">
             </label>
             <label>
               Label

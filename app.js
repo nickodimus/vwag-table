@@ -42,7 +42,7 @@ const emptyState = document.getElementById("emptyState");
 const channel = new BroadcastChannel("fog-table-state");
 const APP_NAME = "Battlemap Screen and GM Streaming Tool";
 const LEGACY_APP_NAME = "Fog Table";
-const SAVE_FILE_VERSION = 10;
+const SAVE_FILE_VERSION = 11;
 const DB_NAME = "fog-table-library";
 const DB_VERSION = 3;
 const MAP_STORE = "maps";
@@ -94,11 +94,15 @@ const controls = {
   tokenCells: document.getElementById("tokenCells"),
   tokenLabel: document.getElementById("tokenLabel"),
   tokenType: document.getElementById("tokenType"),
+  tokenLight: document.getElementById("tokenLight"),
+  tokenLightVal: document.getElementById("tokenLightVal"),
   tokenSelPanel: document.getElementById("tokenSelPanel"),
   tokenSelType: document.getElementById("tokenSelType"),
   tokenSelLabel: document.getElementById("tokenSelLabel"),
   tokenSelColor: document.getElementById("tokenSelColor"),
   tokenSelCells: document.getElementById("tokenSelCells"),
+  tokenSelLight: document.getElementById("tokenSelLight"),
+  tokenSelLightVal: document.getElementById("tokenSelLightVal"),
   tokenImage: document.getElementById("tokenImage"),
   tokenImagePreview: document.getElementById("tokenImagePreview"),
   tokenImageClear: document.getElementById("tokenImageClear"),
@@ -149,6 +153,7 @@ const controls = {
   lightMode: document.getElementById("lightMode"),
   lightOptions: document.getElementById("lightOptions"),
   lightRadius: document.getElementById("lightRadius"),
+  lightRadiusVal: document.getElementById("lightRadiusVal"),
   darknessEnabled: document.getElementById("darknessEnabled"),
   obstacleKind: document.getElementById("obstacleKind"),
   showObstacles: document.getElementById("showObstacles"),
@@ -301,7 +306,7 @@ let mode = "pan";
 let drawingRoom = [];
 let drawingObstacle = []; // in-progress obstacle polyline (native px) while drawing in Draw Mode
 let obstacleKind = "wall"; // kind applied to newly drawn obstacles
-let lightRadius = 4; // radius (cells) applied to newly placed lights — small=torch, large=firepit
+let lightRadius = 3; // radius (cells) applied to newly placed lights — small=torch, large=firepit
 let showObstacles = true; // GM-only obstacle overlay toggle ("Walls Visible to DM")
 let activeStroke = null;
 let stampDraft = null; // {shape, start, end} preview while drag-drawing a fog shape
@@ -674,7 +679,19 @@ function bindControls() {
   controls.lightMode?.addEventListener("click", () => setMode("light"));
   controls.obstacleKind?.addEventListener("change", () => { obstacleKind = controls.obstacleKind.value; });
   controls.showObstacles?.addEventListener("change", () => { showObstacles = controls.showObstacles.checked; render(); });
-  controls.lightRadius?.addEventListener("input", () => { lightRadius = Number(controls.lightRadius.value) || 1; });
+  controls.lightRadius?.addEventListener("input", () => {
+    lightRadius = Number(controls.lightRadius.value) || 1;
+    if (controls.lightRadiusVal) controls.lightRadiusVal.textContent = lightRadius;
+  });
+  controls.tokenLight?.addEventListener("input", () => {
+    if (controls.tokenLightVal) controls.tokenLightVal.textContent = Number(controls.tokenLight.value) || 0;
+  });
+  controls.tokenSelLight?.addEventListener("input", () => {
+    if (!selectedToken) return;
+    selectedToken.light = Number(controls.tokenSelLight.value) || 0;
+    if (controls.tokenSelLightVal) controls.tokenSelLightVal.textContent = selectedToken.light;
+    renderAndSync();
+  });
   controls.darknessEnabled?.addEventListener("input", () => { state.los.darkness = controls.darknessEnabled.checked; renderAndSync(); });
   controls.castDebug?.addEventListener("change", () => { castDebug = controls.castDebug.checked; render(); });
 
@@ -3337,6 +3354,7 @@ function addToken(native) {
     color: controls.tokenColor?.value || "#d6a94d",
     label: controls.tokenLabel?.value?.trim() || "",
     type: controls.tokenType?.value || "monster",
+    light: Number(controls.tokenLight?.value) || 0,
     image: tokenImageData || "",
   });
   renderAndSync();
@@ -3616,6 +3634,8 @@ function updateSelectionPanels() {
       if (controls.tokenSelLabel) controls.tokenSelLabel.value = selectedToken.label || "";
       if (controls.tokenSelColor) controls.tokenSelColor.value = selectedToken.color || "#d6a94d";
       if (controls.tokenSelCells) controls.tokenSelCells.value = selectedToken.cells || 1;
+      if (controls.tokenSelLight) controls.tokenSelLight.value = selectedToken.light || 0;
+      if (controls.tokenSelLightVal) controls.tokenSelLightVal.textContent = selectedToken.light || 0;
     }
   }
   if (controls.imageSelPanel) {
@@ -4821,15 +4841,28 @@ function lightSegments() {
 
 // Cached wall-occluded visibility polygon cast from a light; lights are static so this is reused
 // until geometry or the light set changes (lightCache is cleared by invalidateCast).
-function getLightPolygon(light) {
-  const pos = cellsToNative({ x: light.x, y: light.y });
-  const key = castVersion + "|" + Math.round(pos.x) + "|" + Math.round(pos.y) + "|" + light.radius;
+// Every light source on the floor as { pos (native), radius (native px) }: placed lights
+// (5d-1, stored in cells) and token-carried torches (5d-2, at the token's position).
+function lightSources() {
+  const ppc = pxPerCellNative();
+  const sources = [];
+  state.lights.forEach((l) => sources.push({ pos: cellsToNative({ x: l.x, y: l.y }), radius: (l.radius || 0) * ppc }));
+  state.tokens.forEach((t) => {
+    if ((t.light || 0) > 0) sources.push({ pos: { x: t.x, y: t.y }, radius: t.light * ppc });
+  });
+  return sources;
+}
+
+// Cached wall-occluded visibility polygon cast from a native point. The cast doesn't depend on
+// radius (radius only clips at composite), so the key is position + geometry version.
+function getLightPolygon(pos) {
+  const key = castVersion + "|" + Math.round(pos.x) + "|" + Math.round(pos.y);
   let poly = lightCache.get(key);
   if (!poly) {
     poly = castVisibility(pos, lightSegments());
     lightCache.set(key, poly);
   }
-  return { pos, poly };
+  return poly;
 }
 
 // Union every placed light's coverage into lightCanvas (fog-buffer resolution): the occluded
@@ -4838,14 +4871,12 @@ function buildLightCoverage() {
   lightCtx.setTransform(1, 0, 0, 1, 0, 0);
   lightCtx.clearRect(0, 0, lightCanvas.width, lightCanvas.height);
   lightCtx.fillStyle = "#ffffff";
-  const ppc = pxPerCellNative();
-  state.lights.forEach((light) => {
-    const { pos, poly } = getLightPolygon(light);
+  lightSources().forEach(({ pos, radius }) => {
+    const poly = getLightPolygon(pos);
     if (poly.length < 3) return;
-    const rNative = (light.radius || 0) * ppc;
     lightCtx.save();
     lightCtx.beginPath();
-    lightCtx.arc(pos.x * fogResScale, pos.y * fogResScale, rNative * fogResScale, 0, Math.PI * 2);
+    lightCtx.arc(pos.x * fogResScale, pos.y * fogResScale, radius * fogResScale, 0, Math.PI * 2);
     lightCtx.clip();
     lightCtx.fill(losPath(poly));
     lightCtx.restore();
@@ -4876,9 +4907,20 @@ function hitLight(native) {
 
 // GM-only markers: a glow dot plus a dashed radius ring so the GM can see each light's reach.
 function drawLights() {
-  if (isPlayer || !state.lights.length) return;
+  if (isPlayer || (!state.lights.length && !state.tokens.some((t) => (t.light || 0) > 0))) return;
   const ppc = pxPerCellNative();
   ctx.save();
+  // Token-carried torches (5d-2): faint reach ring around the token, no center marker.
+  state.tokens.forEach((t) => {
+    if ((t.light || 0) <= 0) return;
+    ctx.beginPath();
+    ctx.arc(t.x, t.y, t.light * ppc, 0, Math.PI * 2);
+    ctx.strokeStyle = "rgba(255,210,120,0.35)";
+    ctx.lineWidth = 1.5 / (curK * curMs);
+    ctx.setLineDash([5 / (curK * curMs), 6 / (curK * curMs)]);
+    ctx.stroke();
+    ctx.setLineDash([]);
+  });
   state.lights.forEach((light) => {
     const p = cellsToNative({ x: light.x, y: light.y });
     const rNative = (light.radius || 0) * ppc;
