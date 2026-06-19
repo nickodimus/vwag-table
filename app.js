@@ -3134,8 +3134,9 @@ function drawObstacleOutlines() {
   state.obstacles.forEach((ob) => {
     const pts = (ob.points || []).map((p) => cellsToNative({ x: p[0], y: p[1] }));
     if (pts.length < 2) return;
-    ctx.strokeStyle = OBSTACLE_COLORS[ob.kind] || OBSTACLE_COLORS.wall;
-    ctx.setLineDash(ob.drawn === false ? [9 / (curK * curMs), 6 / (curK * curMs)] : []);
+    const openDoor = ob.kind === "door" && ob.open;
+    ctx.strokeStyle = openDoor ? "rgba(120,200,140,0.35)" : (OBSTACLE_COLORS[ob.kind] || OBSTACLE_COLORS.wall);
+    ctx.setLineDash(ob.drawn === false || openDoor ? [9 / (curK * curMs), 6 / (curK * curMs)] : []);
     ctx.beginPath();
     ctx.moveTo(pts[0].x, pts[0].y);
     for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
@@ -4484,6 +4485,16 @@ function onPointerDown(event) {
       if (idx !== -1) goToFloor(idx);
       return;
     }
+    // Click a door to toggle it open/closed (GM only). Open doors pass sight, light, and
+    // movement; the change syncs to players, whose line-of-sight then reveals through the opening.
+    const door = hitObstacle(native);
+    if (door && door.kind === "door" && door.openable !== false) {
+      pushHistory();
+      door.open = !door.open;
+      invalidateCast();
+      renderAndSync();
+      return;
+    }
     // Dragging the red player-view frame pans the player display in real time.
     const frame = playerFrameCorners();
     if (frame && pointInPolygon(clientToCanvasPoint(event), frame)) {
@@ -5031,6 +5042,7 @@ function sightSegments() {
   const segs = [];
   state.obstacles.forEach((ob) => {
     if (ob.blocksSight === false) return; // windows let sight through
+    if (ob.kind === "door" && ob.open) return; // open doors let sight through
     const pts = (ob.points || []).map((p) => cellsToNative({ x: p[0], y: p[1] }));
     for (let i = 0; i < pts.length - 1; i++) segs.push({ a: pts[i], b: pts[i + 1] });
   });
@@ -5195,6 +5207,7 @@ function lightSegments() {
   const segs = [];
   state.obstacles.forEach((ob) => {
     if (ob.blocksLight === false) return;
+    if (ob.kind === "door" && ob.open) return; // open doors let light through
     const pts = (ob.points || []).map((p) => cellsToNative({ x: p[0], y: p[1] }));
     for (let i = 0; i < pts.length - 1; i++) segs.push({ a: pts[i], b: pts[i + 1] });
   });
