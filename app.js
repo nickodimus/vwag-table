@@ -22,12 +22,16 @@ const polyCanvas = document.createElement("canvas");
 const polyCtx = polyCanvas.getContext("2d");
 const strokeCanvas = document.createElement("canvas");
 const strokeCtx = strokeCanvas.getContext("2d");
+// Line-of-sight mask (step 5b): black everywhere the players' tokens can't currently see,
+// cut out with the cast visibility polygons, composited over the player view only.
+const losCanvas = document.createElement("canvas");
+const losCtx = losCanvas.getContext("2d");
 const shell = document.querySelector(".app-shell");
 const emptyState = document.getElementById("emptyState");
 const channel = new BroadcastChannel("fog-table-state");
 const APP_NAME = "Battlemap Screen and GM Streaming Tool";
 const LEGACY_APP_NAME = "Fog Table";
-const SAVE_FILE_VERSION = 7;
+const SAVE_FILE_VERSION = 8;
 const DB_NAME = "fog-table-library";
 const DB_VERSION = 3;
 const MAP_STORE = "maps";
@@ -55,6 +59,7 @@ const controls = {
   splashUpload: document.getElementById("splashUpload"),
   splashEnabled: document.getElementById("splashEnabled"),
   blackoutEnabled: document.getElementById("blackoutEnabled"),
+  losEnabled: document.getElementById("losEnabled"),
   loadLibrary: document.getElementById("loadLibrary"),
   saveSession: document.getElementById("saveSession"),
   openPlayer: document.getElementById("openPlayer"),
@@ -230,6 +235,7 @@ const state = {
   imageHeight: 0,
   splash: { enabled: false, imageData: "", imageName: "" },
   blackout: false,
+  los: { enabled: false }, // line-of-sight: clip the player view to what player-type tokens can see
   grid: { enabled: true, snap: true, snapImages: false, size: 70, offsetX: 0, offsetY: 0, color: "#000000", opacity: 0.45 },
   map: { scale: 1 },
   fog: {
@@ -310,7 +316,8 @@ let fogResScale = 1;
 let fogDirty = true;
 let castDebug = false; // GM-only: draw the visibility polygon cast from the selected token
 let castVersion = 0; // bumps when sight obstacles or the active floor change, invalidating the cast cache
-const castCache = { key: null, polygon: null }; // last visibility polygon, reused until inputs change
+const castCache = new Map(); // "version|rx|ry" -> visibility polygon; reused until origin or geometry changes
+const castFrameKeys = new Set(); // cast origins requested during the current render, so the cache prunes to live use
 let curK = 1; // last rendered view scale (screen px per world px)
 let curMs = 1; // last rendered map.scale
 let viewSyncQueued = false;
@@ -569,6 +576,10 @@ function bindControls() {
       state.splash.enabled = false;
       controls.splashEnabled.checked = false;
     }
+    renderAndSync();
+  });
+  controls.losEnabled?.addEventListener("input", () => {
+    state.los.enabled = controls.losEnabled.checked;
     renderAndSync();
   });
   controls.loadLibrary.addEventListener("click", openLibrary);
@@ -1365,6 +1376,7 @@ function splitState(stateObj) {
   };
   const session = {
     blackout: Boolean(stateObj.blackout),
+    los: JSON.parse(JSON.stringify(stateObj.los || { enabled: false })),
     splash: JSON.parse(JSON.stringify(stateObj.splash || { enabled: false, imageData: "", imageName: "" })),
     initiative: JSON.parse(JSON.stringify(stateObj.initiative || {})),
     playerView: JSON.parse(JSON.stringify(stateObj.playerView || {})),
@@ -1413,6 +1425,7 @@ function mergeModuleSession(module, session) {
     measure: JSON.parse(JSON.stringify(module.measure || {})),
     stairColor: module.stairColor || "#ffffff",
     blackout: Boolean(session.blackout),
+    los: JSON.parse(JSON.stringify(session.los || { enabled: false })),
     splash: JSON.parse(JSON.stringify(session.splash || { enabled: false, imageData: "", imageName: "" })),
     initiative: JSON.parse(JSON.stringify(session.initiative || {})),
     playerView: JSON.parse(JSON.stringify(session.playerView || {})),
@@ -1498,6 +1511,7 @@ function loadSnapshot(snapshot) {
   // Shared / global settings.
   Object.assign(state.splash, snapshot.splash || { enabled: false, imageData: "", imageName: "" });
   state.blackout = Boolean(snapshot.blackout);
+  if (snapshot.los) Object.assign(state.los, snapshot.los);
   Object.assign(state.grid, snapshot.grid);
   if (state.grid.snap === undefined) state.grid.snap = true;
   if (snapshot.stairColor) state.stairColor = snapshot.stairColor;
@@ -1527,6 +1541,10 @@ function loadSnapshot(snapshot) {
     state.fog.strokes = snapshot.fog?.strokes || [];
     state.tokens = Array.isArray(snapshot.tokens) ? snapshot.tokens : [];
     state.stairs = Array.isArray(snapshot.stairs) ? snapshot.stairs : [];
+    // Obstacles now ride to the player too: the player computes its own line-of-sight locally
+    // (cast against these walls), so without them its visibility would be the whole map.
+    state.obstacles = Array.isArray(snapshot.obstacles) ? snapshot.obstacles : [];
+    invalidateCast();
     state.images = Array.isArray(snapshot.images) ? snapshot.images : [];
     state.notes = []; // notes are GM-only and never arrive on the player
     Object.assign(state.view, snapshot.view || {});
@@ -1622,6 +1640,7 @@ function syncControlsFromState() {
   controls.gridOpacity.value = state.grid.opacity;
   controls.splashEnabled.checked = state.splash.enabled;
   controls.blackoutEnabled.checked = state.blackout;
+  if (controls.losEnabled) controls.losEnabled.checked = state.los.enabled;
   controls.mapScale.value = state.map.scale;
   controls.brushSize.value = state.fog.toolSize;
   controls.fogTint.value = state.fog.gmColor;
@@ -2450,6 +2469,7 @@ function releasePointer(pointerId) {
 
 function render() {
   const rect = canvas.getBoundingClientRect();
+  castFrameKeys.clear();
   ctx.clearRect(0, 0, rect.width, rect.height);
   ctx.fillStyle = "#080909";
   ctx.fillRect(0, 0, rect.width, rect.height);
@@ -2491,6 +2511,7 @@ function render() {
   drawImages();
   drawTokens();
   compositeFog();
+  if (isPlayer && state.los.enabled) compositeLoS();
   drawAoeTemplate(); // hover template sits above fog; visible to both GM and player
   if (!isPlayer) drawRoomOutlines();
   if (!isPlayer) drawObstacleOutlines();
@@ -2514,6 +2535,9 @@ function render() {
   if (!isPlayer) drawRoomNames();
   if (!isPlayer) drawNotes();
   if (!isPlayer) drawPlayerFrame();
+
+  // Keep the cast cache bounded to origins actually used this frame (~live token count).
+  for (const k of castCache.keys()) if (!castFrameKeys.has(k)) castCache.delete(k);
 }
 
 // GM-only: a red rectangle marking the region the player display currently shows, so the
@@ -2602,7 +2626,7 @@ function resizeFogLayer() {
   fogResScale = Math.min(1, FOG_MAX_EDGE / maxEdge);
   const w = Math.max(1, Math.round(state.imageWidth * fogResScale));
   const h = Math.max(1, Math.round(state.imageHeight * fogResScale));
-  [fogCanvas, liveCanvas, polyCanvas, strokeCanvas].forEach((c) => {
+  [fogCanvas, liveCanvas, polyCanvas, strokeCanvas, losCanvas].forEach((c) => {
     if (c.width !== w || c.height !== h) {
       c.width = w;
       c.height = h;
@@ -4608,6 +4632,7 @@ function hitObstacle(native) {
 // Call whenever sight obstacles or the active floor change, so the next cast rebuilds.
 function invalidateCast() {
   castVersion++;
+  castCache.clear();
 }
 
 // Native-space segments that block sight on the current floor: every consecutive pair of
@@ -4671,13 +4696,57 @@ function castVisibility(origin, segments) {
 
 // Cached accessor: returns the visibility polygon for `origin`, recomputing only when the
 // origin (rounded to 1px) or the sight geometry (castVersion) has changed since last time.
+// Registers the key as used this frame so render() can prune the cache to live origins.
 function getVisibilityPolygon(origin) {
   const key = castVersion + "|" + Math.round(origin.x) + "|" + Math.round(origin.y);
-  if (castCache.key === key) return castCache.polygon;
+  castFrameKeys.add(key);
+  const cached = castCache.get(key);
+  if (cached) return cached;
   const polygon = castVisibility(origin, sightSegments());
-  castCache.key = key;
-  castCache.polygon = polygon;
+  castCache.set(key, polygon);
   return polygon;
+}
+
+// LoS (5b): one visibility polygon per player-type token — the players' shared field of view.
+function playerVisionPolygons() {
+  const polys = [];
+  state.tokens.forEach((t) => {
+    if (t.type !== "player") return;
+    const poly = getVisibilityPolygon({ x: t.x, y: t.y });
+    if (poly.length >= 3) polys.push(poly);
+  });
+  return polys;
+}
+
+// A visibility polygon as a Path2D in fog-buffer resolution (native px * fogResScale), matching
+// roomPathFog so the LoS mask lines up with the fog layers it composites alongside.
+function losPath(points) {
+  const path = new Path2D();
+  if (!points.length) return path;
+  path.moveTo(points[0].x * fogResScale, points[0].y * fogResScale);
+  for (let i = 1; i < points.length; i++) path.lineTo(points[i].x * fogResScale, points[i].y * fogResScale);
+  path.closePath();
+  return path;
+}
+
+// Player-view only: black out everything outside the players' shared field of view by filling
+// the mask black, cutting out each player token's visibility polygon, then drawing it over the
+// scene. Fails open — with no player tokens on the floor, nothing is hidden.
+function compositeLoS() {
+  const polys = playerVisionPolygons();
+  losCtx.setTransform(1, 0, 0, 1, 0, 0);
+  losCtx.clearRect(0, 0, losCanvas.width, losCanvas.height);
+  if (!polys.length) return; // fail-open: no eyes, no mask
+  losCtx.fillStyle = "#080909";
+  losCtx.fillRect(0, 0, losCanvas.width, losCanvas.height);
+  losCtx.save();
+  losCtx.globalCompositeOperation = "destination-out";
+  polys.forEach((poly) => losCtx.fill(losPath(poly)));
+  losCtx.restore();
+  ctx.save();
+  ctx.imageSmoothingEnabled = true;
+  ctx.drawImage(losCanvas, 0, 0, losCanvas.width, losCanvas.height, 0, 0, state.imageWidth, state.imageHeight);
+  ctx.restore();
 }
 
 // GM-only debug overlay: when castDebug is on and a token is selected, fill + outline the
