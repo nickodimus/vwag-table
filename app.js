@@ -44,11 +44,12 @@ const APP_NAME = "Battlemap Screen and GM Streaming Tool";
 const LEGACY_APP_NAME = "Fog Table";
 const SAVE_FILE_VERSION = 11;
 const DB_NAME = "fog-table-library";
-const DB_VERSION = 3;
+const DB_VERSION = 4;
 const MAP_STORE = "maps";
 const IMAGE_STORE = "images";
 const MODULE_STORE = "modules";
 const SESSION_STORE = "sessions";
+const TOKEN_STORE = "tokens";
 const FOG_MAX_EDGE = 4096; // cap fog raster resolution so huge maps stay within canvas/memory limits
 const HISTORY_LIMIT = 80;
 
@@ -96,6 +97,9 @@ const controls = {
   tokenLabel: document.getElementById("tokenLabel"),
   tokenType: document.getElementById("tokenType"),
   tokenLight: document.getElementById("tokenLight"),
+  paletteGrid: document.getElementById("paletteGrid"),
+  paletteAdd: document.getElementById("paletteAdd"),
+  paletteSize: document.getElementById("paletteSize"),
   tokenLightVal: document.getElementById("tokenLightVal"),
   tokenSelPanel: document.getElementById("tokenSelPanel"),
   tokenSelType: document.getElementById("tokenSelType"),
@@ -328,6 +332,12 @@ let selectedImage = null; // map image selected in Move mode (GM only)
 let selectedNote = null; // floating note selected in Move mode (GM only)
 let tokenImageData = ""; // image applied to newly placed tokens (data URL), authoring default
 const tokenImageCache = new Map(); // data URL -> HTMLImageElement, so token art draws each frame
+
+// --- Token palette: a browsable library of reusable token templates (TOKEN_STORE) ---
+let paletteEntries = []; // in-memory mirror of the persisted palette
+let activePaletteId = null; // entry whose template is currently loaded into the token controls
+let paletteThumbPx = 64; // browse size for palette thumbnails, persisted to localStorage
+const PALETTE_THUMB_KEY = "vwag-table-palette-thumb";
 const IMAGE_MAX_EDGE = 1024; // cap dropped map images so saves/syncs stay bounded
 let isDragging = false;
 let dragStart = { x: 0, y: 0 };
@@ -520,6 +530,9 @@ function setup() {
   } else {
     bindControls();
     loadSquareLock();
+    loadPaletteThumb();
+    if (controls.paletteSize) controls.paletteSize.value = paletteThumbPx;
+    loadPalette();
     syncControlsFromState();
     updateSquareLockUI();
     // One-time, idempotent: split any legacy single-record maps into module + session pairs,
@@ -679,6 +692,9 @@ function bindControls() {
     state.map.scale = next;
     renderAndSync();
   });
+
+  controls.paletteAdd?.addEventListener("click", addCurrentToPalette);
+  controls.paletteSize?.addEventListener("input", () => setPaletteThumb(Number(controls.paletteSize.value) || 64));
 
   controls.panMode.addEventListener("click", () => setMode("pan"));
   controls.fogToggle.addEventListener("click", toggleFogRibbon);
@@ -1604,6 +1620,9 @@ function openMapDatabase() {
       if (!db.objectStoreNames.contains(SESSION_STORE)) {
         db.createObjectStore(SESSION_STORE, { keyPath: "id" });
       }
+      if (!db.objectStoreNames.contains(TOKEN_STORE)) {
+        db.createObjectStore(TOKEN_STORE, { keyPath: "id" });
+      }
     };
     request.onsuccess = () => resolve(request.result);
     request.onerror = () => reject(request.error);
@@ -1667,6 +1686,17 @@ function getSessionRecord(id) {
 }
 function deleteSessionRecord(id) {
   return withStore(SESSION_STORE, "readwrite", (store) => store.delete(id));
+}
+
+// Token store — reusable token templates for the palette (art + color/type/size/torch).
+function saveTokenRecord(record) {
+  return withStore(TOKEN_STORE, "readwrite", (store) => store.put(record));
+}
+function listTokenRecords() {
+  return withStore(TOKEN_STORE, "readonly", (store) => store.getAll());
+}
+function deleteTokenRecord(id) {
+  return withStore(TOKEN_STORE, "readwrite", (store) => store.delete(id));
 }
 
 /* ----------------------------- image store (de-embedded map images) ----------------------------- */
@@ -3750,6 +3780,140 @@ function updateTokenImagePreview() {
   controls.tokenImagePreview.src = has ? tokenImageData : "";
   controls.tokenImagePreview.classList.toggle("hidden", !has);
   controls.tokenImageClear?.classList.toggle("hidden", !has);
+}
+
+/* ----------------------------- token palette ----------------------------- */
+
+// Browse-size preference, persisted independently of the palette contents.
+function loadPaletteThumb() {
+  try {
+    const v = Number(localStorage.getItem(PALETTE_THUMB_KEY));
+    if (v > 0) paletteThumbPx = v;
+  } catch {}
+}
+
+function persistPaletteThumb() {
+  try {
+    localStorage.setItem(PALETTE_THUMB_KEY, String(paletteThumbPx));
+  } catch {}
+}
+
+// Pull the persisted palette into memory and draw it.
+async function loadPalette() {
+  try {
+    paletteEntries = (await listTokenRecords()) || [];
+  } catch {
+    paletteEntries = [];
+  }
+  paletteEntries.sort((a, b) => (a.name || "").localeCompare(b.name || ""));
+  renderPalette();
+}
+
+// Save the current token controls (art + color/type/size/torch) as a reusable template.
+async function addCurrentToPalette() {
+  const entry = {
+    id: uuid(),
+    name: (controls.tokenLabel?.value || "").trim() || "Token",
+    image: tokenImageData || "",
+    color: controls.tokenColor?.value || "#d6a94d",
+    type: controls.tokenType?.value || "monster",
+    cells: Number(controls.tokenCells?.value) || 1,
+    light: Number(controls.tokenLight?.value) || 0,
+  };
+  try {
+    await saveTokenRecord(entry);
+  } catch {
+    window.alert("Could not save to the palette.");
+    return;
+  }
+  await loadPalette();
+}
+
+// Load a palette template into the token controls; the next map click drops a token using it.
+function usePaletteEntry(entry) {
+  if (controls.tokenColor) controls.tokenColor.value = entry.color || "#d6a94d";
+  if (controls.tokenCells) controls.tokenCells.value = entry.cells || 1;
+  if (controls.tokenType) controls.tokenType.value = entry.type || "monster";
+  if (controls.tokenLabel) controls.tokenLabel.value = entry.name || "";
+  if (controls.tokenLight) {
+    controls.tokenLight.value = entry.light || 0;
+    if (controls.tokenLightVal) controls.tokenLightVal.textContent = entry.light || 0;
+  }
+  tokenImageData = entry.image || "";
+  updateTokenImagePreview();
+  activePaletteId = entry.id;
+  renderPalette();
+}
+
+async function deletePaletteEntry(id) {
+  try {
+    await deleteTokenRecord(id);
+  } catch {}
+  if (activePaletteId === id) activePaletteId = null;
+  await loadPalette();
+}
+
+// Resize the browse thumbnails (the grid columns track the CSS var); persisted across sessions.
+function setPaletteThumb(px) {
+  paletteThumbPx = Math.max(40, Math.min(140, px || 64));
+  persistPaletteThumb();
+  if (controls.paletteGrid) controls.paletteGrid.style.setProperty("--palette-thumb", paletteThumbPx + "px");
+}
+
+// Build the thumbnail grid: each entry is a swatch (art or color) that loads the template on
+// click, a small remove button, and the name.
+function renderPalette() {
+  const grid = controls.paletteGrid;
+  if (!grid) return;
+  grid.style.setProperty("--palette-thumb", paletteThumbPx + "px");
+  grid.innerHTML = "";
+  if (!paletteEntries.length) {
+    const empty = document.createElement("p");
+    empty.className = "hint palette-empty";
+    empty.textContent = "No saved tokens yet. Set up a token above, then press \u201CAdd current.\u201D";
+    grid.appendChild(empty);
+    return;
+  }
+  for (const entry of paletteEntries) {
+    const cell = document.createElement("div");
+    cell.className = "palette-entry" + (entry.id === activePaletteId ? " active" : "");
+    cell.setAttribute("role", "listitem");
+
+    const swatch = document.createElement("button");
+    swatch.type = "button";
+    swatch.className = "palette-thumb";
+    swatch.title = entry.name || "Token";
+    swatch.setAttribute("aria-label", "Use " + (entry.name || "token"));
+    if (entry.image) {
+      const img = document.createElement("img");
+      img.src = entry.image;
+      img.alt = "";
+      swatch.appendChild(img);
+    } else {
+      swatch.style.background = entry.color || "#d6a94d";
+    }
+    swatch.addEventListener("click", () => usePaletteEntry(entry));
+
+    const del = document.createElement("button");
+    del.type = "button";
+    del.className = "palette-del";
+    del.title = "Remove from palette";
+    del.setAttribute("aria-label", "Remove " + (entry.name || "token") + " from palette");
+    del.textContent = "\u00D7";
+    del.addEventListener("click", (e) => {
+      e.stopPropagation();
+      deletePaletteEntry(entry.id);
+    });
+
+    const name = document.createElement("span");
+    name.className = "palette-name";
+    name.textContent = entry.name || "Token";
+
+    cell.appendChild(swatch);
+    cell.appendChild(del);
+    cell.appendChild(name);
+    grid.appendChild(cell);
+  }
 }
 
 function nudgeSelectedToken(key) {
