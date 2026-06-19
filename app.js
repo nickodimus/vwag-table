@@ -129,6 +129,7 @@ const controls = {
   drawMode: document.getElementById("drawMode"),
   obstacleKind: document.getElementById("obstacleKind"),
   showObstacles: document.getElementById("showObstacles"),
+  castDebug: document.getElementById("castDebug"),
   fitMap: document.getElementById("fitMap"),
   playerMatchDM: document.getElementById("playerMatchDM"),
   playerFrameToggle: document.getElementById("playerFrameToggle"),
@@ -307,6 +308,9 @@ let pingRaf = 0;
 let lastPointer = { clientX: 0, clientY: 0 };
 let fogResScale = 1;
 let fogDirty = true;
+let castDebug = false; // GM-only: draw the visibility polygon cast from the selected token
+let castVersion = 0; // bumps when sight obstacles or the active floor change, invalidating the cast cache
+const castCache = { key: null, polygon: null }; // last visibility polygon, reused until inputs change
 let curK = 1; // last rendered view scale (screen px per world px)
 let curMs = 1; // last rendered map.scale
 let viewSyncQueued = false;
@@ -622,6 +626,7 @@ function bindControls() {
   controls.drawMode?.addEventListener("click", () => setMode("draw"));
   controls.obstacleKind?.addEventListener("change", () => { obstacleKind = controls.obstacleKind.value; });
   controls.showObstacles?.addEventListener("change", () => { showObstacles = controls.showObstacles.checked; render(); });
+  controls.castDebug?.addEventListener("change", () => { castDebug = controls.castDebug.checked; render(); });
 
   // Floor navigation
   controls.floorUp?.addEventListener("click", () => goToFloor(currentFloorIndex() + 1));
@@ -1701,6 +1706,7 @@ function applyFloor(floor) {
   state.tokens = JSON.parse(JSON.stringify(floor.tokens || []));
   state.stairs = JSON.parse(JSON.stringify(floor.stairs || []));
   state.obstacles = JSON.parse(JSON.stringify(floor.obstacles || []));
+  invalidateCast();
   state.images = JSON.parse(JSON.stringify(floor.images || []));
   state.notes = JSON.parse(JSON.stringify(floor.notes || []));
   Object.assign(state.view, floor.view || { scale: 1, cx: 0, cy: 0 });
@@ -2488,6 +2494,7 @@ function render() {
   drawAoeTemplate(); // hover template sits above fog; visible to both GM and player
   if (!isPlayer) drawRoomOutlines();
   if (!isPlayer) drawObstacleOutlines();
+  if (!isPlayer) drawCastDebug();
   if (!isPlayer) drawStairs(); // stairs are a GM-only navigation aid stays above fog
   if (!isPlayer) drawDraftRoom();
   if (!isPlayer) drawDraftObstacle();
@@ -4389,6 +4396,7 @@ function onContextMenu(event) {
     if (ob) {
       pushHistory();
       state.obstacles = state.obstacles.filter((o) => o !== ob);
+      invalidateCast();
       renderAndSync();
     }
     return;
@@ -4552,6 +4560,7 @@ function finishObstacle() {
     defaultOpen: false,
   };
   state.obstacles.push(obstacle);
+  invalidateCast();
   drawingObstacle = [];
   renderAndSync();
 }
@@ -4581,6 +4590,119 @@ function hitObstacle(native) {
     }
   });
   return best;
+}
+
+// ---------------------------------------------------------------------------
+// Casting engine (step 5a). A 2D visibility polygon cast from a point against the
+// floor's sight-blocking obstacle segments. Nothing consumes the polygon yet beyond
+// the GM debug overlay below — line-of-sight (5b), fog reveal (5c) and lighting (5d)
+// will ride on this same routine. Coordinates are NATIVE px throughout (obstacle
+// points convert cells->native via cellsToNative; tokens and lights are native).
+//
+// Power note (Sky is off-grid solar + Pi): a cast is O(rays x segments) and would
+// cook the budget if run per frame. So the result is cached and only recomputed when
+// the cast origin moves or the sight geometry changes (castVersion). render() only
+// ever DRAWS the cached polygon — it never casts in the hot path.
+// ---------------------------------------------------------------------------
+
+// Call whenever sight obstacles or the active floor change, so the next cast rebuilds.
+function invalidateCast() {
+  castVersion++;
+}
+
+// Native-space segments that block sight on the current floor: every consecutive pair of
+// an obstacle polyline (open, like the renderer) where blocksSight isn't false (windows
+// pass through), plus the four map-edge segments so rays that hit nothing terminate at the
+// boundary and the visibility polygon stays bounded.
+function sightSegments() {
+  const segs = [];
+  state.obstacles.forEach((ob) => {
+    if (ob.blocksSight === false) return; // windows let sight through
+    const pts = (ob.points || []).map((p) => cellsToNative({ x: p[0], y: p[1] }));
+    for (let i = 0; i < pts.length - 1; i++) segs.push({ a: pts[i], b: pts[i + 1] });
+  });
+  const w = state.imageWidth || 0;
+  const h = state.imageHeight || 0;
+  segs.push({ a: { x: 0, y: 0 }, b: { x: w, y: 0 } });
+  segs.push({ a: { x: w, y: 0 }, b: { x: w, y: h } });
+  segs.push({ a: { x: w, y: h }, b: { x: 0, y: h } });
+  segs.push({ a: { x: 0, y: h }, b: { x: 0, y: 0 } });
+  return segs;
+}
+
+// Nearest hit of a ray (origin + t*dir, t>=0) against a segment. Returns { t, x, y } or null.
+// Solves origin + t*dir = a + u*(b-a) for t>=0 and u in [0,1].
+function rayHit(origin, dir, seg) {
+  const sdx = seg.b.x - seg.a.x;
+  const sdy = seg.b.y - seg.a.y;
+  const denom = dir.x * sdy - dir.y * sdx;
+  if (Math.abs(denom) < 1e-9) return null; // parallel
+  const t = ((seg.a.x - origin.x) * sdy - (seg.a.y - origin.y) * sdx) / denom;
+  const u = ((seg.a.x - origin.x) * dir.y - (seg.a.y - origin.y) * dir.x) / denom;
+  if (t < 1e-6 || u < -1e-9 || u > 1 + 1e-9) return null;
+  return { t, x: origin.x + dir.x * t, y: origin.y + dir.y * t };
+}
+
+// Compute the visibility polygon from `origin` (native) against `segments`. Casts three rays
+// at each segment endpoint (its angle and +/- a tiny epsilon) so the polygon peeks just past
+// corners to the wall behind, then sorts the nearest hits by angle into a closed fan.
+function castVisibility(origin, segments) {
+  const EPS = 1e-4;
+  const angles = [];
+  segments.forEach((s) => {
+    [s.a, s.b].forEach((p) => {
+      const base = Math.atan2(p.y - origin.y, p.x - origin.x);
+      angles.push(base - EPS, base, base + EPS);
+    });
+  });
+  const hits = [];
+  angles.forEach((ang) => {
+    const dir = { x: Math.cos(ang), y: Math.sin(ang) };
+    let best = null;
+    for (const seg of segments) {
+      const h = rayHit(origin, dir, seg);
+      if (h && (!best || h.t < best.t)) best = h;
+    }
+    if (best) hits.push({ x: best.x, y: best.y, ang: Math.atan2(best.y - origin.y, best.x - origin.x) });
+  });
+  hits.sort((p, q) => p.ang - q.ang);
+  return hits;
+}
+
+// Cached accessor: returns the visibility polygon for `origin`, recomputing only when the
+// origin (rounded to 1px) or the sight geometry (castVersion) has changed since last time.
+function getVisibilityPolygon(origin) {
+  const key = castVersion + "|" + Math.round(origin.x) + "|" + Math.round(origin.y);
+  if (castCache.key === key) return castCache.polygon;
+  const polygon = castVisibility(origin, sightSegments());
+  castCache.key = key;
+  castCache.polygon = polygon;
+  return polygon;
+}
+
+// GM-only debug overlay: when castDebug is on and a token is selected, fill + outline the
+// visibility polygon cast from that token so the engine can be eyeballed (walls occlude,
+// windows pass, corners peek) before any consumer is wired up. Drawn in the Native block.
+function drawCastDebug() {
+  if (isPlayer || !castDebug || !selectedToken || !state.imageData) return;
+  const poly = getVisibilityPolygon({ x: selectedToken.x, y: selectedToken.y });
+  if (poly.length < 3) return;
+  ctx.save();
+  ctx.beginPath();
+  ctx.moveTo(poly[0].x, poly[0].y);
+  for (let i = 1; i < poly.length; i++) ctx.lineTo(poly[i].x, poly[i].y);
+  ctx.closePath();
+  ctx.fillStyle = "rgba(120, 220, 255, 0.16)";
+  ctx.fill();
+  ctx.lineWidth = 1.5 / (curK * curMs);
+  ctx.strokeStyle = "rgba(120, 220, 255, 0.85)";
+  ctx.stroke();
+  // Mark the cast origin.
+  ctx.beginPath();
+  ctx.arc(selectedToken.x, selectedToken.y, 4 / (curK * curMs), 0, Math.PI * 2);
+  ctx.fillStyle = "rgba(120, 220, 255, 0.95)";
+  ctx.fill();
+  ctx.restore();
 }
 
 function finishRoom() {
