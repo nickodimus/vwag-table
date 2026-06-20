@@ -16,7 +16,7 @@ import {
   DB_NAME, DB_VERSION, MAP_STORE, IMAGE_STORE, MODULE_STORE, SESSION_STORE, TOKEN_STORE, FOG_MAX_EDGE,
   HISTORY_LIMIT, STAIRS_ICON_NEUTRAL, STAIRS_ICON_UP, STAIRS_ICON_DOWN, FEET_PER_CELL, MEASURE_UNITS, PING_DURATION, controls,
   isPlayer, DEFAULT_GM_FOG_OPACITY, INITIAL_FLOOR_ID, makeFloor, state, normalizeInput, uuid, escapeHtml,
-  playerCam,
+  playerCam, tools, cur,
 } from "./state.js";
 import {
   saveMapRecord, listMapRecords, deleteMapRecord, saveModuleRecord, listModuleRecords, getModuleRecord, deleteModuleRecord, saveSessionRecord,
@@ -29,6 +29,9 @@ import {
   snapNative, worldDims, activeView, fitScaleFor, viewTransform, clientToCanvasPoint, currentViewRotation, keepUpright,
   screenToNative, nativeToScreen, followView, cellWorldPx,
 } from "./geometry.js";
+import {
+  drawAoeTemplate, drawMeasureLine, drawMeasureLabel, drawCalibrationDraft, updateCalibrationUI, updateMeasureCalibrateRow,
+} from "./aoe-measure.js";
 
 let mapImage = new Image();
 let splashImage = new Image();
@@ -40,18 +43,10 @@ let lightRadius = 3; // radius (cells) applied to newly placed lights — small=
 let showObstacles = true; // GM-only obstacle overlay toggle ("Walls Visible to DM")
 let activeStroke = null;
 let stampDraft = null; // {shape, start, end} preview while drag-drawing a fog shape
-let calibrating = null; // 'grid' | 'measure' while waiting for a drag-a-square calibration
-let calibrationDraft = null; // {start, end} preview during a calibration drag
 // Area of effect is a live "hover template" (not placed): the shape follows the cursor
 // and is mirrored to the player display in real time.
-let aoeShape = "circle"; // circle | square | cone (triangle)
-let aoeColor = "#e2603a";
-let aoeSizeFt = 10; // size in feet (radius for circle, side for square, length for cone)
-let aoeAngle = -Math.PI / 2; // cone direction (radians); default points "up"
-let aoeTemplate = { visible: false, x: 0, y: 0 }; // GM: cursor pos · player: full received template
 let aoeSyncQueued = false;
 const AOE_PRESETS = { circle: [5, 10, 15, 20], square: [10, 20, 30], cone: [15, 30] };
-const AOE_CONE_HALF_ANGLE = Math.atan(0.5); // ~26.6°, total spread ≈ 53° (D&D cone)
 let selectedToken = null; // token highlighted in Move mode for arrow-key nudging (GM only)
 let selectedImage = null; // map image selected in Move mode (GM only)
 let selectedNote = null; // floating note selected in Move mode (GM only)
@@ -80,7 +75,6 @@ let draggingFrame = false; // GM is dragging the player-view frame to pan the pl
 let dragGrab = { dx: 0, dy: 0 }; // offset from cursor to object center while dragging images/notes/frame
 let groupDragOffsets = null; // [{token,dx,dy}] formation captured at grab, for a player group-drag
 let dragGrabbed = false; // a token-grab has been relayed for the current player pointer-drag
-let measureLine = null;
 let pings = [];
 let pingRaf = 0;
 let lastPointer = { clientX: 0, clientY: 0 };
@@ -91,8 +85,6 @@ let castVersion = 0; // bumps when sight obstacles or the active floor change, i
 const castCache = new Map(); // "version|rx|ry" -> visibility polygon; reused until origin or geometry changes
 const castFrameKeys = new Set(); // cast origins requested during the current render, so the cache prunes to live use
 const lightFrameKeys = new Set(); // light origins requested this render, so lightCache prunes to live use (mirrors castFrameKeys)
-let curK = 1; // last rendered view scale (screen px per world px)
-let curMs = 1; // last rendered map.scale
 let viewSyncQueued = false;
 
 const undoStack = [];
@@ -122,7 +114,7 @@ function handleMessage(message, source) {
   if (message.type === "view" && isPlayer) applyRemoteView(message);
   if (message.type === "ping") addPing(message.x, message.y, message.color);
   if (message.type === "measure" && isPlayer) {
-    measureLine = message.line;
+    tools.measureLine = message.line;
     render();
   }
   if (message.type === "reset-explored" && isPlayer) {
@@ -300,8 +292,8 @@ function setup() {
   canvas.addEventListener("pointerup", onPointerUp);
   canvas.addEventListener("pointercancel", onPointerUp);
   canvas.addEventListener("pointerleave", () => {
-    if (mode === "aoe" && !isPlayer && aoeTemplate.visible) {
-      aoeTemplate.visible = false;
+    if (mode === "aoe" && !isPlayer && tools.aoe.template.visible) {
+      tools.aoe.template.visible = false;
       renderAndSyncView();
     }
   });
@@ -511,15 +503,15 @@ function bindControls() {
   controls.aoeSquare?.addEventListener("click", () => setAoeShape("square"));
   controls.aoeCone?.addEventListener("click", () => setAoeShape("cone"));
   controls.aoeColor?.addEventListener("input", () => {
-    aoeColor = controls.aoeColor.value;
+    tools.aoe.color = controls.aoeColor.value;
     render();
   });
   controls.aoeCustomSize?.addEventListener("input", () => {
     const v = parseFloat(controls.aoeCustomSize.value);
-    if (v > 0) { aoeSizeFt = v; updateAoePresets(); render(); }
+    if (v > 0) { tools.aoe.sizeFt = v; updateAoePresets(); render(); }
   });
   controls.aoeAngleSlider?.addEventListener("input", () => {
-    aoeAngle = parseFloat(controls.aoeAngleSlider.value) * Math.PI / 180;
+    tools.aoe.angle = parseFloat(controls.aoeAngleSlider.value) * Math.PI / 180;
     render();
   });
   controls.measureCalibrate?.addEventListener("click", () => armCalibration("measure"));
@@ -1535,14 +1527,14 @@ function applyRemoteView(message) {
     else Object.assign(state.playerView, message.playerView);
   }
   if (message.aoe) {
-    aoeTemplate.visible = message.aoe.visible;
+    tools.aoe.template.visible = message.aoe.visible;
     if (message.aoe.visible) {
-      aoeTemplate.x = message.aoe.x;
-      aoeTemplate.y = message.aoe.y;
-      aoeShape = message.aoe.shape;
-      aoeSizeFt = message.aoe.sizeFt;
-      aoeAngle = message.aoe.angle;
-      aoeColor = message.aoe.color;
+      tools.aoe.template.x = message.aoe.x;
+      tools.aoe.template.y = message.aoe.y;
+      tools.aoe.shape = message.aoe.shape;
+      tools.aoe.sizeFt = message.aoe.sizeFt;
+      tools.aoe.angle = message.aoe.angle;
+      tools.aoe.color = message.aoe.color;
     }
   }
   render();
@@ -1576,9 +1568,9 @@ function syncControlsFromState() {
   if (controls.losBrightness) controls.losBrightness.value = state.los.brightness ?? 0.5;
   setToolShape(state.fog.toolShape);
   setStampShape(state.fog.stampShape || "rectangle");
-  setAoeShape(aoeShape);
-  if (controls.aoeColor) controls.aoeColor.value = aoeColor;
-  if (controls.aoeCustomSize) controls.aoeCustomSize.value = aoeSizeFt;
+  setAoeShape(tools.aoe.shape);
+  if (controls.aoeColor) controls.aoeColor.value = tools.aoe.color;
+  if (controls.aoeCustomSize) controls.aoeCustomSize.value = tools.aoe.sizeFt;
   if (controls.measureUnit) controls.measureUnit.value = state.measure.unit || "imperial";
   if (controls.stairColor) controls.stairColor.value = state.stairColor || "#ffffff";
   updateMeasureCalibrateRow();
@@ -1808,7 +1800,7 @@ function drawStairs() {
   const cell = gridCellNative();
   const half = cell / 2;
   // Constant 2px screen line width regardless of zoom.
-  const sw = 2 / (curK * curMs);
+  const sw = 2 / (cur.k * cur.ms);
 
   ctx.save();
   const rot = currentViewRotation();
@@ -1836,7 +1828,7 @@ function drawStairs() {
     ctx.translate(x - half + iconPad, y - half + iconPad);
     ctx.scale(iconScale, iconScale);
     ctx.strokeStyle = stairColor;
-    ctx.lineWidth = 2.4 / (curK * curMs * iconScale); // stays a constant width on screen
+    ctx.lineWidth = 2.4 / (cur.k * cur.ms * iconScale); // stays a constant width on screen
     ctx.lineCap = "round";
     ctx.lineJoin = "round";
     const icon = dir > 0 ? STAIRS_ICON_UP : dir < 0 ? STAIRS_ICON_DOWN : STAIRS_ICON_NEUTRAL;
@@ -1914,13 +1906,13 @@ function broadcastView() {
       view: { ...state.view },
       playerView: { ...state.playerView },
       aoe: {
-        visible: aoeTemplate.visible,
-        x: aoeTemplate.x,
-        y: aoeTemplate.y,
-        shape: aoeShape,
-        sizeFt: aoeSizeFt,
-        angle: aoeAngle,
-        color: aoeColor,
+        visible: tools.aoe.template.visible,
+        x: tools.aoe.template.x,
+        y: tools.aoe.template.y,
+        shape: tools.aoe.shape,
+        sizeFt: tools.aoe.sizeFt,
+        angle: tools.aoe.angle,
+        color: tools.aoe.color,
       },
     });
   });
@@ -1975,7 +1967,7 @@ function toggleFogRibbon() {
 
 function setMode(nextMode) {
   if (mode === "aoe" && nextMode !== "aoe") {
-    aoeTemplate.visible = false;
+    tools.aoe.template.visible = false;
     broadcastView();
   }
   mode = nextMode;
@@ -2026,12 +2018,12 @@ function setMode(nextMode) {
   controls.measureOptions?.classList.toggle("hidden", nextMode !== "measure");
   if (nextMode === "measure") updateMeasureCalibrateRow();
   // Switching tools cancels a pending calibration.
-  if (calibrating) {
-    calibrating = null;
-    calibrationDraft = null;
+  if (tools.calibrating) {
+    tools.calibrating = null;
+    tools.calibrationDraft = null;
     updateCalibrationUI();
   }
-  measureLine = null;
+  tools.measureLine = null;
   render();
 }
 
@@ -2381,8 +2373,8 @@ function render() {
   if (!state.imageData || !mapImage.complete) return;
 
   const t = viewTransform();
-  curK = t.k;
-  curMs = t.ms;
+  cur.k = t.k;
+  cur.ms = t.ms;
   const { w, h } = worldDims();
 
   ctx.save();
@@ -2416,7 +2408,7 @@ function render() {
   if (!isPlayer) drawDraftObstacle();
   if (!isPlayer) drawStampDraft();
   if (!isPlayer) drawCalibrationDraft();
-  if (measureLine) drawMeasureLine();
+  if (tools.measureLine) drawMeasureLine();
   if (!isPlayer && ["brush", "eraser"].includes(mode) && state.imageData) {
     drawToolPreview(screenToNative(clientToCanvasPoint(lastPointer)));
   }
@@ -2426,7 +2418,7 @@ function render() {
 
   // Screen-space overlays
   drawPings();
-  if (measureLine) drawMeasureLabel();
+  if (tools.measureLine) drawMeasureLabel();
   if (!isPlayer) drawRoomNames();
   if (!isPlayer) drawNotes();
   if (!isPlayer) drawPlayerFrame();
@@ -2500,7 +2492,7 @@ function drawGrid(worldW, worldH) {
   ctx.save();
   ctx.globalAlpha = state.grid.opacity;
   ctx.strokeStyle = state.grid.color;
-  ctx.lineWidth = 1 / curK;
+  ctx.lineWidth = 1 / cur.k;
   ctx.beginPath();
   const startX = ((state.grid.offsetX % size) + size) % size;
   const startY = ((state.grid.offsetY % size) + size) % size;
@@ -2638,7 +2630,7 @@ function drawRoomOutlines() {
     if (room.revealed) return;
     drawPolygon(room.points);
     ctx.strokeStyle = "rgba(214,169,77,0.72)";
-    ctx.lineWidth = 2 / (curK * curMs);
+    ctx.lineWidth = 2 / (cur.k * cur.ms);
     ctx.stroke();
   });
   ctx.restore();
@@ -2658,14 +2650,14 @@ const OBSTACLE_COLORS = {
 function drawObstacleOutlines() {
   if (!showObstacles || !state.obstacles.length) return;
   ctx.save();
-  ctx.lineWidth = 2.5 / (curK * curMs);
+  ctx.lineWidth = 2.5 / (cur.k * cur.ms);
   ctx.lineJoin = "round";
   state.obstacles.forEach((ob) => {
     const pts = (ob.points || []).map((p) => ({ x: p[0], y: p[1] }));
     if (pts.length < 2) return;
     const openDoor = ob.kind === "door" && ob.open;
     ctx.strokeStyle = openDoor ? "rgba(120,200,140,0.35)" : (OBSTACLE_COLORS[ob.kind] || OBSTACLE_COLORS.wall);
-    ctx.setLineDash(ob.drawn === false || openDoor ? [9 / (curK * curMs), 6 / (curK * curMs)] : []);
+    ctx.setLineDash(ob.drawn === false || openDoor ? [9 / (cur.k * cur.ms), 6 / (cur.k * cur.ms)] : []);
     ctx.beginPath();
     ctx.moveTo(pts[0].x, pts[0].y);
     for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
@@ -2679,7 +2671,7 @@ function drawDraftObstacle() {
   if (!drawingObstacle.length) return;
   ctx.save();
   ctx.strokeStyle = OBSTACLE_COLORS[obstacleKind] || OBSTACLE_COLORS.wall;
-  ctx.lineWidth = 2.5 / (curK * curMs);
+  ctx.lineWidth = 2.5 / (cur.k * cur.ms);
   ctx.lineJoin = "round";
   if (drawingObstacle.length > 1) {
     ctx.beginPath();
@@ -2689,7 +2681,7 @@ function drawDraftObstacle() {
   }
   drawingObstacle.forEach((point) => {
     ctx.beginPath();
-    ctx.arc(point.x, point.y, 4 / (curK * curMs), 0, Math.PI * 2);
+    ctx.arc(point.x, point.y, 4 / (cur.k * cur.ms), 0, Math.PI * 2);
     ctx.fillStyle = OBSTACLE_COLORS[obstacleKind] || OBSTACLE_COLORS.wall;
     ctx.fill();
   });
@@ -2767,7 +2759,7 @@ function drawToolPreview(point) {
   ctx.globalAlpha = 1;
   ctx.strokeStyle = mode === "eraser" ? "rgba(214,106,95,0.95)" : "rgba(127,182,166,0.95)";
   ctx.fillStyle = mode === "eraser" ? "rgba(214,106,95,0.12)" : "rgba(127,182,166,0.12)";
-  ctx.lineWidth = 2 / (curK * curMs);
+  ctx.lineWidth = 2 / (cur.k * cur.ms);
   drawToolShapePath(point, state.fog.toolSize, state.fog.toolShape);
   ctx.fill();
   ctx.stroke();
@@ -2789,13 +2781,13 @@ function drawDraftRoom() {
   ctx.save();
   ctx.fillStyle = "rgba(127, 182, 166, 0.18)";
   ctx.strokeStyle = "rgba(127, 182, 166, 0.95)";
-  ctx.lineWidth = 2 / (curK * curMs);
+  ctx.lineWidth = 2 / (cur.k * cur.ms);
   drawPolygon(drawingRoom);
   if (drawingRoom.length > 2) ctx.fill();
   ctx.stroke();
   drawingRoom.forEach((point) => {
     ctx.beginPath();
-    ctx.arc(point.x, point.y, 4 / (curK * curMs), 0, Math.PI * 2);
+    ctx.arc(point.x, point.y, 4 / (cur.k * cur.ms), 0, Math.PI * 2);
     ctx.fillStyle = "#7fb6a6";
     ctx.fill();
   });
@@ -2805,10 +2797,10 @@ function drawDraftRoom() {
 // Arm a "drag one square" calibration. The next drag on the map sets either the grid
 // size ('grid') or the measurement cell size when the grid overlay is off ('measure').
 function armCalibration(purpose) {
-  calibrating = calibrating === purpose ? null : purpose;
-  calibrationDraft = null;
+  tools.calibrating = tools.calibrating === purpose ? null : purpose;
+  tools.calibrationDraft = null;
   updateCalibrationUI();
-  controls.modeHint.textContent = calibrating
+  controls.modeHint.textContent = tools.calibrating
     ? "Drag a square over one grid cell on the map, then release to set the size."
     : "";
   render();
@@ -2819,10 +2811,10 @@ function armCalibration(purpose) {
 // measure cell size. Because token snapping and the ruler both read grid size+offset, tokens
 // land on the printed cells whether or not the grid overlay is shown.
 function finishCalibration() {
-  const draft = calibrationDraft;
-  const purpose = calibrating;
-  calibrationDraft = null;
-  calibrating = null;
+  const draft = tools.calibrationDraft;
+  const purpose = tools.calibrating;
+  tools.calibrationDraft = null;
+  tools.calibrating = null;
   updateCalibrationUI();
   if (!draft || !purpose) {
     render();
@@ -2855,75 +2847,14 @@ function finishCalibration() {
   applyPlayerSquareLock(); // a fresh calibration re-derives the locked player zoom for this map
 }
 
-function updateCalibrationUI() {
-  controls.gridCalibrate?.classList.toggle("active", calibrating === "grid");
-  controls.measureCalibrate?.classList.toggle("active", calibrating === "measure");
-}
 
-// The "measure one square" calibration is only offered when the grid overlay is off
-// (i.e. the map has its own printed grid to calibrate the ruler against).
-function updateMeasureCalibrateRow() {
-  controls.measureCalibrateRow?.classList.toggle("hidden", state.grid.enabled);
-}
 
-function drawCalibrationDraft() {
-  if (!calibrationDraft) return;
-  const a = calibrationDraft.start;
-  const b = calibrationDraft.end;
-  const ms = state.map.scale || 1;
-  const side = Math.max(Math.abs(b.x - a.x), Math.abs(b.y - a.y));
-  const sx = b.x >= a.x ? 1 : -1;
-  const sy = b.y >= a.y ? 1 : -1;
-  const x0 = Math.min(a.x, a.x + sx * side);
-  const y0 = Math.min(a.y, a.y + sy * side);
-  ctx.save();
-  ctx.fillStyle = "rgba(177, 195, 1, 0.18)";
-  ctx.strokeStyle = "#b1c301";
-  ctx.lineWidth = 2 / (curK * curMs);
-  ctx.setLineDash([6 / (curK * curMs), 4 / (curK * curMs)]);
-  ctx.strokeRect(x0, y0, side, side);
-  ctx.fillRect(x0, y0, side, side);
-  ctx.restore();
-}
 
 /* ----------------------------- area of effect ----------------------------- */
 
-// Draw the live AoE hover template at the current cursor position (native coords).
-// Visible on both GM and player screens via the view broadcast.
-function drawAoeTemplate() {
-  if (!aoeTemplate.visible) return;
-  const x = aoeTemplate.x;
-  const y = aoeTemplate.y;
-  const pxPerFt = measureCellWorld() / FEET_PER_CELL / (state.map.scale || 1);
-  const size = aoeSizeFt * pxPerFt; // size in native px (radius, half-side, or cone length)
-
-  ctx.save();
-  ctx.beginPath();
-  if (aoeShape === "circle") {
-    ctx.arc(x, y, size, 0, Math.PI * 2);
-  } else if (aoeShape === "square") {
-    ctx.rect(x - size / 2, y - size / 2, size, size);
-  } else if (aoeShape === "cone") {
-    // A real triangle: apex at the cursor, two straight edges to a flat far side.
-    const a1 = aoeAngle - AOE_CONE_HALF_ANGLE;
-    const a2 = aoeAngle + AOE_CONE_HALF_ANGLE;
-    ctx.moveTo(x, y);
-    ctx.lineTo(x + Math.cos(a1) * size, y + Math.sin(a1) * size);
-    ctx.lineTo(x + Math.cos(a2) * size, y + Math.sin(a2) * size);
-    ctx.closePath();
-  }
-  ctx.globalAlpha = 0.28;
-  ctx.fillStyle = aoeColor;
-  ctx.fill();
-  ctx.globalAlpha = 0.9;
-  ctx.lineWidth = 2 / (curK * curMs);
-  ctx.strokeStyle = aoeColor;
-  ctx.stroke();
-  ctx.restore();
-}
 
 function setAoeShape(shape) {
-  aoeShape = shape;
+  tools.aoe.shape = shape;
   [
     ["circle", controls.aoeCircle],
     ["square", controls.aoeSquare],
@@ -2937,15 +2868,15 @@ function setAoeShape(shape) {
 function updateAoePresets() {
   const row = controls.aoePresetsRow;
   if (!row) return;
-  const presets = AOE_PRESETS[aoeShape] || [];
+  const presets = AOE_PRESETS[tools.aoe.shape] || [];
   row.innerHTML = "";
   presets.forEach((ft) => {
     const btn = document.createElement("button");
     btn.type = "button";
     btn.textContent = `${ft} ft`;
-    btn.classList.toggle("active", ft === aoeSizeFt);
+    btn.classList.toggle("active", ft === tools.aoe.sizeFt);
     btn.addEventListener("click", () => {
-      aoeSizeFt = ft;
+      tools.aoe.sizeFt = ft;
       if (controls.aoeCustomSize) controls.aoeCustomSize.value = ft;
       updateAoePresets();
       render();
@@ -2961,7 +2892,7 @@ function drawStampDraft() {
   ctx.save();
   ctx.fillStyle = "rgba(127, 182, 166, 0.18)";
   ctx.strokeStyle = "rgba(127, 182, 166, 0.95)";
-  ctx.lineWidth = 2 / (curK * curMs);
+  ctx.lineWidth = 2 / (cur.k * cur.ms);
   drawPolygon(points);
   ctx.fill();
   ctx.stroke();
@@ -3022,8 +2953,8 @@ const TOKEN_TYPE_RING = { player: "#3fb950", npc: "#539bf5", monster: "#e5534b" 
 function drawTokenTypeRing(token, r) {
   const color = TOKEN_TYPE_RING[token.type] || TOKEN_TYPE_RING.monster;
   ctx.beginPath();
-  tokenOutline(token, r + 1.5 / (curK * curMs));
-  ctx.lineWidth = Math.max(1.5, 2.5 / (curK * curMs));
+  tokenOutline(token, r + 1.5 / (cur.k * cur.ms));
+  ctx.lineWidth = Math.max(1.5, 2.5 / (cur.k * cur.ms));
   ctx.strokeStyle = color;
   ctx.stroke();
 }
@@ -3048,7 +2979,7 @@ function drawTokenLabel(token, r, below) {
   if (below) {
     // Sit just under the type ring so the art stays clear and the name is readable.
     ctx.textBaseline = "top";
-    y = token.y + r + 4 / (curK * curMs);
+    y = token.y + r + 4 / (cur.k * cur.ms);
   } else {
     ctx.textBaseline = "middle";
   }
@@ -3063,14 +2994,14 @@ function drawTokenLabel(token, r, below) {
 // the GM and player views. Static (no animation) to stay light on the off-grid power budget.
 function drawActiveTurnRing(token, r) {
   ctx.beginPath();
-  tokenOutline(token, r + 3.5 / (curK * curMs));
-  ctx.lineWidth = Math.max(2, 4 / (curK * curMs));
+  tokenOutline(token, r + 3.5 / (cur.k * cur.ms));
+  ctx.lineWidth = Math.max(2, 4 / (cur.k * cur.ms));
   ctx.strokeStyle = "#ffd24a";
   ctx.stroke();
 }
 
 function drawTokens() {
-  const lineW = Math.max(1, 2 / (curK * curMs));
+  const lineW = Math.max(1, 2 / (cur.k * cur.ms));
   const rot = currentViewRotation();
   const activeTokenId = activeTurnTokenId();
   state.tokens.forEach((token) => {
@@ -3111,8 +3042,8 @@ function drawTokens() {
     // Selection highlight (GM only): an accent outline around the active token.
     if (!isPlayer && token === selectedToken) {
       ctx.beginPath();
-      tokenOutline(token, r + 3 / (curK * curMs));
-      ctx.lineWidth = Math.max(1.5, 3 / (curK * curMs));
+      tokenOutline(token, r + 3 / (cur.k * cur.ms));
+      ctx.lineWidth = Math.max(1.5, 3 / (cur.k * cur.ms));
       ctx.strokeStyle = "#b1c301";
       ctx.stroke();
     }
@@ -3120,8 +3051,8 @@ function drawTokens() {
     // arrow-key movement.
     if (isPlayer && selectedPlayerTokens.includes(token)) {
       ctx.beginPath();
-      tokenOutline(token, r + 3 / (curK * curMs));
-      ctx.lineWidth = Math.max(1.5, 3 / (curK * curMs));
+      tokenOutline(token, r + 3 / (cur.k * cur.ms));
+      ctx.lineWidth = Math.max(1.5, 3 / (cur.k * cur.ms));
       ctx.strokeStyle = "#3ad2e6";
       ctx.stroke();
     }
@@ -3729,9 +3660,9 @@ function drawImages() {
     }
     ctx.drawImage(img, im.x - im.w / 2, im.y - im.h / 2, im.w, im.h);
     if (!isPlayer && im === selectedImage) {
-      ctx.lineWidth = 2 / (curK * curMs);
+      ctx.lineWidth = 2 / (cur.k * cur.ms);
       ctx.strokeStyle = "#b1c301";
-      ctx.setLineDash([8 / (curK * curMs), 5 / (curK * curMs)]);
+      ctx.setLineDash([8 / (cur.k * cur.ms), 5 / (cur.k * cur.ms)]);
       ctx.strokeRect(im.x - im.w / 2, im.y - im.h / 2, im.w, im.h);
     }
     ctx.restore();
@@ -4228,60 +4159,8 @@ function drawPings() {
   ctx.restore();
 }
 
-function drawMeasureLine() {
-  ctx.save();
-  ctx.strokeStyle = "rgba(214,169,77,0.95)";
-  ctx.lineWidth = 2 / (curK * curMs);
-  ctx.setLineDash([8 / (curK * curMs), 6 / (curK * curMs)]);
-  ctx.beginPath();
-  ctx.moveTo(measureLine.start.x, measureLine.start.y);
-  ctx.lineTo(measureLine.end.x, measureLine.end.y);
-  ctx.stroke();
-  ctx.setLineDash([]);
-  [measureLine.start, measureLine.end].forEach((p) => {
-    ctx.beginPath();
-    ctx.arc(p.x, p.y, 4 / (curK * curMs), 0, Math.PI * 2);
-    ctx.fillStyle = "#d6a94d";
-    ctx.fill();
-  });
-  ctx.restore();
-}
 
-// World px that represent one cell for measurement: the live grid when it's on, else the
-// calibrated size (from "measure one square"), else the grid size as a fallback.
-function measureCellWorld() {
-  if (state.grid.enabled && state.grid.size > 0) return state.grid.size;
-  if (state.measure.cellSize > 0) return state.measure.cellSize;
-  return state.grid.size > 0 ? state.grid.size : 0;
-}
 
-function drawMeasureLabel() {
-  const ms = state.map.scale || 1;
-  const dx = (measureLine.end.x - measureLine.start.x) * ms;
-  const dy = (measureLine.end.y - measureLine.start.y) * ms;
-  const worldDist = Math.hypot(dx, dy);
-  const cellW = measureCellWorld();
-  const cells = cellW > 0 ? worldDist / cellW : 0;
-  const unit = MEASURE_UNITS[state.measure.unit] || MEASURE_UNITS.imperial;
-  const dist = cells * unit.perCell;
-  const distStr = state.measure.unit === "metric" ? dist.toFixed(1) : String(Math.round(dist));
-  const label = `${cells.toFixed(1)} cells · ${distStr} ${unit.label}`;
-  const mid = nativeToScreen({
-    x: (measureLine.start.x + measureLine.end.x) / 2,
-    y: (measureLine.start.y + measureLine.end.y) / 2,
-  });
-  ctx.save();
-  ctx.font = "600 13px Inter, sans-serif";
-  ctx.textAlign = "center";
-  ctx.textBaseline = "middle";
-  const padding = 6;
-  const width = ctx.measureText(label).width + padding * 2;
-  ctx.fillStyle = "rgba(12,13,13,0.85)";
-  ctx.fillRect(mid.x - width / 2, mid.y - 24, width, 20);
-  ctx.fillStyle = "#f4e8c8";
-  ctx.fillText(label, mid.x, mid.y - 14);
-  ctx.restore();
-}
 
 /* ----------------------------- pointer input ----------------------------- */
 
@@ -4343,8 +4222,8 @@ function onPointerDown(event) {
   const native = toNativePoint(event);
 
   // Calibration drag (set grid size / measure scale by drawing one square) takes priority.
-  if (calibrating) {
-    calibrationDraft = { start: native, end: native };
+  if (tools.calibrating) {
+    tools.calibrationDraft = { start: native, end: native };
     isDragging = true;
     capturePointer(event.pointerId);
     render();
@@ -4480,11 +4359,11 @@ function onPointerDown(event) {
   }
 
   if (mode === "measure") {
-    measureLine = { start: native, end: native };
+    tools.measureLine = { start: native, end: native };
     isDragging = true;
     capturePointer(event.pointerId);
     render();
-    relay({ type: "measure", line: measureLine });
+    relay({ type: "measure", line: tools.measureLine });
     return;
   }
 
@@ -4549,9 +4428,9 @@ function onPointerMove(event) {
     if (["brush", "eraser"].includes(mode)) render(); // live tool preview
     if (mode === "aoe" && state.imageData) {
       const native = toNativePoint(event);
-      aoeTemplate.x = native.x;
-      aoeTemplate.y = native.y;
-      aoeTemplate.visible = true;
+      tools.aoe.template.x = native.x;
+      tools.aoe.template.y = native.y;
+      tools.aoe.template.visible = true;
       renderAndSyncView();
     }
     // Hint that the player-view frame can be dragged.
@@ -4562,8 +4441,8 @@ function onPointerMove(event) {
     return;
   }
 
-  if (calibrationDraft) {
-    calibrationDraft.end = toNativePoint(event);
+  if (tools.calibrationDraft) {
+    tools.calibrationDraft.end = toNativePoint(event);
     render();
     return;
   }
@@ -4616,10 +4495,10 @@ function onPointerMove(event) {
     return;
   }
 
-  if (measureLine) {
-    measureLine.end = toNativePoint(event);
+  if (tools.measureLine) {
+    tools.measureLine.end = toNativePoint(event);
     render();
-    relay({ type: "measure", line: measureLine });
+    relay({ type: "measure", line: tools.measureLine });
     return;
   }
 
@@ -4662,7 +4541,7 @@ function onPointerUp(event) {
     return;
   }
 
-  if (calibrationDraft) {
+  if (tools.calibrationDraft) {
     finishCalibration();
     releasePointer(event.pointerId);
     isDragging = false;
@@ -4715,8 +4594,8 @@ function onPointerUp(event) {
     renderAndSync(); // persist the player view position
   }
 
-  if (measureLine && mode === "measure") {
-    measureLine = null;
+  if (tools.measureLine && mode === "measure") {
+    tools.measureLine = null;
     render();
     relay({ type: "measure", line: null });
   }
@@ -4735,11 +4614,11 @@ function onWheel(event) {
   if (isPlayer) return;
 
   // Rotate cone when in AoE mode (don't zoom)
-  if (mode === "aoe" && aoeShape === "cone") {
+  if (mode === "aoe" && tools.aoe.shape === "cone") {
     event.preventDefault();
-    aoeAngle += event.deltaY < 0 ? -0.1 : 0.1;
+    tools.aoe.angle += event.deltaY < 0 ? -0.1 : 0.1;
     if (controls.aoeAngleSlider) {
-      const deg = ((aoeAngle * 180 / Math.PI) % 360 + 360) % 360;
+      const deg = ((tools.aoe.angle * 180 / Math.PI) % 360 + 360) % 360;
       controls.aoeAngleSlider.value = Math.round(deg);
     }
     renderAndSyncView();
@@ -5308,8 +5187,8 @@ function drawLights() {
     ctx.beginPath();
     ctx.arc(t.x, t.y, t.light * ppc, 0, Math.PI * 2);
     ctx.strokeStyle = "rgba(255,210,120,0.35)";
-    ctx.lineWidth = 1.5 / (curK * curMs);
-    ctx.setLineDash([5 / (curK * curMs), 6 / (curK * curMs)]);
+    ctx.lineWidth = 1.5 / (cur.k * cur.ms);
+    ctx.setLineDash([5 / (cur.k * cur.ms), 6 / (cur.k * cur.ms)]);
     ctx.stroke();
     ctx.setLineDash([]);
   });
@@ -5319,16 +5198,16 @@ function drawLights() {
     ctx.beginPath();
     ctx.arc(p.x, p.y, rNative, 0, Math.PI * 2);
     ctx.strokeStyle = "rgba(255,210,120,0.45)";
-    ctx.lineWidth = 1.5 / (curK * curMs);
-    ctx.setLineDash([6 / (curK * curMs), 5 / (curK * curMs)]);
+    ctx.lineWidth = 1.5 / (cur.k * cur.ms);
+    ctx.setLineDash([6 / (cur.k * cur.ms), 5 / (cur.k * cur.ms)]);
     ctx.stroke();
     ctx.setLineDash([]);
     ctx.beginPath();
-    ctx.arc(p.x, p.y, 6 / (curK * curMs), 0, Math.PI * 2);
+    ctx.arc(p.x, p.y, 6 / (cur.k * cur.ms), 0, Math.PI * 2);
     ctx.fillStyle = "rgba(255,200,90,0.95)";
     ctx.fill();
     ctx.strokeStyle = "rgba(70,45,0,0.85)";
-    ctx.lineWidth = 1 / (curK * curMs);
+    ctx.lineWidth = 1 / (cur.k * cur.ms);
     ctx.stroke();
   });
   ctx.restore();
@@ -5419,12 +5298,12 @@ function drawCastDebug() {
   ctx.closePath();
   ctx.fillStyle = "rgba(120, 220, 255, 0.16)";
   ctx.fill();
-  ctx.lineWidth = 1.5 / (curK * curMs);
+  ctx.lineWidth = 1.5 / (cur.k * cur.ms);
   ctx.strokeStyle = "rgba(120, 220, 255, 0.85)";
   ctx.stroke();
   // Mark the cast origin.
   ctx.beginPath();
-  ctx.arc(selectedToken.x, selectedToken.y, 4 / (curK * curMs), 0, Math.PI * 2);
+  ctx.arc(selectedToken.x, selectedToken.y, 4 / (cur.k * cur.ms), 0, Math.PI * 2);
   ctx.fillStyle = "rgba(120, 220, 255, 0.95)";
   ctx.fill();
   ctx.restore();
