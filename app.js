@@ -433,12 +433,14 @@ function handleMessage(message, source) {
     }
   }
   if (message.type === "token-drop" && !isPlayer) {
-    // Commit: snap against the GM's authoritative grid, clamp so the snap can't cross a wall,
-    // then broadcast to all displays.
+    // Commit a player move: pick the target cell (nudged to the nearest free one so no two tokens
+    // share a cell), clamp the move to it so it can't cross a wall, then broadcast to all displays.
+    // The GM's own drags don't come through here, so the GM stays free to place anything anywhere.
     const token = state.tokens.find((t) => t.id === message.id);
     if (token) {
       const snapped = snapNative({ x: message.x, y: message.y });
-      const dest = resolveMove({ x: message.x, y: message.y }, snapped);
+      const free = nearestFreeCell(snapped, token);
+      const dest = resolveMove({ x: message.x, y: message.y }, free);
       token.x = dest.x;
       token.y = dest.y;
       renderAndSync();
@@ -4143,7 +4145,28 @@ function cellOccupiedByOther(cellNative, groupSet) {
   return false;
 }
 
-// Step the whole selected set one cell in the held direction, RIGIDLY: every member must clear a full
+const COLLISION_NUDGE_MAX = 5; // how far (in cells) to search outward for a free cell on a blocked drop
+
+// Nearest cell-center to `desired` not held by any token except `movingToken`, searched outward in
+// rings and skipping cells walled off from `desired`. Falls back to `desired` if nothing free is in
+// range (better a rare overlap than flinging a token clear across the map).
+function nearestFreeCell(desired, movingToken) {
+  const group = new Set([movingToken]);
+  if (!cellOccupiedByOther(desired, group)) return desired;
+  const stepPx = gridCellNative();
+  for (let radius = 1; radius <= COLLISION_NUDGE_MAX; radius++) {
+    for (let dx = -radius; dx <= radius; dx++) {
+      for (let dy = -radius; dy <= radius; dy++) {
+        if (Math.max(Math.abs(dx), Math.abs(dy)) !== radius) continue; // only the current ring
+        const cand = { x: desired.x + dx * stepPx, y: desired.y + dy * stepPx };
+        if (cellOccupiedByOther(cand, group)) continue;
+        const reached = resolveMove(desired, cand); // don't nudge through a wall
+        if (Math.abs(reached.x - cand.x) < 1e-6 && Math.abs(reached.y - cand.y) < 1e-6) return cand;
+      }
+    }
+  }
+  return desired;
+}
 // cell (no wall stopping it short) AND land on a cell free of any non-group token, or the entire
 // formation holds. Because the group moves by one uniform vector it can never collide with itself, so
 // occupancy is only tested against non-group tokens. Grabs lazily on the first step that actually
