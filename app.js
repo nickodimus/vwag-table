@@ -4131,30 +4131,46 @@ function glideStepIntervalMs() {
   return 1000 / Math.max(1, PLAYER_MOVE_CELLS_PER_SEC);
 }
 
-// Step the whole selected set one cell in the held direction. In 3a each token is resolved
-// INDEPENDENTLY — a token flush against a wall simply doesn't move while its companions do. (3b makes
-// this rigid.) Grabs lazily on the first cell that actually moves, so holding the whole party into a
-// wall never creates an empty undo step. Streams each moved token to the GM. Returns true if anything
-// moved.
+// True if any token OTHER than the moving group holds the cell containing `cellNative`. v1 treats
+// every token (any type) as occupying its single center cell — multi-cell footprints come later.
+function cellOccupiedByOther(cellNative, groupSet) {
+  const c = snapToGrid(cellNative);
+  for (const t of state.tokens) {
+    if (groupSet.has(t)) continue; // the moving group never blocks itself
+    const tc = snapToGrid({ x: t.x, y: t.y });
+    if (Math.abs(tc.x - c.x) < 1e-6 && Math.abs(tc.y - c.y) < 1e-6) return true;
+  }
+  return false;
+}
+
+// Step the whole selected set one cell in the held direction, RIGIDLY: every member must clear a full
+// cell (no wall stopping it short) AND land on a cell free of any non-group token, or the entire
+// formation holds. Because the group moves by one uniform vector it can never collide with itself, so
+// occupancy is only tested against non-group tokens. Grabs lazily on the first step that actually
+// moves, so holding the party into a wall never creates an empty undo step. Returns true if it moved.
 function glideStepOnce() {
   if (!glideKey || !selectedPlayerTokens.length) return false;
   const delta = { ArrowUp: [0, -1], ArrowDown: [0, 1], ArrowLeft: [-1, 0], ArrowRight: [1, 0] }[glideKey];
   if (!delta) return false;
   const step = gridCellNative();
-  const moves = [];
+  const group = new Set(selectedPlayerTokens);
+  const planned = [];
   for (const token of selectedPlayerTokens) {
     const from = { x: token.x, y: token.y };
     const target = { x: from.x + delta[0] * step, y: from.y + delta[1] * step };
     const dest = resolveMove(from, target);
-    if (Math.abs(dest.x - from.x) < 1e-6 && Math.abs(dest.y - from.y) < 1e-6) continue; // this one blocked
-    moves.push({ token, dest });
+    // A wall stops the step short or slides it: not a clean full cell -> the whole group holds.
+    if (Math.abs(dest.x - target.x) > 1e-6 || Math.abs(dest.y - target.y) > 1e-6) return false;
+    // A non-group token already holds the destination cell -> the whole group holds.
+    if (cellOccupiedByOther(target, group)) return false;
+    planned.push({ token, dest: target });
   }
-  if (!moves.length) return false; // whole group blocked this step
+  if (!planned.length) return false;
   if (!glideGrabbed) {
     glideGrabbed = true;
-    relay({ type: "token-grab", id: moves[0].token.id }); // one history snapshot for the whole march
+    relay({ type: "token-grab", id: planned[0].token.id }); // one history snapshot for the whole march
   }
-  for (const { token, dest } of moves) {
+  for (const { token, dest } of planned) {
     token.x = dest.x;
     token.y = dest.y;
     // Relay directly per token — glide steps are already rate-limited (6/sec), so per-frame
