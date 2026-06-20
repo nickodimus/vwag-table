@@ -260,6 +260,14 @@ const tools = {
 // cur.ms = map.scale. Ephemeral render cache; not part of the saved `state` document.
 const cur = { k: 1, ms: 1 };
 
+// Orchestration hooks — wired once at startup (app.js) so feature modules can trigger a redraw, a
+// redraw+sync, or a relay without importing the render/sync layer (which is split out last, step 14).
+const hooks = { render: () => {}, renderAndSync: () => {}, relay: () => {} };
+
+// GM Move-mode selection of non-token objects, read by the annotation draws (to ring the selected
+// item) and written by the Move-mode handlers. Ephemeral; not part of the saved `state` document.
+const sel = { image: null, note: null };
+
 // Each floor is its own map (image + fog + tokens + stairs + view). The top-level
 // imageData/fog/tokens/stairs/view fields below always mirror the CURRENT floor so the
 // render/fog/token code can stay floor-agnostic; captureCurrentFloor()/applyFloor() swap
@@ -357,4 +365,6 @@ export {
   playerCam,
   tools,
   cur,
+  hooks,
+  sel,
 };
