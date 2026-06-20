@@ -3686,9 +3686,10 @@ function drawTokens() {
   });
 }
 
-function hitToken(native) {
+function hitToken(native, filter) {
   for (let i = state.tokens.length - 1; i >= 0; i--) {
     const token = state.tokens[i];
+    if (filter && !filter(token)) continue; // skip tokens the caller isn't allowed to grab
     const r = tokenRadius(token);
     if (tokenIsSquare(token)) {
       if (Math.abs(native.x - token.x) <= r && Math.abs(native.y - token.y) <= r) return token;
@@ -4664,12 +4665,13 @@ function drawMeasureLabel() {
 function onPointerDown(event) {
   lastPointer = { clientX: event.clientX, clientY: event.clientY };
 
-  // Player display: tokens can be picked up and moved by touch; everything else stays
-  // GM-driven. A touch on a token grabs it for dragging; empty space does nothing
-  // (players never create tokens or edit fog).
+  // Player display: only PLAYER-type tokens can be picked up and moved by touch. NPC and
+  // monster tokens are GM-controlled and inert here — a touch on one does nothing. Empty space
+  // does nothing either (players never create tokens, edit fog, or move the GM's pieces). A
+  // player token sitting under a monster token is still grabbable: the filter skips the monster.
   if (isPlayer) {
     const native = toNativePoint(event);
-    const hit = hitToken(native);
+    const hit = hitToken(native, (t) => t.type === "player");
     if (hit) {
       // On touch/pen, stop the browser from claiming the gesture (scroll/cancel) for itself.
       if (event.pointerType !== "mouse") event.preventDefault();
