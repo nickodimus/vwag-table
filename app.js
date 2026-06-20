@@ -344,6 +344,11 @@ let followParty = false; // player-screen follow-camera: when on, the view track
 let followFitZoom = false; // when on (with follow), also auto-zoom to fit the whole party in frame
 const FOLLOW_FIT_PADDING = 0.9; // fraction of the viewport the party box should fill (tunable feel)
 const FOLLOW_FIT_MIN_CELLS = 8; // never frame tighter than this many cells — keeps context, caps zoom-in
+const CAM_EASE = 0.15; // follow-camera smoothing: fraction of the gap closed per frame (higher = snappier)
+const CAM_EASE_EPS = 0.5; // px: how close (center) counts as "arrived" so the easing loop can stop
+const CAM_EASE_K_EPS = 0.001; // scale: how close (zoom) counts as "arrived"
+let camEase = null; // current eased camera {cx,cy,k} that glides toward the follow target, or null
+let camEaseRaf = 0; // rAF handle for the on-demand camera-easing loop (0 = stopped)
 let tokenImageData = ""; // image applied to newly placed tokens (data URL), authoring default
 const tokenImageCache = new Map(); // data URL -> HTMLImageElement, so token art draws each frame
 
@@ -2020,6 +2025,7 @@ function loadSnapshot(snapshot) {
     refreshFloorUI();
     updateInitiativeUI();
     render();
+    ensureCameraLoop(); // a sync may have moved the party — glide the follow camera to it
   };
 
   if (state.imageData) {
@@ -2721,6 +2727,41 @@ function followView(rect, base, ms) {
   return { cx: (minX + maxX) / 2, cy: (minY + maxY) / 2, k };
 }
 
+// --- Follow-camera easing -------------------------------------------------------------------------
+// The follow camera glides toward followView()'s target instead of snapping to it: each frame the eased
+// camera closes a fraction of the gap (center + zoom). An on-demand rAF loop runs while catching up and
+// stops once settled, so there's no idle power cost. viewTransform reads camEase; the movement hooks
+// (glide, drag, sync, toggle) call ensureCameraLoop() to (re)start it when the party moves.
+function tickCamera() {
+  camEaseRaf = 0;
+  if (!isPlayer || !followParty) { camEase = null; return; }
+  const rect = canvas.getBoundingClientRect();
+  const v = activeView();
+  const ms = state.map.scale || 1;
+  const target = followView(rect, v, ms);
+  if (!target) { camEase = null; return; }
+  if (!camEase) camEase = { ...target }; // first frame after enable: snap to the party, then ease
+  camEase.cx += (target.cx - camEase.cx) * CAM_EASE;
+  camEase.cy += (target.cy - camEase.cy) * CAM_EASE;
+  camEase.k += (target.k - camEase.k) * CAM_EASE;
+  const arrived =
+    Math.abs(target.cx - camEase.cx) < CAM_EASE_EPS &&
+    Math.abs(target.cy - camEase.cy) < CAM_EASE_EPS &&
+    Math.abs(target.k - camEase.k) < CAM_EASE_K_EPS;
+  if (arrived) camEase = { ...target }; // settle exactly so it stops drifting
+  render(); // draws through viewTransform, which reads camEase
+  if (!arrived) camEaseRaf = requestAnimationFrame(tickCamera);
+}
+
+function ensureCameraLoop() {
+  if (isPlayer && followParty && !camEaseRaf) camEaseRaf = requestAnimationFrame(tickCamera);
+}
+
+function stopCameraLoop() {
+  if (camEaseRaf) { cancelAnimationFrame(camEaseRaf); camEaseRaf = 0; }
+  camEase = null;
+}
+
 function worldDims() {
   return { w: state.imageWidth * state.map.scale, h: state.imageHeight * state.map.scale };
 }
@@ -2880,8 +2921,11 @@ function viewTransform() {
   const v = activeView();
   const ms = state.map.scale || 1;
   let cx = v.cx, cy = v.cy, k = v.scale;
-  const follow = followView(rect, v, ms); // player follow-cam override (null when off / no party)
-  if (follow) { cx = follow.cx; cy = follow.cy; k = follow.k; }
+  const target = followView(rect, v, ms); // player follow-cam target (null when off / no party)
+  if (target) {
+    const eff = camEase || target; // glide toward the target; fall back to it before easing starts
+    cx = eff.cx; cy = eff.cy; k = eff.k;
+  }
   return {
     rect,
     k,
@@ -4242,6 +4286,7 @@ function glideStepOnce() {
     relay({ type: "token-move", id: token.id, x: dest.x, y: dest.y });
   }
   render(); // immediate local feedback
+  ensureCameraLoop(); // glide the follow camera toward the party's new position
   return true;
 }
 
@@ -5174,6 +5219,7 @@ function onPointerMove(event) {
         }
         render();
         streamGroupMove();
+        ensureCameraLoop(); // glide the follow camera as the party is dragged
       }
     } else if (playerMarquee) {
       const p = clientToCanvasPoint(event);
@@ -5464,12 +5510,14 @@ function onKeyDown(event) {
     }
     if (event.key === "c" || event.key === "C") {
       followParty = !followParty; // toggle the party follow-camera
+      if (followParty) ensureCameraLoop(); else stopCameraLoop();
       render();
       return;
     }
     if (event.key === "z" || event.key === "Z") {
       followFitZoom = !followFitZoom; // toggle fit-to-party zoom
       if (followFitZoom) followParty = true; // fitting implies following the party
+      if (followParty) ensureCameraLoop(); else stopCameraLoop();
       render();
       return;
     }
