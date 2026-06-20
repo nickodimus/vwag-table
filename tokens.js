@@ -9,7 +9,7 @@ import {
   ctx, cur, isPlayer, sel, state,
 } from "./state.js";
 import {
-  currentViewRotation, gridCellNative, keepUpright, tokenRadius,
+  currentViewRotation, gridCellNative, keepUpright, tokenRadius, pointInPolygon,
 } from "./geometry.js";
 import {
   getTokenImage,
@@ -17,6 +17,9 @@ import {
 import {
   activeTurnTokenId,
 } from "./initiative.js";
+import {
+  playerVisionPolygons,
+} from "./vision.js";
 
 const TOKEN_TYPE_RING = { player: "#3fb950", npc: "#539bf5", monster: "#e5534b" };
 
@@ -90,7 +93,19 @@ function drawTokens() {
   const lineW = Math.max(1, 2 / (cur.k * cur.ms));
   const rot = currentViewRotation();
   const activeTokenId = activeTurnTokenId();
+  // Player screen with line-of-sight on: creatures are only drawn when they sit inside the party's
+  // live vision. The map itself stays dim-remembered through explored memory, but a creature must not
+  // linger on a remembered-but-now-occluded tile (e.g. after a wall drops between it and the party).
+  // Player/party tokens always draw — you can see your own party on the board.
+  const visionPolys = isPlayer && state.los.enabled ? playerVisionPolygons() : null;
   state.tokens.forEach((token) => {
+    if (
+      visionPolys &&
+      token.type !== "player" &&
+      !visionPolys.some((poly) => pointInPolygon({ x: token.x, y: token.y }, poly))
+    ) {
+      return; // occluded creature — not currently visible to the party, so skip on the player view
+    }
     const r = tokenRadius(token);
     ctx.save();
     keepUpright(token.x, token.y, rot); // art + label stay upright when the map is rotated
