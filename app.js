@@ -563,6 +563,7 @@ function setup() {
 
   watchCanvasSize();
   window.addEventListener("keydown", onKeyDown);
+  window.addEventListener("keyup", onKeyUp);
 
   // Suppress the middle-click autoscroll widget so middle-drag can pan instead.
   canvas.addEventListener("mousedown", (event) => {
@@ -4097,26 +4098,108 @@ function nudgeSelectedToken(key) {
   renderAndSync();
 }
 
-// Player-screen counterpart to nudgeSelectedToken: move the selected PLAYER token one grid cell in
-// the arrow direction. Unlike the GM nudge (free, omnipotent), this routes through resolveMove so
-// walls, doors, and the map boundary stop or slide the step, then commits to the GM authoritatively
-// — token-grab snapshots one undo step, token-drop snaps + clamps against the grid and broadcasts.
-function arrowMovePlayerToken(key) {
+// --- Player movement clock (1b) -----------------------------------------------------------------
+// Hold an arrow and the selected PLAYER token walks at a fixed RATE. The cadence is driven by a
+// requestAnimationFrame time-accumulator (the standard fixed-timestep game-loop pattern), so the
+// speed is frame-rate independent: PLAYER_MOVE_CELLS_PER_SEC means the same on a 60Hz or 144Hz
+// panel. The loop is on-demand — it runs only during a glide, then stops — to spare the solar power
+// budget. Each cell-step is collision-resolved like a drag, and the whole march commits to the GM as
+// a single token-grab -> token-drop pair, so holding down a hall is one undo step.
+//
+// Scope note: this is the CADENCE clock only (cells per SECOND, presentation). The per-turn movement
+// BUDGET (cells per TURN, i.e. creature speed) is a separate rules layer that will arrive later as
+// VWAG creature stats and gate this clock — deliberately NOT built here.
+
+const PLAYER_MOVE_CELLS_PER_SEC = 6; // tunable walk speed (~one D&D 30ft move per 0.75s)
+const GLIDE_MAX_CATCHUP_STEPS = 3;   // cap cells stepped per frame after a hitch (anti spiral-of-death)
+let glideKey = null;      // arrow key currently driving the glide (null = no glide active)
+let glideGrabbed = false; // a token-grab is outstanding, so a token-drop is owed on stop
+let glideRaf = 0;         // rAF handle for the on-demand movement loop (0 = stopped)
+let glideLastT = 0;       // previous tick timestamp (performance.now) for the dt accumulator
+let glideAccum = 0;       // real time (ms) accrued but not yet spent on whole cell-steps
+
+function glideStepIntervalMs() {
+  return 1000 / Math.max(1, PLAYER_MOVE_CELLS_PER_SEC);
+}
+
+// Move the selected player token one cell in the held direction, collision-resolved, and stream the
+// live position to the GM. Grabs lazily on the first cell that actually moves (so holding flush into
+// a wall never creates an empty undo step). Returns true if the token moved.
+function glideStepOnce() {
   const token = selectedPlayerToken;
-  if (!token) return;
-  const delta = { ArrowUp: [0, -1], ArrowDown: [0, 1], ArrowLeft: [-1, 0], ArrowRight: [1, 0] }[key];
-  if (!delta) return;
+  if (!token || !glideKey) return false;
+  const delta = { ArrowUp: [0, -1], ArrowDown: [0, 1], ArrowLeft: [-1, 0], ArrowRight: [1, 0] }[glideKey];
+  if (!delta) return false;
   const step = gridCellNative();
   const from = { x: token.x, y: token.y };
   const target = { x: from.x + delta[0] * step, y: from.y + delta[1] * step };
   const dest = resolveMove(from, target);
-  // Flush against a wall with nowhere to slide: nothing moves, so don't churn the GM with a no-op.
-  if (Math.abs(dest.x - from.x) < 1e-6 && Math.abs(dest.y - from.y) < 1e-6) return;
+  if (Math.abs(dest.x - from.x) < 1e-6 && Math.abs(dest.y - from.y) < 1e-6) return false; // blocked
+  if (!glideGrabbed) {
+    glideGrabbed = true;
+    relay({ type: "token-grab", id: token.id }); // one history snapshot for the whole march
+  }
   token.x = dest.x;
   token.y = dest.y;
-  render(); // immediate local feedback before the authoritative round-trip
-  relay({ type: "token-grab", id: token.id }); // one history snapshot on the GM
-  relay({ type: "token-drop", id: token.id, x: dest.x, y: dest.y }); // GM snaps, clamps, broadcasts
+  render();                                  // immediate local feedback
+  streamTokenMove(token.id, dest.x, dest.y); // mirror to the GM, coalesced to one msg/frame
+  return true;
+}
+
+// Begin or redirect a glide. The first step fires instantly so a press responds with no initial
+// delay; the rAF loop then maintains the rate.
+function startGlide(key) {
+  if (!selectedPlayerToken) return;
+  glideKey = key;
+  glideStepOnce();
+  glideLastT = performance.now();
+  glideAccum = 0;
+  if (!glideRaf) glideRaf = requestAnimationFrame(glideTick);
+}
+
+// rAF loop: bank real elapsed time and spend it on whole cell-steps at the configured rate, frame-
+// rate independent. The catch-up cap keeps a resumed/backgrounded tab from teleporting the token.
+function glideTick(now) {
+  glideRaf = 0;
+  if (!glideKey || !selectedPlayerToken) { stopGlide(true); return; }
+  const interval = glideStepIntervalMs();
+  glideAccum += now - glideLastT;
+  glideLastT = now;
+  let steps = 0;
+  while (glideAccum >= interval && steps < GLIDE_MAX_CATCHUP_STEPS) {
+    glideStepOnce(); // a flush-against-wall step is a harmless no-op; the clock keeps ticking
+    glideAccum -= interval;
+    steps++;
+  }
+  if (glideAccum > interval) glideAccum = interval; // discard time owed beyond the cap
+  glideRaf = requestAnimationFrame(glideTick);
+}
+
+// End the glide and commit the final position authoritatively (token-drop = snap + clamp + broadcast),
+// pairing the single grab into one undo step. Pass skipCommit=true only when tearing down because the
+// selection vanished (nothing to drop).
+function stopGlide(skipCommit) {
+  if (glideRaf) { cancelAnimationFrame(glideRaf); glideRaf = 0; }
+  glideKey = null;
+  glideAccum = 0;
+  if (glideGrabbed) {
+    glideGrabbed = false;
+    if (tokenMoveRaf) { cancelAnimationFrame(tokenMoveRaf); tokenMoveRaf = 0; } // cancel queued stream
+    pendingTokenMove = null;                                                     // so the drop is final
+    if (!skipCommit && selectedPlayerToken) {
+      relay({ type: "token-drop", id: selectedPlayerToken.id, x: selectedPlayerToken.x, y: selectedPlayerToken.y });
+    }
+  }
+}
+
+// Player keyup: releasing the arrow that's currently driving the glide ends and commits the march.
+// (Releasing a different key — e.g. after switching direction mid-walk — is ignored.)
+function onKeyUp(event) {
+  if (!isPlayer) return;
+  if (event.key === glideKey) {
+    event.preventDefault();
+    stopGlide(false);
+  }
 }
 
 /* ----------------------------- map images & notes ----------------------------- */
@@ -5204,12 +5287,12 @@ function onKeyDown(event) {
       toggleFullscreen();
       return;
     }
-    // Arrow keys move the selected player token one grid cell, collision-resolved locally and
-    // committed to the GM authoritatively. One cell per physical press here; hold-to-repeat is 1b.
+    // Arrow keys walk the selected player token. First press steps instantly; holding marches at
+    // PLAYER_MOVE_CELLS_PER_SEC via the rAF movement clock. One token-grab + one token-drop per march.
     if (selectedPlayerToken && ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(event.key)) {
       event.preventDefault();
-      if (event.repeat) return; // ignore the OS key-repeat in 1a — controlled repeat is 1b's job
-      arrowMovePlayerToken(event.key);
+      if (event.repeat) return; // we drive our own cadence; ignore the OS key-repeat
+      startGlide(event.key);
     }
     return;
   }
