@@ -16,6 +16,7 @@ import {
   DB_NAME, DB_VERSION, MAP_STORE, IMAGE_STORE, MODULE_STORE, SESSION_STORE, TOKEN_STORE, FOG_MAX_EDGE,
   HISTORY_LIMIT, STAIRS_ICON_NEUTRAL, STAIRS_ICON_UP, STAIRS_ICON_DOWN, FEET_PER_CELL, MEASURE_UNITS, PING_DURATION, controls,
   isPlayer, DEFAULT_GM_FOG_OPACITY, INITIAL_FLOOR_ID, makeFloor, state, normalizeInput, uuid, escapeHtml,
+  playerCam,
 } from "./state.js";
 import {
   saveMapRecord, listMapRecords, deleteMapRecord, saveModuleRecord, listModuleRecords, getModuleRecord, deleteModuleRecord, saveSessionRecord,
@@ -23,6 +24,11 @@ import {
   getImage,
 } from "./db.js";
 import { readZip, parseDtt } from "./dtt.js";
+import {
+  simplifyPolyline, distToSegment, pointInPolygon, gridCellNative, pxPerCellNative, cellsToNative, tokenRadius, snapToGrid,
+  snapNative, worldDims, activeView, fitScaleFor, viewTransform, clientToCanvasPoint, currentViewRotation, keepUpright,
+  screenToNative, nativeToScreen, followView, cellWorldPx,
+} from "./geometry.js";
 
 let mapImage = new Image();
 let splashImage = new Image();
@@ -51,14 +57,9 @@ let selectedImage = null; // map image selected in Move mode (GM only)
 let selectedNote = null; // floating note selected in Move mode (GM only)
 let selectedPlayerTokens = []; // player-screen selection SET (tap, shift-click, or marquee; arrow-moves as a group)
 let playerMarquee = null; // active rubber-band box on the player screen, {x0,y0,x1,y1,additive} in canvas px
-let followParty = false; // player-screen follow-camera: when on, the view tracks the party centroid
-let followFitZoom = false; // when on (with follow), also auto-zoom to fit the whole party in frame
-const FOLLOW_FIT_PADDING = 0.9; // fraction of the viewport the party box should fill (tunable feel)
-const FOLLOW_FIT_MIN_CELLS = 8; // never frame tighter than this many cells — keeps context, caps zoom-in
 const CAM_EASE = 0.15; // follow-camera smoothing: fraction of the gap closed per frame (higher = snappier)
 const CAM_EASE_EPS = 0.5; // px: how close (center) counts as "arrived" so the easing loop can stop
 const CAM_EASE_K_EPS = 0.001; // scale: how close (zoom) counts as "arrived"
-let camEase = null; // current eased camera {cx,cy,k} that glides toward the follow target, or null
 let camEaseRaf = 0; // rAF handle for the on-demand camera-easing loop (0 = stopped)
 let tokenImageData = ""; // image applied to newly placed tokens (data URL), authoring default
 const tokenImageCache = new Map(); // data URL -> HTMLImageElement, so token art draws each frame
@@ -790,46 +791,6 @@ function blobToDataURL(blob) {
 // from ~8,600 wall segments to ~1,900 (~20x cheaper cast). Tune here if a map needs more/less.
 const DTT_SIMPLIFY_TOLERANCE = 0.2;
 
-// Iterative Douglas-Peucker: keep endpoints, drop interior points that lie within `tolerance` of
-// the line between their kept neighbors. Iterative (explicit stack) so a 1,000+ point polyline
-// can't overflow recursion. Operates on [[x,y],...] in cell coordinates; compares squared
-// distances to avoid per-point square roots.
-function simplifyPolyline(points, tolerance) {
-  const n = points.length;
-  if (n < 3) return points.map((p) => [p[0], p[1]]);
-  const keep = new Uint8Array(n);
-  keep[0] = keep[n - 1] = 1;
-  const eps2 = tolerance * tolerance;
-  const stack = [[0, n - 1]];
-  while (stack.length) {
-    const seg = stack.pop();
-    const first = seg[0], last = seg[1];
-    const ax = points[first][0], ay = points[first][1];
-    const bx = points[last][0], by = points[last][1];
-    const dx = bx - ax, dy = by - ay;
-    const len2 = dx * dx + dy * dy;
-    let dmax = -1, idx = -1;
-    for (let i = first + 1; i < last; i++) {
-      const px = points[i][0], py = points[i][1];
-      let d2;
-      if (len2 === 0) {
-        const ex = px - ax, ey = py - ay;
-        d2 = ex * ex + ey * ey;
-      } else {
-        const cross = dx * (py - ay) - dy * (px - ax);
-        d2 = (cross * cross) / len2;
-      }
-      if (d2 > dmax) { dmax = d2; idx = i; }
-    }
-    if (dmax > eps2 && idx > first) {
-      keep[idx] = 1;
-      stack.push([first, idx], [idx, last]);
-    }
-  }
-  const out = [];
-  for (let i = 0; i < n; i++) if (keep[i]) out.push([points[i][0], points[i][1]]);
-  return out;
-}
 
 // Map a parsed DTT's six obstacle kinds into the obstacle store. DTT polylines are already open
 // polylines in cell coordinates — the exact shape state.obstacles holds — so geometry maps
@@ -2199,94 +2160,44 @@ function watchCanvasSize() {
   watchDpr();
 }
 
-function activeView() {
-  return isPlayer && !state.playerView.matchDM ? state.playerView : state.view;
-}
 
-// Player follow-camera: computes the effective view (center, and optionally fit-zoom) that tracks the
-// party WITHOUT mutating the stored DM-set view — viewTransform applies it at render time, so the GM's
-// player-view framing (the red box) stays the source of truth and toggling follow off reverts cleanly.
-// Returns {cx, cy, k} to override the base view, or null when not following / no party.
-function followView(rect, base, ms) {
-  if (!isPlayer || !followParty) return null;
-  const players = state.tokens.filter((t) => t.type === "player");
-  if (!players.length) return null;
-
-  // Center-only (2a): track the centroid, keep the DM's zoom.
-  if (!followFitZoom) {
-    let sx = 0, sy = 0;
-    for (const t of players) { sx += t.x; sy += t.y; }
-    return { cx: sx / players.length, cy: sy / players.length, k: base.scale };
-  }
-
-  // Fit-to-party (2b): center on the party's bounding-box center (not the centroid, so a stray token
-  // isn't clipped) and zoom to fit it in the padded viewport. The zoom can pull OUT for a spread party,
-  // but never zooms IN tighter than the DM's player-view framing (the red box) — that's the ceiling.
-  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-  for (const t of players) {
-    const r = tokenRadius(t);
-    minX = Math.min(minX, t.x - r); maxX = Math.max(maxX, t.x + r);
-    minY = Math.min(minY, t.y - r); maxY = Math.max(maxY, t.y + r);
-  }
-  const minSpan = FOLLOW_FIT_MIN_CELLS * gridCellNative(); // floor so one bunched token doesn't fill the screen
-  const boxW = Math.max(maxX - minX, minSpan);
-  const boxH = Math.max(maxY - minY, minSpan);
-  const sFit = Math.min((rect.width * FOLLOW_FIT_PADDING) / boxW, (rect.height * FOLLOW_FIT_PADDING) / boxH);
-  const kMin = fitScaleFor(rect.width, rect.height, base.rotation || 0); // don't zoom out past the whole map
-  const kMax = base.scale; // the DM's player-view framing is the max zoom-in
-  const k = Math.max(kMin, Math.min(kMax, sFit / ms));
-  return { cx: (minX + maxX) / 2, cy: (minY + maxY) / 2, k };
-}
 
 // --- Follow-camera easing -------------------------------------------------------------------------
 // The follow camera glides toward followView()'s target instead of snapping to it: each frame the eased
 // camera closes a fraction of the gap (center + zoom). An on-demand rAF loop runs while catching up and
-// stops once settled, so there's no idle power cost. viewTransform reads camEase; the movement hooks
+// stops once settled, so there's no idle power cost. viewTransform reads playerCam.ease; the movement hooks
 // (glide, drag, sync, toggle) call ensureCameraLoop() to (re)start it when the party moves.
 function tickCamera() {
   camEaseRaf = 0;
-  if (!isPlayer || !followParty) { camEase = null; return; }
+  if (!isPlayer || !playerCam.follow) { playerCam.ease = null; return; }
   const rect = canvas.getBoundingClientRect();
   const v = activeView();
   const ms = state.map.scale || 1;
   const target = followView(rect, v, ms);
-  if (!target) { camEase = null; return; }
-  if (!camEase) camEase = { ...target }; // first frame after enable: snap to the party, then ease
-  camEase.cx += (target.cx - camEase.cx) * CAM_EASE;
-  camEase.cy += (target.cy - camEase.cy) * CAM_EASE;
-  camEase.k += (target.k - camEase.k) * CAM_EASE;
+  if (!target) { playerCam.ease = null; return; }
+  if (!playerCam.ease) playerCam.ease = { ...target }; // first frame after enable: snap to the party, then ease
+  playerCam.ease.cx += (target.cx - playerCam.ease.cx) * CAM_EASE;
+  playerCam.ease.cy += (target.cy - playerCam.ease.cy) * CAM_EASE;
+  playerCam.ease.k += (target.k - playerCam.ease.k) * CAM_EASE;
   const arrived =
-    Math.abs(target.cx - camEase.cx) < CAM_EASE_EPS &&
-    Math.abs(target.cy - camEase.cy) < CAM_EASE_EPS &&
-    Math.abs(target.k - camEase.k) < CAM_EASE_K_EPS;
-  if (arrived) camEase = { ...target }; // settle exactly so it stops drifting
-  render(); // draws through viewTransform, which reads camEase
+    Math.abs(target.cx - playerCam.ease.cx) < CAM_EASE_EPS &&
+    Math.abs(target.cy - playerCam.ease.cy) < CAM_EASE_EPS &&
+    Math.abs(target.k - playerCam.ease.k) < CAM_EASE_K_EPS;
+  if (arrived) playerCam.ease = { ...target }; // settle exactly so it stops drifting
+  render(); // draws through viewTransform, which reads playerCam.ease
   if (!arrived) camEaseRaf = requestAnimationFrame(tickCamera);
 }
 
 function ensureCameraLoop() {
-  if (isPlayer && followParty && !camEaseRaf) camEaseRaf = requestAnimationFrame(tickCamera);
+  if (isPlayer && playerCam.follow && !camEaseRaf) camEaseRaf = requestAnimationFrame(tickCamera);
 }
 
 function stopCameraLoop() {
   if (camEaseRaf) { cancelAnimationFrame(camEaseRaf); camEaseRaf = 0; }
-  camEase = null;
+  playerCam.ease = null;
 }
 
-function worldDims() {
-  return { w: state.imageWidth * state.map.scale, h: state.imageHeight * state.map.scale };
-}
 
-// Scale that fits the (possibly rotated) map into a viewW x viewH box. At 90/270° the
-// map's on-screen footprint has its width and height swapped.
-function fitScaleFor(viewW, viewH, rotationDeg) {
-  const { w, h } = worldDims();
-  if (!w || !h) return 1;
-  const swap = ((((rotationDeg || 0) % 180) + 180) % 180) === 90;
-  const cw = swap ? h : w;
-  const ch = swap ? w : h;
-  return Math.min(viewW / cw, viewH / ch) * 0.96;
-}
 
 function fitMap(sync) {
   if (!state.imageWidth || !state.imageHeight) return;
@@ -2359,10 +2270,6 @@ function startFrameDrag(native, pointerId) {
 
 /* ---- Player-square lock (IRL): keep one grid square a fixed physical size on the TV ---- */
 
-// World px per grid square for the current map (calibrated grid, else the measured cell).
-function cellWorldPx() {
-  return state.grid.size > 0 ? state.grid.size : state.measure.cellSize > 0 ? state.measure.cellSize : 0;
-}
 
 // Screen px that one grid square currently occupies on the player display.
 function playerSquareScreenPx() {
@@ -2427,76 +2334,11 @@ function updateSquareLockUI() {
   if (controls.lockPlayerSquare) controls.lockPlayerSquare.checked = lockPlayerSquare;
 }
 
-function viewTransform() {
-  const rect = canvas.getBoundingClientRect();
-  const v = activeView();
-  const ms = state.map.scale || 1;
-  let cx = v.cx, cy = v.cy, k = v.scale;
-  const target = followView(rect, v, ms); // player follow-cam target (null when off / no party)
-  if (target) {
-    const eff = camEase || target; // glide toward the target; fall back to it before easing starts
-    cx = eff.cx; cy = eff.cy; k = eff.k;
-  }
-  return {
-    rect,
-    k,
-    ms,
-    rot: ((v.rotation || 0) * Math.PI) / 180,
-    cx,
-    cy,
-    centerX: rect.width / 2,
-    centerY: rect.height / 2,
-  };
-}
 
-function clientToCanvasPoint(point) {
-  const rect = canvas.getBoundingClientRect();
-  return { x: point.clientX - rect.left, y: point.clientY - rect.top };
-}
 
-// Current view rotation in radians (the angle the render transform applied). Markers like
-// tokens and stairs counter-rotate by its negative so their art/labels stay screen-upright
-// while their positions still ride the rotated map.
-function currentViewRotation() {
-  return ((activeView().rotation || 0) * Math.PI) / 180;
-}
 
-// Rotate the canvas about a native point so subsequent drawing at absolute coords keeps its
-// position but is drawn upright on screen (cancels the view rotation).
-function keepUpright(cx, cy, rot) {
-  if (!rot) return;
-  ctx.translate(cx, cy);
-  ctx.rotate(-rot);
-  ctx.translate(-cx, -cy);
-}
 
-// Screen <-> native conversions, rotation-aware. The view is centered on (cx,cy) in native
-// coords, scaled by k*ms, and rotated by `rot` about the canvas center.
-function screenToNative(point) {
-  const t = viewTransform();
-  const s = t.k * t.ms;
-  const ox = point.x - t.centerX;
-  const oy = point.y - t.centerY;
-  const cos = Math.cos(-t.rot);
-  const sin = Math.sin(-t.rot);
-  return {
-    x: t.cx + (ox * cos - oy * sin) / s,
-    y: t.cy + (ox * sin + oy * cos) / s,
-  };
-}
 
-function nativeToScreen(n) {
-  const t = viewTransform();
-  const s = t.k * t.ms;
-  const dx = (n.x - t.cx) * s;
-  const dy = (n.y - t.cy) * s;
-  const cos = Math.cos(t.rot);
-  const sin = Math.sin(t.rot);
-  return {
-    x: t.centerX + dx * cos - dy * sin,
-    y: t.centerY + dx * sin + dy * cos,
-  };
-}
 
 function toNativePoint(event) {
   return screenToNative(clientToCanvasPoint(event));
@@ -3136,25 +2978,7 @@ function drawPolygon(points) {
 
 /* ----------------------------- tokens ----------------------------- */
 
-function gridCellNative() {
-  return (state.grid.size || 70) / (state.map.scale || 1);
-}
 
-// Native px that represent one grid cell on the current map (the calibrated grid size, else the
-// measured cell). This is the px<->cell bridge the obstacle/lighting work (steps 4-5) authors
-// against; cellWorldPx() supplies the world cell size so there's no duplicate calibration logic.
-function pxPerCellNative() {
-  const world = cellWorldPx();
-  return world > 0 ? world / (state.map.scale || 1) : 0;
-}
-function nativeToCells(p) {
-  const ppc = pxPerCellNative();
-  return ppc > 0 ? { x: p.x / ppc, y: p.y / ppc } : { x: p.x, y: p.y };
-}
-function cellsToNative(c) {
-  const ppc = pxPerCellNative();
-  return ppc > 0 ? { x: c.x * ppc, y: c.y * ppc } : { x: c.x, y: c.y };
-}
 
 // Derive a module's cell-space declaration (DTT-style) from its grid/measure calibration and its
 // primary floor image, for record processing (splitState + the backfill) where there's no live
@@ -3175,9 +2999,6 @@ function deriveCellGrid(gridObj, measureObj, floor) {
   };
 }
 
-function tokenRadius(token) {
-  return Math.max(6, ((token.cells || 1) * gridCellNative()) / 2);
-}
 
 // Multi-cell tokens render as squares (they fill their grid footprint); single-cell
 // tokens stay circular.
@@ -3323,20 +3144,7 @@ function hitToken(native, filter) {
   return null;
 }
 
-// Snap a native point to the nearest grid cell center (ungated).
-function snapToGrid(native) {
-  const ms = state.map.scale || 1;
-  const size = state.grid.size || 70;
-  const wx = native.x * ms;
-  const wy = native.y * ms;
-  const cx = Math.floor((wx - state.grid.offsetX) / size) * size + state.grid.offsetX + size / 2;
-  const cy = Math.floor((wy - state.grid.offsetY) / size) * size + state.grid.offsetY + size / 2;
-  return { x: cx / ms, y: cy / ms };
-}
 
-function snapNative(native) {
-  return state.grid.snap ? snapToGrid(native) : native;
-}
 
 // Snap an image's center when the image snap toggle is on.
 function snapImage(native) {
@@ -5016,15 +4824,15 @@ function onKeyDown(event) {
       return;
     }
     if (event.key === "c" || event.key === "C") {
-      followParty = !followParty; // toggle the party follow-camera
-      if (followParty) ensureCameraLoop(); else stopCameraLoop();
+      playerCam.follow = !playerCam.follow; // toggle the party follow-camera
+      if (playerCam.follow) ensureCameraLoop(); else stopCameraLoop();
       render();
       return;
     }
     if (event.key === "z" || event.key === "Z") {
-      followFitZoom = !followFitZoom; // toggle fit-to-party zoom
-      if (followFitZoom) followParty = true; // fitting implies following the party
-      if (followParty) ensureCameraLoop(); else stopCameraLoop();
+      playerCam.fitZoom = !playerCam.fitZoom; // toggle fit-to-party zoom
+      if (playerCam.fitZoom) playerCam.follow = true; // fitting implies following the party
+      if (playerCam.follow) ensureCameraLoop(); else stopCameraLoop();
       render();
       return;
     }
@@ -5190,16 +4998,6 @@ function finishObstacle() {
   renderAndSync();
 }
 
-// Shortest distance from a point to a line segment (native px); used for right-click delete.
-function distToSegment(p, a, b) {
-  const dx = b.x - a.x;
-  const dy = b.y - a.y;
-  const len2 = dx * dx + dy * dy;
-  if (len2 === 0) return Math.hypot(p.x - a.x, p.y - a.y);
-  let t = ((p.x - a.x) * dx + (p.y - a.y) * dy) / len2;
-  t = Math.max(0, Math.min(1, t));
-  return Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy));
-}
 
 // The obstacle nearest a native click within a small threshold, or null. Stored points are in
 // cells, so convert to native before measuring.
@@ -5754,17 +5552,5 @@ function toggleFullscreen() {
   }
 }
 
-function pointInPolygon(point, polygon) {
-  let inside = false;
-  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
-    const xi = polygon[i].x;
-    const yi = polygon[i].y;
-    const xj = polygon[j].x;
-    const yj = polygon[j].y;
-    const intersect = yi > point.y !== yj > point.y && point.x < ((xj - xi) * (point.y - yi)) / (yj - yi) + xi;
-    if (intersect) inside = !inside;
-  }
-  return inside;
-}
 
 setup();
