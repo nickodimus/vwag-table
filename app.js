@@ -357,6 +357,8 @@ let draggingImage = null;
 let draggingNote = null;
 let draggingFrame = false; // GM is dragging the player-view frame to pan the player display
 let dragGrab = { dx: 0, dy: 0 }; // offset from cursor to object center while dragging images/notes/frame
+let groupDragOffsets = null; // [{token,dx,dy}] formation captured at grab, for a player group-drag
+let dragGrabbed = false; // a token-grab has been relayed for the current player pointer-drag
 let measureLine = null;
 let pings = [];
 let pingRaf = 0;
@@ -2442,15 +2444,18 @@ function broadcastView() {
 
 // Player -> GM live token streaming: coalesce many pointermove events into at most one
 // position message per animation frame, so a fast drag never floods the channel.
-let tokenMoveRaf = 0;
-let pendingTokenMove = null;
-function streamTokenMove(id, x, y) {
-  pendingTokenMove = { id, x, y };
-  if (tokenMoveRaf) return;
-  tokenMoveRaf = requestAnimationFrame(() => {
-    tokenMoveRaf = 0;
-    if (pendingTokenMove) {
-      relay({ type: "token-move", id: pendingTokenMove.id, x: pendingTokenMove.x, y: pendingTokenMove.y });
+let groupMoveRaf = 0; // coalesces live group-drag streaming to one relay batch per animation frame
+
+// Stream the live positions of every token in the current group-drag to the GM, coalesced to one
+// batch per frame so a fast pointer can't flood the relay. The GM applies each locally (no rebroadcast
+// mid-drag) and reconciles authoritatively on the drops.
+function streamGroupMove() {
+  if (groupMoveRaf || !groupDragOffsets) return;
+  groupMoveRaf = requestAnimationFrame(() => {
+    groupMoveRaf = 0;
+    if (!groupDragOffsets) return;
+    for (const o of groupDragOffsets) {
+      relay({ type: "token-move", id: o.token.id, x: o.token.x, y: o.token.y });
     }
   });
 }
@@ -4152,8 +4157,8 @@ function glideStepOnce() {
   for (const { token, dest } of moves) {
     token.x = dest.x;
     token.y = dest.y;
-    // Relay directly per token — glide steps are already rate-limited (6/sec), and the single-slot
-    // streamTokenMove coalescer can't carry more than one token per frame anyway.
+    // Relay directly per token — glide steps are already rate-limited (6/sec), so per-frame
+    // coalescing isn't needed here.
     relay({ type: "token-move", id: token.id, x: dest.x, y: dest.y });
   }
   render(); // immediate local feedback
@@ -4198,8 +4203,6 @@ function stopGlide(skipCommit) {
   glideAccum = 0;
   if (glideGrabbed) {
     glideGrabbed = false;
-    if (tokenMoveRaf) { cancelAnimationFrame(tokenMoveRaf); tokenMoveRaf = 0; } // cancel queued stream
-    pendingTokenMove = null;                                                     // so the drops are final
     if (!skipCommit) {
       for (const token of selectedPlayerTokens) {
         relay({ type: "token-drop", id: token.id, x: token.x, y: token.y }); // GM snaps, clamps, broadcasts
@@ -4862,13 +4865,15 @@ function onPointerDown(event) {
           : [...selectedPlayerTokens, hit];
         render();
       } else {
-        // Plain tap selects just this token (persists for arrow-move) AND starts a drag; a tap with
-        // no movement just leaves it selected.
-        selectedPlayerTokens = [hit];
-        draggingToken = hit;
+        // Grab a token to drag. Grabbing a token that's ALREADY in the selection keeps the whole
+        // group and drags the formation together; grabbing one that's NOT selected replaces the
+        // selection with just it. A no-move tap on a member leaves the group intact (lazy grab).
+        if (!selectedPlayerTokens.includes(hit)) selectedPlayerTokens = [hit];
+        draggingToken = hit; // the anchor the pointer follows
+        groupDragOffsets = selectedPlayerTokens.map((t) => ({ token: t, dx: t.x - hit.x, dy: t.y - hit.y }));
+        dragGrabbed = false; // grab lazily on the first cell that actually moves
         isDragging = true;
         capturePointer(event.pointerId);
-        relay({ type: "token-grab", id: hit.id }); // GM snapshots history once for the drag
         render();
       }
     } else {
@@ -5069,16 +5074,27 @@ function onPointerDown(event) {
 function onPointerMove(event) {
   lastPointer = { clientX: event.clientX, clientY: event.clientY };
 
-  // Player display: drive a grabbed token locally for feedback, or stretch a marquee; ignore the rest.
+  // Player display: drag the selected formation locally for feedback, or stretch a marquee.
   if (isPlayer) {
-    if (draggingToken) {
-      const native = toNativePoint(event);
-      const dest = resolveMove({ x: draggingToken.x, y: draggingToken.y }, native);
-      draggingToken.x = dest.x;
-      draggingToken.y = dest.y;
-      render();
-      // Stream the live position to the GM (coalesced to one message per frame).
-      streamTokenMove(draggingToken.id, dest.x, dest.y);
+    if (draggingToken && groupDragOffsets) {
+      const anchorTarget = toNativePoint(event);
+      const moved = [];
+      for (const o of groupDragOffsets) {
+        const target = { x: anchorTarget.x + o.dx, y: anchorTarget.y + o.dy };
+        const dest = resolveMove({ x: o.token.x, y: o.token.y }, target);
+        if (Math.abs(dest.x - o.token.x) < 1e-6 && Math.abs(dest.y - o.token.y) < 1e-6) continue;
+        o.token.x = dest.x;
+        o.token.y = dest.y;
+        moved.push(o.token);
+      }
+      if (moved.length) {
+        if (!dragGrabbed) {
+          dragGrabbed = true;
+          relay({ type: "token-grab", id: draggingToken.id }); // one history snapshot for the drag
+        }
+        render();
+        streamGroupMove();
+      }
     } else if (playerMarquee) {
       const p = clientToCanvasPoint(event);
       playerMarquee.x1 = p.x;
@@ -5185,18 +5201,18 @@ function onPointerMove(event) {
 
 function onPointerUp(event) {
   if (isPlayer) {
-    if (draggingToken) {
-      // Cancel any live update still queued for this frame so the drop is the final word —
-      // otherwise a trailing raw position lands after the drop and undoes the snap.
-      if (tokenMoveRaf) {
-        cancelAnimationFrame(tokenMoveRaf);
-        tokenMoveRaf = 0;
+    if (draggingToken && groupDragOffsets) {
+      if (groupMoveRaf) { cancelAnimationFrame(groupMoveRaf); groupMoveRaf = 0; } // drop any queued stream
+      if (dragGrabbed) {
+        // Commit each token's final raw position; the GM snaps + clamps + broadcasts to reconcile
+        // every display. The single grab + these drops are one undo step.
+        for (const o of groupDragOffsets) {
+          relay({ type: "token-drop", id: o.token.id, x: o.token.x, y: o.token.y });
+        }
       }
-      pendingTokenMove = null;
-      // Send the raw drop position; the GM snaps it against the authoritative grid and
-      // broadcasts the canonical position back to reconcile every display.
-      relay({ type: "token-drop", id: draggingToken.id, x: draggingToken.x, y: draggingToken.y });
       draggingToken = null;
+      groupDragOffsets = null;
+      dragGrabbed = false;
     } else if (playerMarquee) {
       finishPlayerMarquee();
       playerMarquee = null;
