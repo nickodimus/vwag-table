@@ -244,6 +244,22 @@ const INITIAL_FLOOR_ID = "floor-1";
 // object across module boundaries. Mutated in place, never reassigned, so live bindings are safe.
 const playerCam = { follow: false, fitZoom: false, ease: null };
 
+// Active drawing-tool state, shared between the input/sync handlers (which write it) and the
+// aoe-measure draw functions (which read it). The `aoe` sub-object is mirrored window-to-window by
+// the sync handlers exactly as the old bare lets were; `measureLine` and the calibration fields are
+// local to each window. Mutated in place, never reassigned. NOT part of the saved `state` document.
+const tools = {
+  aoe: { shape: "circle", color: "#e2603a", sizeFt: 10, angle: -Math.PI / 2, template: { visible: false, x: 0, y: 0 } },
+  measureLine: null,
+  calibrating: null,
+  calibrationDraft: null,
+};
+
+// Last-rendered transform scale, cached by render() and read by every draw function so overlays and
+// markers keep a constant on-screen width regardless of zoom. cur.k = screen px per world px,
+// cur.ms = map.scale. Ephemeral render cache; not part of the saved `state` document.
+const cur = { k: 1, ms: 1 };
+
 // Each floor is its own map (image + fog + tokens + stairs + view). The top-level
 // imageData/fog/tokens/stairs/view fields below always mirror the CURRENT floor so the
 // render/fog/token code can stay floor-agnostic; captureCurrentFloor()/applyFloor() swap
@@ -339,4 +355,6 @@ export {
   HISTORY_LIMIT, STAIRS_ICON_NEUTRAL, STAIRS_ICON_UP, STAIRS_ICON_DOWN, FEET_PER_CELL, MEASURE_UNITS, PING_DURATION, controls,
   isPlayer, DEFAULT_GM_FOG_OPACITY, INITIAL_FLOOR_ID, makeFloor, state, normalizeInput, uuid, escapeHtml,
   playerCam,
+  tools,
+  cur,
 };
