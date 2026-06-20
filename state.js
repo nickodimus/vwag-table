@@ -254,6 +254,10 @@ const tools = {
   calibrating: null,
   calibrationDraft: null,
   lightRadius: 3, // radius (cells) applied to newly placed lights — small=torch, large=firepit
+  drawingRoom: [], // in-progress room polyline (native px) while drawing in Draw Mode
+  drawingObstacle: [], // in-progress obstacle polyline (native px) while drawing in Draw Mode
+  showObstacles: true, // GM-only obstacle overlay toggle ("Walls Visible to DM")
+  obstacleKind: "wall", // kind applied to newly drawn obstacles
 };
 
 // Last-rendered transform scale, cached by render() and read by every draw function so overlays and
