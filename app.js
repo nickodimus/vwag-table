@@ -1215,7 +1215,12 @@ function importObstacles(dtt) {
       obstacles.push({
         id: uuid(),
         kind,
-        points: simplifyPolyline(poly, DTT_SIMPLIFY_TOLERANCE),
+        // Simplify in cell space (tolerance is in cells), then bake to native px so geometry is
+        // locked to the image and independent of the display grid (decouple-walls-from-grid).
+        points: simplifyPolyline(poly, DTT_SIMPLIFY_TOLERANCE).map((p) => {
+          const n = cellsToNative({ x: p[0], y: p[1] });
+          return [n.x, n.y];
+        }),
         ...obstacleDefaults(kind),
         defaultOpen: false,
       });
@@ -1240,14 +1245,15 @@ function dttTokenType(t) {
   return "monster";
 }
 
-// Import placed lights. Positions are cells (1:1 with the store); radii are feet, divided by 5 to
-// cells (DTT is 5 ft/cell). Inactive lights are skipped.
+// Import placed lights. DTT positions are cells and radii are feet (÷5 = cells); both are baked to
+// native px here so lights lock to the image like obstacles. Inactive lights are skipped.
 function importLights(dtt) {
   const lights = [];
   for (const l of (dtt.save && dtt.save.lights) || []) {
     if (l.active === false) continue;
     const p = l.position || {};
-    lights.push({ id: uuid(), x: p.x || 0, y: p.y || 0, radius: (l.radius || 0) / 5 });
+    const n = cellsToNative({ x: p.x || 0, y: p.y || 0 });
+    lights.push({ id: uuid(), x: n.x, y: n.y, radius: ((l.radius || 0) / 5) * pxPerCellNative() });
   }
   state.lights = lights;
 }
@@ -3199,7 +3205,7 @@ function drawObstacleOutlines() {
   ctx.lineWidth = 2.5 / (curK * curMs);
   ctx.lineJoin = "round";
   state.obstacles.forEach((ob) => {
-    const pts = (ob.points || []).map((p) => cellsToNative({ x: p[0], y: p[1] }));
+    const pts = (ob.points || []).map((p) => ({ x: p[0], y: p[1] }));
     if (pts.length < 2) return;
     const openDoor = ob.kind === "door" && ob.open;
     ctx.strokeStyle = openDoor ? "rgba(120,200,140,0.35)" : (OBSTACLE_COLORS[ob.kind] || OBSTACLE_COLORS.wall);
@@ -5294,10 +5300,7 @@ function finishObstacle() {
   const obstacle = {
     id: uuid(),
     kind: obstacleKind,
-    points: drawingObstacle.map((p) => {
-      const c = nativeToCells(p);
-      return [c.x, c.y];
-    }),
+    points: drawingObstacle.map((p) => [p.x, p.y]),
     ...obstacleDefaults(obstacleKind),
     defaultOpen: false,
   };
@@ -5325,7 +5328,7 @@ function hitObstacle(native) {
   let best = null;
   let bestDist = threshold;
   state.obstacles.forEach((ob) => {
-    const pts = (ob.points || []).map((p) => cellsToNative({ x: p[0], y: p[1] }));
+    const pts = (ob.points || []).map((p) => ({ x: p[0], y: p[1] }));
     for (let i = 0; i < pts.length - 1; i++) {
       const d = distToSegment(native, pts[i], pts[i + 1]);
       if (d < bestDist) { bestDist = d; best = ob; }
@@ -5338,8 +5341,8 @@ function hitObstacle(native) {
 // Casting engine (step 5a). A 2D visibility polygon cast from a point against the
 // floor's sight-blocking obstacle segments. Nothing consumes the polygon yet beyond
 // the GM debug overlay below — line-of-sight (5b), fog reveal (5c) and lighting (5d)
-// will ride on this same routine. Coordinates are NATIVE px throughout (obstacle
-// points convert cells->native via cellsToNative; tokens and lights are native).
+// will ride on this same routine. Coordinates are NATIVE px throughout (obstacles, placed
+// lights, tokens, and notes are all stored in native px, locked to the image).
 //
 // Power note (Sky is off-grid solar + Pi): a cast is O(rays x segments) and would
 // cook the budget if run per frame. So the result is cached and only recomputed when
@@ -5363,7 +5366,7 @@ function sightSegments() {
   state.obstacles.forEach((ob) => {
     if (ob.blocksSight === false) return; // windows let sight through
     if (ob.kind === "door" && ob.open) return; // open doors let sight through
-    const pts = (ob.points || []).map((p) => cellsToNative({ x: p[0], y: p[1] }));
+    const pts = (ob.points || []).map((p) => ({ x: p[0], y: p[1] }));
     for (let i = 0; i < pts.length - 1; i++) segs.push({ a: pts[i], b: pts[i + 1] });
   });
   const w = state.imageWidth || 0;
@@ -5400,7 +5403,7 @@ function moveSegments() {
   state.obstacles.forEach((ob) => {
     if (ob.blocksMove === false) return;
     if (ob.kind === "door" && ob.open) return; // open doors let movement through
-    const pts = (ob.points || []).map((p) => cellsToNative({ x: p[0], y: p[1] }));
+    const pts = (ob.points || []).map((p) => ({ x: p[0], y: p[1] }));
     for (let i = 0; i < pts.length - 1; i++) segs.push({ a: pts[i], b: pts[i + 1] });
   });
   const w = state.imageWidth || 0;
@@ -5528,7 +5531,7 @@ function lightSegments() {
   state.obstacles.forEach((ob) => {
     if (ob.blocksLight === false) return;
     if (ob.kind === "door" && ob.open) return; // open doors let light through
-    const pts = (ob.points || []).map((p) => cellsToNative({ x: p[0], y: p[1] }));
+    const pts = (ob.points || []).map((p) => ({ x: p[0], y: p[1] }));
     for (let i = 0; i < pts.length - 1; i++) segs.push({ a: pts[i], b: pts[i + 1] });
   });
   const w = state.imageWidth || 0;
@@ -5543,11 +5546,11 @@ function lightSegments() {
 // Cached wall-occluded visibility polygon cast from a light; lights are static so this is reused
 // until geometry or the light set changes (lightCache is cleared by invalidateCast).
 // Every light source on the floor as { pos (native), radius (native px) }: placed lights
-// (5d-1, stored in cells) and token-carried torches (5d-2, at the token's position).
+// (5d-1, native px) and token-carried torches (5d-2, at the token's position).
 function lightSources() {
   const ppc = pxPerCellNative();
   const sources = [];
-  state.lights.forEach((l) => sources.push({ pos: cellsToNative({ x: l.x, y: l.y }), radius: (l.radius || 0) * ppc }));
+  state.lights.forEach((l) => sources.push({ pos: { x: l.x, y: l.y }, radius: l.radius || 0 }));
   state.tokens.forEach((t) => {
     if ((t.light || 0) > 0) sources.push({ pos: { x: t.x, y: t.y }, radius: t.light * ppc });
   });
@@ -5594,12 +5597,12 @@ function buildLightCoverage() {
   });
 }
 
-// Add / find / delete placed lights (GM only). Stored in cells like obstacles, DTT-import-ready.
+// Add / find / delete placed lights (GM only). Stored in native px (decoupled from the display
+// grid) so they stay locked to the image; radius converts the cell-based lightRadius at place time.
 function addLight(native) {
   if (isPlayer) return;
   pushHistory();
-  const c = nativeToCells(native);
-  state.lights.push({ id: uuid(), x: c.x, y: c.y, radius: lightRadius });
+  state.lights.push({ id: uuid(), x: native.x, y: native.y, radius: lightRadius * pxPerCellNative() });
   invalidateCast();
   renderAndSync();
 }
@@ -5609,7 +5612,7 @@ function hitLight(native) {
   let best = null;
   let bestDist = Math.max(12, ppc / 2);
   state.lights.forEach((light) => {
-    const p = cellsToNative({ x: light.x, y: light.y });
+    const p = { x: light.x, y: light.y };
     const d = Math.hypot(native.x - p.x, native.y - p.y);
     if (d < bestDist) { bestDist = d; best = light; }
   });
@@ -5633,8 +5636,8 @@ function drawLights() {
     ctx.setLineDash([]);
   });
   state.lights.forEach((light) => {
-    const p = cellsToNative({ x: light.x, y: light.y });
-    const rNative = (light.radius || 0) * ppc;
+    const p = { x: light.x, y: light.y };
+    const rNative = light.radius || 0;
     ctx.beginPath();
     ctx.arc(p.x, p.y, rNative, 0, Math.PI * 2);
     ctx.strokeStyle = "rgba(255,210,120,0.45)";
