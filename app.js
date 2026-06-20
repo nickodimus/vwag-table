@@ -2686,44 +2686,39 @@ function activeView() {
   return isPlayer && !state.playerView.matchDM ? state.playerView : state.view;
 }
 
-// Player follow-camera: when on, re-center the active view on the party centroid every render, so the
-// view tracks the party as it walks. With followFitZoom also on, additionally zoom to fit the whole
-// party in frame. Overrides the GM's player-view framing while active — it re-applies on every render,
-// so a GM frame-drag or a sync can't pull it off the party. No-op without player tokens.
-function applyFollowCamera() {
-  if (!isPlayer || !followParty) return;
+// Player follow-camera: computes the effective view (center, and optionally fit-zoom) that tracks the
+// party WITHOUT mutating the stored DM-set view — viewTransform applies it at render time, so the GM's
+// player-view framing (the red box) stays the source of truth and toggling follow off reverts cleanly.
+// Returns {cx, cy, k} to override the base view, or null when not following / no party.
+function followView(rect, base, ms) {
+  if (!isPlayer || !followParty) return null;
   const players = state.tokens.filter((t) => t.type === "player");
-  if (!players.length) return;
-  const v = activeView();
+  if (!players.length) return null;
 
-  // 2a: center on the centroid.
-  let sx = 0, sy = 0;
-  for (const t of players) { sx += t.x; sy += t.y; }
-  v.cx = sx / players.length;
-  v.cy = sy / players.length;
-  if (!followFitZoom) return;
+  // Center-only (2a): track the centroid, keep the DM's zoom.
+  if (!followFitZoom) {
+    let sx = 0, sy = 0;
+    for (const t of players) { sx += t.x; sy += t.y; }
+    return { cx: sx / players.length, cy: sy / players.length, k: base.scale };
+  }
 
-  // 2b: zoom to fit the party's bounding box (token footprints included) into the padded viewport.
+  // Fit-to-party (2b): center on the party's bounding-box center (not the centroid, so a stray token
+  // isn't clipped) and zoom to fit it in the padded viewport. The zoom can pull OUT for a spread party,
+  // but never zooms IN tighter than the DM's player-view framing (the red box) — that's the ceiling.
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
   for (const t of players) {
     const r = tokenRadius(t);
     minX = Math.min(minX, t.x - r); maxX = Math.max(maxX, t.x + r);
     minY = Math.min(minY, t.y - r); maxY = Math.max(maxY, t.y + r);
   }
-  // Center on the BOX center, not the centroid: with the party unevenly spread (one stray, a cluster),
-  // the centroid sits inside the cluster and the fit would push the stray token off the edge. The box
-  // center keeps the whole extent framed with even margin.
-  v.cx = (minX + maxX) / 2;
-  v.cy = (minY + maxY) / 2;
   const minSpan = FOLLOW_FIT_MIN_CELLS * gridCellNative(); // floor so one bunched token doesn't fill the screen
   const boxW = Math.max(maxX - minX, minSpan);
   const boxH = Math.max(maxY - minY, minSpan);
-  const rect = canvas.getBoundingClientRect();
-  const ms = state.map.scale || 1;
-  // On screen, native px scale by k*ms; pick k so the box fits the padded viewport.
   const sFit = Math.min((rect.width * FOLLOW_FIT_PADDING) / boxW, (rect.height * FOLLOW_FIT_PADDING) / boxH);
-  const kMin = fitScaleFor(rect.width, rect.height, v.rotation || 0); // never zoom out past the whole map
-  v.scale = Math.max(kMin, sFit / ms);
+  const kMin = fitScaleFor(rect.width, rect.height, base.rotation || 0); // don't zoom out past the whole map
+  const kMax = base.scale; // the DM's player-view framing is the max zoom-in
+  const k = Math.max(kMin, Math.min(kMax, sFit / ms));
+  return { cx: (minX + maxX) / 2, cy: (minY + maxY) / 2, k };
 }
 
 function worldDims() {
@@ -2884,14 +2879,16 @@ function viewTransform() {
   const rect = canvas.getBoundingClientRect();
   const v = activeView();
   const ms = state.map.scale || 1;
-  const k = v.scale;
+  let cx = v.cx, cy = v.cy, k = v.scale;
+  const follow = followView(rect, v, ms); // player follow-cam override (null when off / no party)
+  if (follow) { cx = follow.cx; cy = follow.cy; k = follow.k; }
   return {
     rect,
     k,
     ms,
     rot: ((v.rotation || 0) * Math.PI) / 180,
-    cx: v.cx,
-    cy: v.cy,
+    cx,
+    cy,
     centerX: rect.width / 2,
     centerY: rect.height / 2,
   };
@@ -2985,8 +2982,6 @@ function render() {
 
   emptyState.classList.toggle("hidden", Boolean(state.imageData));
   if (!state.imageData || !mapImage.complete) return;
-
-  applyFollowCamera(); // player follow-cam: re-center on the party before the transform is read
 
   const t = viewTransform();
   curK = t.k;
