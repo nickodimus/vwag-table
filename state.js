@@ -253,6 +253,7 @@ const tools = {
   measureLine: null,
   calibrating: null,
   calibrationDraft: null,
+  lightRadius: 3, // radius (cells) applied to newly placed lights — small=torch, large=firepit
 };
 
 // Last-rendered transform scale, cached by render() and read by every draw function so overlays and
@@ -267,6 +268,11 @@ const hooks = { render: () => {}, renderAndSync: () => {}, relay: () => {} };
 // GM Move-mode selection of non-token objects, read by the annotation draws (to ring the selected
 // item) and written by the Move-mode handlers. Ephemeral; not part of the saved `state` document.
 const sel = { image: null, note: null };
+// Cast/light visibility caches (promoted from app.js): the cast-polygon cache keyed by version+origin,
+// and the per-frame key sets render() prunes against. Mutated by vision.js, pruned by render.
+const castCache = new Map();
+const castFrameKeys = new Set();
+const lightFrameKeys = new Set();
 // Ephemeral fog raster buffer + in-progress tool drafts (distinct from state.fog, the saved doc).
 // Shared by fog.js (raster) and vision.js (reads resScale). Mutated, never rebound.
 const fogBuf = { dirty: true, resScale: 1, activeStroke: null, stampDraft: null };
@@ -371,4 +377,7 @@ export {
   hooks,
   sel,
   fogBuf,
+  castCache,
+  castFrameKeys,
+  lightFrameKeys,
 };
