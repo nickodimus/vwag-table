@@ -338,6 +338,7 @@ const AOE_CONE_HALF_ANGLE = Math.atan(0.5); // ~26.6°, total spread ≈ 53° (D
 let selectedToken = null; // token highlighted in Move mode for arrow-key nudging (GM only)
 let selectedImage = null; // map image selected in Move mode (GM only)
 let selectedNote = null; // floating note selected in Move mode (GM only)
+let selectedPlayerToken = null; // player-screen token selection (tap-to-select; arrow-key movement)
 let tokenImageData = ""; // image applied to newly placed tokens (data URL), authoring default
 const tokenImageCache = new Map(); // data URL -> HTMLImageElement, so token art draws each frame
 
@@ -1998,6 +1999,11 @@ function loadSnapshot(snapshot) {
     if (!isPlayer) {
       updatePlayerSliderRanges();
       syncControlsFromState();
+    }
+    if (isPlayer && selectedPlayerToken) {
+      // Tokens are fresh objects after a sync; re-point the player selection to the new object by
+      // id (or drop it if the token is gone) so the ring and arrow keys keep working.
+      selectedPlayerToken = state.tokens.find((t) => t.id === selectedPlayerToken.id) || null;
     }
     refreshFloorUI();
     updateInitiativeUI();
@@ -3681,6 +3687,15 @@ function drawTokens() {
       ctx.strokeStyle = "#b1c301";
       ctx.stroke();
     }
+    // Selection highlight (player screen): a cyan outline marking the token the player has tapped,
+    // i.e. the target of arrow-key movement.
+    if (isPlayer && token === selectedPlayerToken) {
+      ctx.beginPath();
+      tokenOutline(token, r + 3 / (curK * curMs));
+      ctx.lineWidth = Math.max(1.5, 3 / (curK * curMs));
+      ctx.strokeStyle = "#3ad2e6";
+      ctx.stroke();
+    }
     if (token.id === activeTokenId) drawActiveTurnRing(token, r);
     ctx.restore();
   });
@@ -4080,6 +4095,28 @@ function nudgeSelectedToken(key) {
   selectedToken.x = snapped.x;
   selectedToken.y = snapped.y;
   renderAndSync();
+}
+
+// Player-screen counterpart to nudgeSelectedToken: move the selected PLAYER token one grid cell in
+// the arrow direction. Unlike the GM nudge (free, omnipotent), this routes through resolveMove so
+// walls, doors, and the map boundary stop or slide the step, then commits to the GM authoritatively
+// — token-grab snapshots one undo step, token-drop snaps + clamps against the grid and broadcasts.
+function arrowMovePlayerToken(key) {
+  const token = selectedPlayerToken;
+  if (!token) return;
+  const delta = { ArrowUp: [0, -1], ArrowDown: [0, 1], ArrowLeft: [-1, 0], ArrowRight: [1, 0] }[key];
+  if (!delta) return;
+  const step = gridCellNative();
+  const from = { x: token.x, y: token.y };
+  const target = { x: from.x + delta[0] * step, y: from.y + delta[1] * step };
+  const dest = resolveMove(from, target);
+  // Flush against a wall with nowhere to slide: nothing moves, so don't churn the GM with a no-op.
+  if (Math.abs(dest.x - from.x) < 1e-6 && Math.abs(dest.y - from.y) < 1e-6) return;
+  token.x = dest.x;
+  token.y = dest.y;
+  render(); // immediate local feedback before the authoritative round-trip
+  relay({ type: "token-grab", id: token.id }); // one history snapshot on the GM
+  relay({ type: "token-drop", id: token.id, x: dest.x, y: dest.y }); // GM snaps, clamps, broadcasts
 }
 
 /* ----------------------------- map images & notes ----------------------------- */
@@ -4675,11 +4712,18 @@ function onPointerDown(event) {
     if (hit) {
       // On touch/pen, stop the browser from claiming the gesture (scroll/cancel) for itself.
       if (event.pointerType !== "mouse") event.preventDefault();
+      // Tapping a player token selects it (the selection persists after release, so the arrow
+      // keys have a target) AND starts a drag — a tap with no movement just leaves it selected.
+      selectedPlayerToken = hit;
       draggingToken = hit;
       isDragging = true;
       capturePointer(event.pointerId);
       // Tell the GM a drag is starting so it snapshots history once for the whole move.
       relay({ type: "token-grab", id: hit.id });
+      render(); // show the selection ring immediately
+    } else if (selectedPlayerToken) {
+      selectedPlayerToken = null; // tap empty space (or a token you can't move) to deselect
+      render();
     }
     return;
   }
@@ -5156,7 +5200,17 @@ function onContextMenu(event) {
 
 function onKeyDown(event) {
   if (isPlayer) {
-    if (event.key === "f" || event.key === "F") toggleFullscreen();
+    if (event.key === "f" || event.key === "F") {
+      toggleFullscreen();
+      return;
+    }
+    // Arrow keys move the selected player token one grid cell, collision-resolved locally and
+    // committed to the GM authoritatively. One cell per physical press here; hold-to-repeat is 1b.
+    if (selectedPlayerToken && ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(event.key)) {
+      event.preventDefault();
+      if (event.repeat) return; // ignore the OS key-repeat in 1a — controlled repeat is 1b's job
+      arrowMovePlayerToken(event.key);
+    }
     return;
   }
 
