@@ -238,6 +238,12 @@ const isPlayer = new URLSearchParams(window.location.search).get("view") === "pl
 const DEFAULT_GM_FOG_OPACITY = 0.3;
 const INITIAL_FLOOR_ID = "floor-1";
 
+// Ephemeral player-screen follow-camera flags — deliberately NOT part of `state`, so they're never
+// synced to the GM or saved to the DB. They live in the hub only so the read side (geometry.js's
+// viewTransform/followView) and the write side (the view actions in app.js / later view.js) share one
+// object across module boundaries. Mutated in place, never reassigned, so live bindings are safe.
+const playerCam = { follow: false, fitZoom: false, ease: null };
+
 // Each floor is its own map (image + fog + tokens + stairs + view). The top-level
 // imageData/fog/tokens/stairs/view fields below always mirror the CURRENT floor so the
 // render/fog/token code can stay floor-agnostic; captureCurrentFloor()/applyFloor() swap
@@ -332,4 +338,5 @@ export {
   DB_NAME, DB_VERSION, MAP_STORE, IMAGE_STORE, MODULE_STORE, SESSION_STORE, TOKEN_STORE, FOG_MAX_EDGE,
   HISTORY_LIMIT, STAIRS_ICON_NEUTRAL, STAIRS_ICON_UP, STAIRS_ICON_DOWN, FEET_PER_CELL, MEASURE_UNITS, PING_DURATION, controls,
   isPlayer, DEFAULT_GM_FOG_OPACITY, INITIAL_FLOOR_ID, makeFloor, state, normalizeInput, uuid, escapeHtml,
+  playerCam,
 };
