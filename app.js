@@ -338,7 +338,8 @@ const AOE_CONE_HALF_ANGLE = Math.atan(0.5); // ~26.6°, total spread ≈ 53° (D
 let selectedToken = null; // token highlighted in Move mode for arrow-key nudging (GM only)
 let selectedImage = null; // map image selected in Move mode (GM only)
 let selectedNote = null; // floating note selected in Move mode (GM only)
-let selectedPlayerToken = null; // player-screen token selection (tap-to-select; arrow-key movement)
+let selectedPlayerTokens = []; // player-screen selection SET (tap, shift-click, or marquee; arrow-moves as a group)
+let playerMarquee = null; // active rubber-band box on the player screen, {x0,y0,x1,y1,additive} in canvas px
 let tokenImageData = ""; // image applied to newly placed tokens (data URL), authoring default
 const tokenImageCache = new Map(); // data URL -> HTMLImageElement, so token art draws each frame
 
@@ -2001,10 +2002,12 @@ function loadSnapshot(snapshot) {
       updatePlayerSliderRanges();
       syncControlsFromState();
     }
-    if (isPlayer && selectedPlayerToken) {
-      // Tokens are fresh objects after a sync; re-point the player selection to the new object by
-      // id (or drop it if the token is gone) so the ring and arrow keys keep working.
-      selectedPlayerToken = state.tokens.find((t) => t.id === selectedPlayerToken.id) || null;
+    if (isPlayer && selectedPlayerTokens.length) {
+      // Tokens are fresh objects after a sync; re-point each selected token to its new object by id
+      // and drop any that the GM removed, so the rings and arrow-march keep working.
+      selectedPlayerTokens = selectedPlayerTokens
+        .map((sel) => state.tokens.find((t) => t.id === sel.id))
+        .filter(Boolean);
     }
     refreshFloorUI();
     updateInitiativeUI();
@@ -2982,6 +2985,7 @@ function render() {
   if (!isPlayer) drawRoomNames();
   if (!isPlayer) drawNotes();
   if (!isPlayer) drawPlayerFrame();
+  if (isPlayer && playerMarquee) drawPlayerMarquee();
 
   // Keep the caches bounded to origins actually used this frame (~live token + light count).
   for (const k of castCache.keys()) if (!castFrameKeys.has(k)) castCache.delete(k);
@@ -3688,9 +3692,9 @@ function drawTokens() {
       ctx.strokeStyle = "#b1c301";
       ctx.stroke();
     }
-    // Selection highlight (player screen): a cyan outline marking the token the player has tapped,
-    // i.e. the target of arrow-key movement.
-    if (isPlayer && token === selectedPlayerToken) {
+    // Selection highlight (player screen): a cyan outline on every selected token — the targets of
+    // arrow-key movement.
+    if (isPlayer && selectedPlayerTokens.includes(token)) {
       ctx.beginPath();
       tokenOutline(token, r + 3 / (curK * curMs));
       ctx.lineWidth = Math.max(1.5, 3 / (curK * curMs));
@@ -4122,34 +4126,44 @@ function glideStepIntervalMs() {
   return 1000 / Math.max(1, PLAYER_MOVE_CELLS_PER_SEC);
 }
 
-// Move the selected player token one cell in the held direction, collision-resolved, and stream the
-// live position to the GM. Grabs lazily on the first cell that actually moves (so holding flush into
-// a wall never creates an empty undo step). Returns true if the token moved.
+// Step the whole selected set one cell in the held direction. In 3a each token is resolved
+// INDEPENDENTLY — a token flush against a wall simply doesn't move while its companions do. (3b makes
+// this rigid.) Grabs lazily on the first cell that actually moves, so holding the whole party into a
+// wall never creates an empty undo step. Streams each moved token to the GM. Returns true if anything
+// moved.
 function glideStepOnce() {
-  const token = selectedPlayerToken;
-  if (!token || !glideKey) return false;
+  if (!glideKey || !selectedPlayerTokens.length) return false;
   const delta = { ArrowUp: [0, -1], ArrowDown: [0, 1], ArrowLeft: [-1, 0], ArrowRight: [1, 0] }[glideKey];
   if (!delta) return false;
   const step = gridCellNative();
-  const from = { x: token.x, y: token.y };
-  const target = { x: from.x + delta[0] * step, y: from.y + delta[1] * step };
-  const dest = resolveMove(from, target);
-  if (Math.abs(dest.x - from.x) < 1e-6 && Math.abs(dest.y - from.y) < 1e-6) return false; // blocked
+  const moves = [];
+  for (const token of selectedPlayerTokens) {
+    const from = { x: token.x, y: token.y };
+    const target = { x: from.x + delta[0] * step, y: from.y + delta[1] * step };
+    const dest = resolveMove(from, target);
+    if (Math.abs(dest.x - from.x) < 1e-6 && Math.abs(dest.y - from.y) < 1e-6) continue; // this one blocked
+    moves.push({ token, dest });
+  }
+  if (!moves.length) return false; // whole group blocked this step
   if (!glideGrabbed) {
     glideGrabbed = true;
-    relay({ type: "token-grab", id: token.id }); // one history snapshot for the whole march
+    relay({ type: "token-grab", id: moves[0].token.id }); // one history snapshot for the whole march
   }
-  token.x = dest.x;
-  token.y = dest.y;
-  render();                                  // immediate local feedback
-  streamTokenMove(token.id, dest.x, dest.y); // mirror to the GM, coalesced to one msg/frame
+  for (const { token, dest } of moves) {
+    token.x = dest.x;
+    token.y = dest.y;
+    // Relay directly per token — glide steps are already rate-limited (6/sec), and the single-slot
+    // streamTokenMove coalescer can't carry more than one token per frame anyway.
+    relay({ type: "token-move", id: token.id, x: dest.x, y: dest.y });
+  }
+  render(); // immediate local feedback
   return true;
 }
 
 // Begin or redirect a glide. The first step fires instantly so a press responds with no initial
 // delay; the rAF loop then maintains the rate.
 function startGlide(key) {
-  if (!selectedPlayerToken) return;
+  if (!selectedPlayerTokens.length) return;
   glideKey = key;
   glideStepOnce();
   glideLastT = performance.now();
@@ -4158,10 +4172,10 @@ function startGlide(key) {
 }
 
 // rAF loop: bank real elapsed time and spend it on whole cell-steps at the configured rate, frame-
-// rate independent. The catch-up cap keeps a resumed/backgrounded tab from teleporting the token.
+// rate independent. The catch-up cap keeps a resumed/backgrounded tab from teleporting the tokens.
 function glideTick(now) {
   glideRaf = 0;
-  if (!glideKey || !selectedPlayerToken) { stopGlide(true); return; }
+  if (!glideKey || !selectedPlayerTokens.length) { stopGlide(true); return; }
   const interval = glideStepIntervalMs();
   glideAccum += now - glideLastT;
   glideLastT = now;
@@ -4185,9 +4199,11 @@ function stopGlide(skipCommit) {
   if (glideGrabbed) {
     glideGrabbed = false;
     if (tokenMoveRaf) { cancelAnimationFrame(tokenMoveRaf); tokenMoveRaf = 0; } // cancel queued stream
-    pendingTokenMove = null;                                                     // so the drop is final
-    if (!skipCommit && selectedPlayerToken) {
-      relay({ type: "token-drop", id: selectedPlayerToken.id, x: selectedPlayerToken.x, y: selectedPlayerToken.y });
+    pendingTokenMove = null;                                                     // so the drops are final
+    if (!skipCommit) {
+      for (const token of selectedPlayerTokens) {
+        relay({ type: "token-drop", id: token.id, x: token.x, y: token.y }); // GM snaps, clamps, broadcasts
+      }
     }
   }
 }
@@ -4200,6 +4216,50 @@ function onKeyUp(event) {
     event.preventDefault();
     stopGlide(false);
   }
+}
+
+// Resolve a finished player marquee into a selection. A box with real area selects every player
+// token whose center projects inside it (additive when shift was held at the start); a no-drag tap
+// just clears the selection (a shift-tap leaves it alone).
+function finishPlayerMarquee() {
+  const m = playerMarquee;
+  if (!m) return;
+  const minX = Math.min(m.x0, m.x1), maxX = Math.max(m.x0, m.x1);
+  const minY = Math.min(m.y0, m.y1), maxY = Math.max(m.y0, m.y1);
+  const dragged = maxX - minX > 4 || maxY - minY > 4;
+  if (!dragged) {
+    if (!m.additive) { selectedPlayerTokens = []; render(); } // empty-space tap clears
+    return;
+  }
+  const inBox = state.tokens.filter((t) => {
+    if (t.type !== "player") return false;
+    const s = nativeToScreen({ x: t.x, y: t.y });
+    return s.x >= minX && s.x <= maxX && s.y >= minY && s.y <= maxY;
+  });
+  if (m.additive) {
+    const set = new Set(selectedPlayerTokens);
+    inBox.forEach((t) => set.add(t));
+    selectedPlayerTokens = [...set];
+  } else {
+    selectedPlayerTokens = inBox;
+  }
+  render();
+}
+
+// Draw the rubber-band box in screen space (canvas px), matching the cyan selection accent.
+function drawPlayerMarquee() {
+  const m = playerMarquee;
+  if (!m) return;
+  const x = Math.min(m.x0, m.x1), y = Math.min(m.y0, m.y1);
+  const w = Math.abs(m.x1 - m.x0), h = Math.abs(m.y1 - m.y0);
+  ctx.save();
+  ctx.fillStyle = "rgba(58,210,230,0.12)";
+  ctx.strokeStyle = "#3ad2e6";
+  ctx.lineWidth = 1.5;
+  ctx.setLineDash([6, 4]);
+  ctx.fillRect(x, y, w, h);
+  ctx.strokeRect(x, y, w, h);
+  ctx.restore();
 }
 
 /* ----------------------------- map images & notes ----------------------------- */
@@ -4795,18 +4855,29 @@ function onPointerDown(event) {
     if (hit) {
       // On touch/pen, stop the browser from claiming the gesture (scroll/cancel) for itself.
       if (event.pointerType !== "mouse") event.preventDefault();
-      // Tapping a player token selects it (the selection persists after release, so the arrow
-      // keys have a target) AND starts a drag — a tap with no movement just leaves it selected.
-      selectedPlayerToken = hit;
-      draggingToken = hit;
+      if (event.shiftKey) {
+        // Shift-click toggles a token in/out of the selection (no drag) — for fixups.
+        selectedPlayerTokens = selectedPlayerTokens.includes(hit)
+          ? selectedPlayerTokens.filter((t) => t !== hit)
+          : [...selectedPlayerTokens, hit];
+        render();
+      } else {
+        // Plain tap selects just this token (persists for arrow-move) AND starts a drag; a tap with
+        // no movement just leaves it selected.
+        selectedPlayerTokens = [hit];
+        draggingToken = hit;
+        isDragging = true;
+        capturePointer(event.pointerId);
+        relay({ type: "token-grab", id: hit.id }); // GM snapshots history once for the drag
+        render();
+      }
+    } else {
+      // Empty space starts a marquee. Shift keeps the current selection and adds the box; without
+      // shift the box replaces the selection (and a no-drag tap clears it — handled on pointer-up).
+      const p = clientToCanvasPoint(event);
+      playerMarquee = { x0: p.x, y0: p.y, x1: p.x, y1: p.y, additive: event.shiftKey };
       isDragging = true;
       capturePointer(event.pointerId);
-      // Tell the GM a drag is starting so it snapshots history once for the whole move.
-      relay({ type: "token-grab", id: hit.id });
-      render(); // show the selection ring immediately
-    } else if (selectedPlayerToken) {
-      selectedPlayerToken = null; // tap empty space (or a token you can't move) to deselect
-      render();
     }
     return;
   }
@@ -4998,7 +5069,7 @@ function onPointerDown(event) {
 function onPointerMove(event) {
   lastPointer = { clientX: event.clientX, clientY: event.clientY };
 
-  // Player display: drive a grabbed token locally for feedback; ignore everything else.
+  // Player display: drive a grabbed token locally for feedback, or stretch a marquee; ignore the rest.
   if (isPlayer) {
     if (draggingToken) {
       const native = toNativePoint(event);
@@ -5008,6 +5079,11 @@ function onPointerMove(event) {
       render();
       // Stream the live position to the GM (coalesced to one message per frame).
       streamTokenMove(draggingToken.id, dest.x, dest.y);
+    } else if (playerMarquee) {
+      const p = clientToCanvasPoint(event);
+      playerMarquee.x1 = p.x;
+      playerMarquee.y1 = p.y;
+      render();
     }
     return;
   }
@@ -5121,6 +5197,9 @@ function onPointerUp(event) {
       // broadcasts the canonical position back to reconcile every display.
       relay({ type: "token-drop", id: draggingToken.id, x: draggingToken.x, y: draggingToken.y });
       draggingToken = null;
+    } else if (playerMarquee) {
+      finishPlayerMarquee();
+      playerMarquee = null;
     }
     isDragging = false;
     return;
@@ -5287,9 +5366,9 @@ function onKeyDown(event) {
       toggleFullscreen();
       return;
     }
-    // Arrow keys walk the selected player token. First press steps instantly; holding marches at
-    // PLAYER_MOVE_CELLS_PER_SEC via the rAF movement clock. One token-grab + one token-drop per march.
-    if (selectedPlayerToken && ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(event.key)) {
+    // Arrow keys walk the selected player token(s). First press steps instantly; holding marches at
+    // PLAYER_MOVE_CELLS_PER_SEC via the rAF movement clock. One token-grab + one drop-per-token per march.
+    if (selectedPlayerTokens.length && ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(event.key)) {
       event.preventDefault();
       if (event.repeat) return; // we drive our own cadence; ignore the OS key-repeat
       startGlide(event.key);
