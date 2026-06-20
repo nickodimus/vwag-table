@@ -45,6 +45,9 @@ import {
 import {
   invalidateCast, rayHit, getVisibilityPolygon, hitLight, drawLights, compositeLoS, castVersion,
 } from "./vision.js";
+import {
+  tokenIsSquare, drawTokens,
+} from "./tokens.js";
 
 // Wire the orchestration hooks now that the render/sync/relay functions exist (all hoisted).
 hooks.render = render;
@@ -62,8 +65,6 @@ let showObstacles = true; // GM-only obstacle overlay toggle ("Walls Visible to 
 // and is mirrored to the player display in real time.
 let aoeSyncQueued = false;
 const AOE_PRESETS = { circle: [5, 10, 15, 20], square: [10, 20, 30], cone: [15, 30] };
-let selectedToken = null; // token highlighted in Move mode for arrow-key nudging (GM only)
-let selectedPlayerTokens = []; // player-screen selection SET (tap, shift-click, or marquee; arrow-moves as a group)
 let playerMarquee = null; // active rubber-band box on the player screen, {x0,y0,x1,y1,additive} in canvas px
 const CAM_EASE = 0.15; // follow-camera smoothing: fraction of the gap closed per frame (higher = snappier)
 const CAM_EASE_EPS = 0.5; // px: how close (center) counts as "arrived" so the easing loop can stop
@@ -468,9 +469,9 @@ function bindControls() {
     if (controls.tokenLightVal) controls.tokenLightVal.textContent = Number(controls.tokenLight.value) || 0;
   });
   controls.tokenSelLight?.addEventListener("input", () => {
-    if (!selectedToken) return;
-    selectedToken.light = Number(controls.tokenSelLight.value) || 0;
-    if (controls.tokenSelLightVal) controls.tokenSelLightVal.textContent = selectedToken.light;
+    if (!sel.token) return;
+    sel.token.light = Number(controls.tokenSelLight.value) || 0;
+    if (controls.tokenSelLightVal) controls.tokenSelLightVal.textContent = sel.token.light;
     renderAndSync();
   });
   controls.darknessEnabled?.addEventListener("input", () => { state.los.darkness = controls.darknessEnabled.checked; renderAndSync(); });
@@ -658,23 +659,23 @@ function bindControls() {
     render(); // notes are GM-only
   });
   controls.tokenSelType?.addEventListener("input", () => {
-    if (!selectedToken) return;
-    selectedToken.type = controls.tokenSelType.value;
+    if (!sel.token) return;
+    sel.token.type = controls.tokenSelType.value;
     renderAndSync();
   });
   controls.tokenSelLabel?.addEventListener("input", () => {
-    if (!selectedToken) return;
-    selectedToken.label = controls.tokenSelLabel.value.trim();
+    if (!sel.token) return;
+    sel.token.label = controls.tokenSelLabel.value.trim();
     renderAndSync();
   });
   controls.tokenSelColor?.addEventListener("input", () => {
-    if (!selectedToken) return;
-    selectedToken.color = controls.tokenSelColor.value;
+    if (!sel.token) return;
+    sel.token.color = controls.tokenSelColor.value;
     renderAndSync();
   });
   controls.tokenSelCells?.addEventListener("input", () => {
-    if (!selectedToken) return;
-    selectedToken.cells = Number(controls.tokenSelCells.value) || 1;
+    if (!sel.token) return;
+    sel.token.cells = Number(controls.tokenSelCells.value) || 1;
     renderAndSync();
   });
   controls.copyDMView.addEventListener("click", () => snapPlayerViewToGM(true));
@@ -1483,10 +1484,10 @@ function loadSnapshot(snapshot) {
       updatePlayerSliderRanges();
       syncControlsFromState();
     }
-    if (isPlayer && selectedPlayerTokens.length) {
+    if (isPlayer && sel.playerTokens.length) {
       // Tokens are fresh objects after a sync; re-point each selected token to its new object by id
       // and drop any that the GM removed, so the rings and arrow-march keep working.
-      selectedPlayerTokens = selectedPlayerTokens
+      sel.playerTokens = sel.playerTokens
         .map((sel) => state.tokens.find((t) => t.id === sel.id))
         .filter(Boolean);
     }
@@ -1638,7 +1639,7 @@ function captureCurrentFloor() {
 
 // Promote a floor record into the active state fields.
 function applyFloor(floor) {
-  selectedToken = sel.image = sel.note = null; // these arrays are about to be replaced
+  sel.token = sel.image = sel.note = null; // these arrays are about to be replaced
   state.currentFloorId = floor.id;
   state.imageId = floor.imageId || "";
   state.imageData = floor.imageData || "";
@@ -1979,7 +1980,7 @@ function setMode(nextMode) {
   drawingRoom = [];
   drawingObstacle = [];
   fogBuf.stampDraft = null;
-  selectedToken = null;
+  sel.token = null;
   sel.image = sel.note = null;
   updateSelectionPanels();
   canvas.style.cursor = ""; // clear any frame-hover cursor
@@ -2798,135 +2799,13 @@ function deriveCellGrid(gridObj, measureObj, floor) {
 }
 
 
-// Multi-cell tokens render as squares (they fill their grid footprint); single-cell
-// tokens stay circular.
-function tokenIsSquare(token) {
-  return (token.cells || 1) > 1;
-}
 
-function tokenOutline(token, r) {
-  if (tokenIsSquare(token)) {
-    ctx.rect(token.x - r, token.y - r, r * 2, r * 2);
-  } else {
-    ctx.arc(token.x, token.y, r, 0, Math.PI * 2);
-  }
-}
 
 // Type -> ring color, so player / npc / monster read at a glance on the board.
-const TOKEN_TYPE_RING = { player: "#3fb950", npc: "#539bf5", monster: "#e5534b" };
 
-// A colored ring just outside a token's outline indicating its type. Drawn for every token
-// on both the GM and player views. Tokens from before typing existed default to monster.
-function drawTokenTypeRing(token, r) {
-  const color = TOKEN_TYPE_RING[token.type] || TOKEN_TYPE_RING.monster;
-  ctx.beginPath();
-  tokenOutline(token, r + 1.5 / (cur.k * cur.ms));
-  ctx.lineWidth = Math.max(1.5, 2.5 / (cur.k * cur.ms));
-  ctx.strokeStyle = color;
-  ctx.stroke();
-}
 
-// Draw a token's label centered in the token, auto-shrinking the font so the whole label
-// fits inside the token (down to a floor), with a light outline so it stays legible over
-// token art as well as flat color.
-function drawTokenLabel(token, r, below) {
-  const text = String(token.label);
-  if (!text) return;
-  ctx.textAlign = "center";
-  ctx.lineJoin = "round";
-  // Centered labels must fit inside the token; labels below have lateral room to breathe.
-  const maxWidth = below ? r * 2.4 : r * 1.7;
-  let fontPx = Math.round(gridCellNative() / 2);
-  ctx.font = `700 ${fontPx}px Inter, sans-serif`;
-  while (fontPx > 6 && ctx.measureText(text).width > maxWidth) {
-    fontPx -= 1;
-    ctx.font = `700 ${fontPx}px Inter, sans-serif`;
-  }
-  let y = token.y;
-  if (below) {
-    // Sit just under the type ring so the art stays clear and the name is readable.
-    ctx.textBaseline = "top";
-    y = token.y + r + 4 / (cur.k * cur.ms);
-  } else {
-    ctx.textBaseline = "middle";
-  }
-  ctx.lineWidth = Math.max(1, fontPx / 6);
-  ctx.strokeStyle = "rgba(255,255,255,0.9)";
-  ctx.strokeText(text, token.x, y);
-  ctx.fillStyle = "#0c0d0d";
-  ctx.fillText(text, token.x, y);
-}
 
-// Bright "whose turn it is" ring, drawn outermost on the active combatant's token on both
-// the GM and player views. Static (no animation) to stay light on the off-grid power budget.
-function drawActiveTurnRing(token, r) {
-  ctx.beginPath();
-  tokenOutline(token, r + 3.5 / (cur.k * cur.ms));
-  ctx.lineWidth = Math.max(2, 4 / (cur.k * cur.ms));
-  ctx.strokeStyle = "#ffd24a";
-  ctx.stroke();
-}
 
-function drawTokens() {
-  const lineW = Math.max(1, 2 / (cur.k * cur.ms));
-  const rot = currentViewRotation();
-  const activeTokenId = activeTurnTokenId();
-  state.tokens.forEach((token) => {
-    const r = tokenRadius(token);
-    ctx.save();
-    keepUpright(token.x, token.y, rot); // art + label stay upright when the map is rotated
-    const img = getTokenImage(token.image);
-    if (img && img.complete && img.naturalWidth) {
-      // Token art: cover-fit the image into the token outline and ring it.
-      ctx.save();
-      ctx.beginPath();
-      tokenOutline(token, r);
-      ctx.clip();
-      const scale = Math.max((2 * r) / img.naturalWidth, (2 * r) / img.naturalHeight);
-      const w = img.naturalWidth * scale;
-      const h = img.naturalHeight * scale;
-      ctx.drawImage(img, token.x - w / 2, token.y - h / 2, w, h);
-      ctx.restore();
-      ctx.beginPath();
-      tokenOutline(token, r);
-      ctx.lineWidth = lineW;
-      ctx.strokeStyle = "rgba(0,0,0,0.65)";
-      ctx.stroke();
-      if (token.label) drawTokenLabel(token, r, true);
-    } else {
-      ctx.beginPath();
-      tokenOutline(token, r);
-      ctx.fillStyle = token.color || "#d6a94d";
-      ctx.globalAlpha = 0.95;
-      ctx.fill();
-      ctx.globalAlpha = 1;
-      ctx.lineWidth = lineW;
-      ctx.strokeStyle = "rgba(0,0,0,0.65)";
-      ctx.stroke();
-      if (token.label) drawTokenLabel(token, r, false);
-    }
-    drawTokenTypeRing(token, r);
-    // Selection highlight (GM only): an accent outline around the active token.
-    if (!isPlayer && token === selectedToken) {
-      ctx.beginPath();
-      tokenOutline(token, r + 3 / (cur.k * cur.ms));
-      ctx.lineWidth = Math.max(1.5, 3 / (cur.k * cur.ms));
-      ctx.strokeStyle = "#b1c301";
-      ctx.stroke();
-    }
-    // Selection highlight (player screen): a cyan outline on every selected token — the targets of
-    // arrow-key movement.
-    if (isPlayer && selectedPlayerTokens.includes(token)) {
-      ctx.beginPath();
-      tokenOutline(token, r + 3 / (cur.k * cur.ms));
-      ctx.lineWidth = Math.max(1.5, 3 / (cur.k * cur.ms));
-      ctx.strokeStyle = "#3ad2e6";
-      ctx.stroke();
-    }
-    if (token.id === activeTokenId) drawActiveTurnRing(token, r);
-    ctx.restore();
-  });
-}
 
 function hitToken(native, filter) {
   for (let i = state.tokens.length - 1; i >= 0; i--) {
@@ -2998,9 +2877,9 @@ function loadTokenImage(event) {
       tokenImageData = data;
       // If a token is selected in Move mode, re-skin it immediately; otherwise this image
       // becomes the default for newly dropped tokens.
-      if (selectedToken) {
+      if (sel.token) {
         pushHistory();
-        selectedToken.image = tokenImageData;
+        sel.token.image = tokenImageData;
         renderAndSync();
       }
       updateTokenImagePreview();
@@ -3012,9 +2891,9 @@ function loadTokenImage(event) {
 
 function clearTokenImage() {
   tokenImageData = "";
-  if (selectedToken && selectedToken.image) {
+  if (sel.token && sel.token.image) {
     pushHistory();
-    selectedToken.image = "";
+    sel.token.image = "";
     renderAndSync();
   }
   updateTokenImagePreview();
@@ -3282,16 +3161,16 @@ async function importPaletteJson(file) {
 }
 
 function nudgeSelectedToken(key) {
-  if (!selectedToken) return;
+  if (!sel.token) return;
   const step = gridCellNative();
   const delta = { ArrowUp: [0, -1], ArrowDown: [0, 1], ArrowLeft: [-1, 0], ArrowRight: [1, 0] }[key];
   if (!delta) return;
   pushHistory();
-  selectedToken.x += delta[0] * step;
-  selectedToken.y += delta[1] * step;
-  const snapped = snapNative(selectedToken);
-  selectedToken.x = snapped.x;
-  selectedToken.y = snapped.y;
+  sel.token.x += delta[0] * step;
+  sel.token.y += delta[1] * step;
+  const snapped = snapNative(sel.token);
+  sel.token.x = snapped.x;
+  sel.token.y = snapped.y;
   renderAndSync();
 }
 
@@ -3358,13 +3237,13 @@ function nearestFreeCell(desired, movingToken) {
 // occupancy is only tested against non-group tokens. Grabs lazily on the first step that actually
 // moves, so holding the party into a wall never creates an empty undo step. Returns true if it moved.
 function glideStepOnce() {
-  if (!glideKey || !selectedPlayerTokens.length) return false;
+  if (!glideKey || !sel.playerTokens.length) return false;
   const delta = { ArrowUp: [0, -1], ArrowDown: [0, 1], ArrowLeft: [-1, 0], ArrowRight: [1, 0] }[glideKey];
   if (!delta) return false;
   const step = gridCellNative();
-  const group = new Set(selectedPlayerTokens);
+  const group = new Set(sel.playerTokens);
   const planned = [];
-  for (const token of selectedPlayerTokens) {
+  for (const token of sel.playerTokens) {
     const from = { x: token.x, y: token.y };
     const target = { x: from.x + delta[0] * step, y: from.y + delta[1] * step };
     const dest = resolveMove(from, target);
@@ -3394,7 +3273,7 @@ function glideStepOnce() {
 // Begin or redirect a glide. The first step fires instantly so a press responds with no initial
 // delay; the rAF loop then maintains the rate.
 function startGlide(key) {
-  if (!selectedPlayerTokens.length) return;
+  if (!sel.playerTokens.length) return;
   glideKey = key;
   glideStepOnce();
   glideLastT = performance.now();
@@ -3406,7 +3285,7 @@ function startGlide(key) {
 // rate independent. The catch-up cap keeps a resumed/backgrounded tab from teleporting the tokens.
 function glideTick(now) {
   glideRaf = 0;
-  if (!glideKey || !selectedPlayerTokens.length) { stopGlide(true); return; }
+  if (!glideKey || !sel.playerTokens.length) { stopGlide(true); return; }
   const interval = glideStepIntervalMs();
   glideAccum += now - glideLastT;
   glideLastT = now;
@@ -3430,7 +3309,7 @@ function stopGlide(skipCommit) {
   if (glideGrabbed) {
     glideGrabbed = false;
     if (!skipCommit) {
-      for (const token of selectedPlayerTokens) {
+      for (const token of sel.playerTokens) {
         relay({ type: "token-drop", id: token.id, x: token.x, y: token.y }); // GM snaps, clamps, broadcasts
       }
     }
@@ -3457,7 +3336,7 @@ function finishPlayerMarquee() {
   const minY = Math.min(m.y0, m.y1), maxY = Math.max(m.y0, m.y1);
   const dragged = maxX - minX > 4 || maxY - minY > 4;
   if (!dragged) {
-    if (!m.additive) { selectedPlayerTokens = []; render(); } // empty-space tap clears
+    if (!m.additive) { sel.playerTokens = []; render(); } // empty-space tap clears
     return;
   }
   const inBox = state.tokens.filter((t) => {
@@ -3466,11 +3345,11 @@ function finishPlayerMarquee() {
     return s.x >= minX && s.x <= maxX && s.y >= minY && s.y <= maxY;
   });
   if (m.additive) {
-    const set = new Set(selectedPlayerTokens);
+    const set = new Set(sel.playerTokens);
     inBox.forEach((t) => set.add(t));
-    selectedPlayerTokens = [...set];
+    sel.playerTokens = [...set];
   } else {
-    selectedPlayerTokens = inBox;
+    sel.playerTokens = inBox;
   }
   render();
 }
@@ -3512,7 +3391,7 @@ function addImageFromDataURL(rawSrc, nx, ny) {
       const pos = snapImage({ x: nx, y: ny });
       const im = { id: uuid(), x: pos.x, y: pos.y, w, h: w / aspect, rotation: 0, src, showPlayers: false };
       state.images.push(im);
-      selectedToken = sel.note = null;
+      sel.token = sel.note = null;
       sel.image = im;
       updateSelectionPanels();
       renderAndSync();
@@ -3536,7 +3415,7 @@ function addNote() {
   pushHistory();
   const note = { id: uuid(), x: state.view.cx, y: state.view.cy, text: text || "Note", scale: 1 };
   state.notes.push(note);
-  selectedToken = sel.image = null;
+  sel.token = sel.image = null;
   sel.note = note;
   updateSelectionPanels();
   render(); // notes are GM-only, no broadcast needed
@@ -3554,14 +3433,14 @@ function editNote(note) {
 function updateSelectionPanels() {
   if (isPlayer) return;
   if (controls.tokenSelPanel) {
-    controls.tokenSelPanel.classList.toggle("hidden", !selectedToken);
-    if (selectedToken) {
-      if (controls.tokenSelType) controls.tokenSelType.value = selectedToken.type || "monster";
-      if (controls.tokenSelLabel) controls.tokenSelLabel.value = selectedToken.label || "";
-      if (controls.tokenSelColor) controls.tokenSelColor.value = selectedToken.color || "#d6a94d";
-      if (controls.tokenSelCells) controls.tokenSelCells.value = selectedToken.cells || 1;
-      if (controls.tokenSelLight) controls.tokenSelLight.value = selectedToken.light || 0;
-      if (controls.tokenSelLightVal) controls.tokenSelLightVal.textContent = selectedToken.light || 0;
+    controls.tokenSelPanel.classList.toggle("hidden", !sel.token);
+    if (sel.token) {
+      if (controls.tokenSelType) controls.tokenSelType.value = sel.token.type || "monster";
+      if (controls.tokenSelLabel) controls.tokenSelLabel.value = sel.token.label || "";
+      if (controls.tokenSelColor) controls.tokenSelColor.value = sel.token.color || "#d6a94d";
+      if (controls.tokenSelCells) controls.tokenSelCells.value = sel.token.cells || 1;
+      if (controls.tokenSelLight) controls.tokenSelLight.value = sel.token.light || 0;
+      if (controls.tokenSelLightVal) controls.tokenSelLightVal.textContent = sel.token.light || 0;
     }
   }
   if (controls.imageSelPanel) {
@@ -3589,7 +3468,7 @@ function deleteTokenOrRoom(native) {
   const token = hitToken(native);
   if (token) {
     pushHistory();
-    if (token === selectedToken) selectedToken = null;
+    if (token === sel.token) sel.token = null;
     state.tokens = state.tokens.filter((item) => item !== token);
     removeCombatantByToken(token.id);
     renderAndSync();
@@ -3800,17 +3679,17 @@ function onPointerDown(event) {
       if (event.pointerType !== "mouse") event.preventDefault();
       if (event.shiftKey) {
         // Shift-click toggles a token in/out of the selection (no drag) — for fixups.
-        selectedPlayerTokens = selectedPlayerTokens.includes(hit)
-          ? selectedPlayerTokens.filter((t) => t !== hit)
+        sel.playerTokens = sel.playerTokens.includes(hit)
+          ? sel.playerTokens.filter((t) => t !== hit)
           : [...selectedPlayerTokens, hit];
         render();
       } else {
         // Grab a token to drag. Grabbing a token that's ALREADY in the selection keeps the whole
         // group and drags the formation together; grabbing one that's NOT selected replaces the
         // selection with just it. A no-move tap on a member leaves the group intact (lazy grab).
-        if (!selectedPlayerTokens.includes(hit)) selectedPlayerTokens = [hit];
+        if (!sel.playerTokens.includes(hit)) sel.playerTokens = [hit];
         draggingToken = hit; // the anchor the pointer follows
-        groupDragOffsets = selectedPlayerTokens.map((t) => ({ token: t, dx: t.x - hit.x, dy: t.y - hit.y }));
+        groupDragOffsets = sel.playerTokens.map((t) => ({ token: t, dx: t.x - hit.x, dy: t.y - hit.y }));
         dragGrabbed = false; // grab lazily on the first cell that actually moves
         isDragging = true;
         capturePointer(event.pointerId);
@@ -3915,7 +3794,7 @@ function onPointerDown(event) {
       // Select it (edit panel + arrow-key nudge) AND start a drag, so a click-drag moves the
       // token like every other VTT; a plain click with no movement just selects + snaps in place.
       pushHistory();
-      selectedToken = token;
+      sel.token = token;
       sel.image = sel.note = null;
       draggingToken = token;
       isDragging = true;
@@ -3928,7 +3807,7 @@ function onPointerDown(event) {
     if (note) {
       pushHistory();
       sel.note = note;
-      selectedToken = sel.image = null;
+      sel.token = sel.image = null;
       draggingNote = note;
       dragGrab = { dx: note.x - native.x, dy: note.y - native.y };
       isDragging = true;
@@ -3941,7 +3820,7 @@ function onPointerDown(event) {
     if (image) {
       pushHistory();
       sel.image = image;
-      selectedToken = sel.note = null;
+      sel.token = sel.note = null;
       draggingImage = image;
       dragGrab = { dx: image.x - native.x, dy: image.y - native.y };
       isDragging = true;
@@ -3972,8 +3851,8 @@ function onPointerDown(event) {
       startFrameDrag(native, event.pointerId);
       return;
     }
-    if (selectedToken || sel.image || sel.note) {
-      selectedToken = sel.image = sel.note = null;
+    if (sel.token || sel.image || sel.note) {
+      sel.token = sel.image = sel.note = null;
       updateSelectionPanels();
       render();
     }
@@ -4338,7 +4217,7 @@ function onKeyDown(event) {
     }
     // Arrow keys walk the selected player token(s). First press steps instantly; holding marches at
     // PLAYER_MOVE_CELLS_PER_SEC via the rAF movement clock. One token-grab + one drop-per-token per march.
-    if (selectedPlayerTokens.length && ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(event.key)) {
+    if (sel.playerTokens.length && ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(event.key)) {
       event.preventDefault();
       if (event.repeat) return; // we drive our own cadence; ignore the OS key-repeat
       startGlide(event.key);
@@ -4393,17 +4272,17 @@ function onKeyDown(event) {
   }
 
   // A selected token (Move mode) nudges one grid cell per arrow press, snapped to grid.
-  if (selectedToken && ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(event.key)) {
+  if (sel.token && ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(event.key)) {
     event.preventDefault();
     nudgeSelectedToken(event.key);
     return;
   }
-  if (selectedToken && (event.key === "Delete" || event.key === "Backspace")) {
+  if (sel.token && (event.key === "Delete" || event.key === "Backspace")) {
     event.preventDefault();
     pushHistory();
-    const removedTokenId = selectedToken.id;
-    state.tokens = state.tokens.filter((t) => t !== selectedToken);
-    selectedToken = null;
+    const removedTokenId = sel.token.id;
+    state.tokens = state.tokens.filter((t) => t !== sel.token);
+    sel.token = null;
     removeCombatantByToken(removedTokenId);
     renderAndSync();
     return;
@@ -4639,8 +4518,8 @@ function resetExplored() {
 // visibility polygon cast from that token so the engine can be eyeballed (walls occlude,
 // windows pass, corners peek) before any consumer is wired up. Drawn in the Native block.
 function drawCastDebug() {
-  if (isPlayer || !castDebug || !selectedToken || !state.imageData) return;
-  const poly = getVisibilityPolygon({ x: selectedToken.x, y: selectedToken.y });
+  if (isPlayer || !castDebug || !sel.token || !state.imageData) return;
+  const poly = getVisibilityPolygon({ x: sel.token.x, y: sel.token.y });
   if (poly.length < 3) return;
   ctx.save();
   ctx.beginPath();
@@ -4654,7 +4533,7 @@ function drawCastDebug() {
   ctx.stroke();
   // Mark the cast origin.
   ctx.beginPath();
-  ctx.arc(selectedToken.x, selectedToken.y, 4 / (cur.k * cur.ms), 0, Math.PI * 2);
+  ctx.arc(sel.token.x, sel.token.y, 4 / (cur.k * cur.ms), 0, Math.PI * 2);
   ctx.fillStyle = "rgba(120, 220, 255, 0.95)";
   ctx.fill();
   ctx.restore();
