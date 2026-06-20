@@ -16,7 +16,7 @@ import {
   DB_NAME, DB_VERSION, MAP_STORE, IMAGE_STORE, MODULE_STORE, SESSION_STORE, TOKEN_STORE, FOG_MAX_EDGE,
   HISTORY_LIMIT, STAIRS_ICON_NEUTRAL, STAIRS_ICON_UP, STAIRS_ICON_DOWN, FEET_PER_CELL, MEASURE_UNITS, PING_DURATION, controls,
   isPlayer, DEFAULT_GM_FOG_OPACITY, INITIAL_FLOOR_ID, makeFloor, state, normalizeInput, uuid, escapeHtml,
-  playerCam, tools, cur, hooks, sel,
+  playerCam, tools, cur, hooks, sel, fogBuf,
 } from "./state.js";
 import {
   saveMapRecord, listMapRecords, deleteMapRecord, saveModuleRecord, listModuleRecords, getModuleRecord, deleteModuleRecord, saveSessionRecord,
@@ -38,6 +38,9 @@ import {
 import {
   sortedCombatants, activeTurnTokenId, clampInitiativeTurn, updateInitiativeUI,
 } from "./initiative.js";
+import {
+  rebuildFog, compositeFog, roomPathFog, polygonCentroid, drawStampDraft, drawPolygon, stampPolygon, addInterpolatedStrokePoints,
+} from "./fog.js";
 
 // Wire the orchestration hooks now that the render/sync/relay functions exist (all hoisted).
 hooks.render = render;
@@ -52,8 +55,6 @@ let drawingObstacle = []; // in-progress obstacle polyline (native px) while dra
 let obstacleKind = "wall"; // kind applied to newly drawn obstacles
 let lightRadius = 3; // radius (cells) applied to newly placed lights — small=torch, large=firepit
 let showObstacles = true; // GM-only obstacle overlay toggle ("Walls Visible to DM")
-let activeStroke = null;
-let stampDraft = null; // {shape, start, end} preview while drag-drawing a fog shape
 // Area of effect is a live "hover template" (not placed): the shape follows the cursor
 // and is mirrored to the player display in real time.
 let aoeSyncQueued = false;
@@ -84,8 +85,6 @@ let dragGrab = { dx: 0, dy: 0 }; // offset from cursor to object center while dr
 let groupDragOffsets = null; // [{token,dx,dy}] formation captured at grab, for a player group-drag
 let dragGrabbed = false; // a token-grab has been relayed for the current player pointer-drag
 let lastPointer = { clientX: 0, clientY: 0 };
-let fogResScale = 1;
-let fogDirty = true;
 let castDebug = false; // GM-only: draw the visibility polygon cast from the selected token
 let castVersion = 0; // bumps when sight obstacles or the active floor change, invalidating the cast cache
 const castCache = new Map(); // "version|rx|ry" -> visibility polygon; reused until origin or geometry changes
@@ -396,7 +395,7 @@ function bindControls() {
   });
   controls.fogTint.addEventListener("input", () => {
     state.fog.gmColor = controls.fogTint.value;
-    fogDirty = true;
+    fogBuf.dirty = true;
     render();
   });
   controls.gmFogOpacity.addEventListener("input", () => {
@@ -737,7 +736,7 @@ function installMap(dataURL, name, gridOpts, onReady) {
     state.imageHeight = mapImage.naturalHeight;
     if (gridOpts) applyGridFromCells(gridOpts.cellsX, gridOpts.cellsY);
     if (onReady) onReady(); // DTT import layers obstacles/lights/notes here (6b–6d); grid now set
-    fogDirty = true;
+    fogBuf.dirty = true;
     captureCurrentFloor(); // flush new image into the current floor record
     updatePlayerSliderRanges();
     controls.mapScale.value = state.map.scale;
@@ -1107,7 +1106,7 @@ async function loadLibraryMap(id) {
     const snapshot = mergeModuleSession(module, session);
     await hydrateFloorImages(snapshot); // floors carry only imageId; pull the bytes back in
     drawingRoom = [];
-    activeStroke = null;
+    fogBuf.activeStroke = null;
     undoStack.length = 0;
     redoStack.length = 0;
     updateUndoButtons();
@@ -1472,7 +1471,7 @@ function loadSnapshot(snapshot) {
     state.floorPosition = snapshot.floorPosition || 1;
     state.floorCount = snapshot.floorCount || 1;
   }
-  fogDirty = true;
+  fogBuf.dirty = true;
 
   // If a sync references a map whose image we never received (assets message missed), ask for it.
   if (isPlayer && state.imageId && !state.imageData) {
@@ -1519,7 +1518,7 @@ function applyAssets(message) {
     loadImage(state.imageData, () => {
       state.imageWidth = mapImage.naturalWidth;
       state.imageHeight = mapImage.naturalHeight;
-      fogDirty = true;
+      fogBuf.dirty = true;
       render();
     });
   }
@@ -1659,7 +1658,7 @@ function applyFloor(floor) {
   state.notes = JSON.parse(JSON.stringify(floor.notes || []));
   Object.assign(state.view, floor.view || { scale: 1, cx: 0, cy: 0 });
   state.view.rotation = floor.view?.rotation || 0; // default older floors with no rotation
-  fogDirty = true;
+  fogBuf.dirty = true;
   undoStack.length = 0;
   redoStack.length = 0;
   updateUndoButtons();
@@ -1683,7 +1682,7 @@ function goToFloor(index) {
   if (index < 0 || index >= state.floors.length) return;
   captureCurrentFloor();
   drawingRoom = [];
-  activeStroke = null;
+  fogBuf.activeStroke = null;
   applyFloor(state.floors[index]);
   updatePlayerSliderRanges();
   syncControlsFromState();
@@ -1980,7 +1979,7 @@ function setMode(nextMode) {
   closeFogRibbon();
   drawingRoom = [];
   drawingObstacle = [];
-  stampDraft = null;
+  fogBuf.stampDraft = null;
   selectedToken = null;
   sel.image = sel.note = null;
   updateSelectionPanels();
@@ -2057,7 +2056,7 @@ function clearFog() {
   drawingRoom = [];
   state.fog.rooms = [];
   state.fog.strokes = [];
-  fogDirty = true;
+  fogBuf.dirty = true;
   renderAndSync();
 }
 
@@ -2067,7 +2066,7 @@ function fillAllFog() {
   if (!state.imageData) return;
   pushHistory();
   state.fog.strokes.push({ id: uuid(), kind: "fill" });
-  fogDirty = true;
+  fogBuf.dirty = true;
   renderAndSync();
 }
 
@@ -2091,14 +2090,14 @@ function applyFogSnapshot(serialized) {
   state.images = data.images || [];
   state.notes = data.notes || [];
   sel.image = sel.note = null;
-  fogDirty = true;
+  fogBuf.dirty = true;
 }
 function undo() {
   if (!undoStack.length) return;
   redoStack.push(snapshotFog());
   applyFogSnapshot(undoStack.pop());
   drawingRoom = [];
-  activeStroke = null;
+  fogBuf.activeStroke = null;
   updateUndoButtons();
   renderAndSync();
 }
@@ -2397,7 +2396,7 @@ function render() {
   // Native block
   ctx.save();
   ctx.scale(t.ms, t.ms);
-  if (fogDirty) rebuildFog();
+  if (fogBuf.dirty) rebuildFog();
   // Images and tokens sit BELOW the fog so anything in an unrevealed area is hidden (solid
   // black for players, dimmed under the GM tint).
   drawImages();
@@ -2516,119 +2515,11 @@ function drawGrid(worldW, worldH) {
 
 /* ----------------------------- fog ----------------------------- */
 
-function resizeFogLayer() {
-  const maxEdge = Math.max(state.imageWidth, state.imageHeight) || 1;
-  fogResScale = Math.min(1, FOG_MAX_EDGE / maxEdge);
-  const w = Math.max(1, Math.round(state.imageWidth * fogResScale));
-  const h = Math.max(1, Math.round(state.imageHeight * fogResScale));
-  [fogCanvas, liveCanvas, polyCanvas, strokeCanvas, losCanvas, darkCanvas, lightCanvas].forEach((c) => {
-    if (c.width !== w || c.height !== h) {
-      c.width = w;
-      c.height = h;
-    }
-  });
-}
 
-// Build the freeform layer (brush paint, bucket fill, brush erase, and the polygon-shaped
-// erases produced by right-clicking an area). Replayed in creation order, so an erase only
-// affects fog that already existed — painting back over an erased spot works as expected.
-function buildStrokeLayer() {
-  const color = isPlayer ? "#080909" : state.fog.gmColor;
-  strokeCtx.setTransform(1, 0, 0, 1, 0, 0);
-  strokeCtx.clearRect(0, 0, strokeCanvas.width, strokeCanvas.height);
-  state.fog.strokes.forEach((stroke) => {
-    strokeCtx.save();
-    strokeCtx.globalAlpha = 1;
-    strokeCtx.fillStyle = color;
-    strokeCtx.globalCompositeOperation = stroke.kind === "erase" ? "destination-out" : "source-over";
-    if (stroke.kind === "fill") {
-      strokeCtx.fillRect(0, 0, strokeCanvas.width, strokeCanvas.height);
-    } else if (stroke.region === "polygon" && stroke.points) {
-      strokeCtx.fill(roomPathFog(stroke.points));
-    } else {
-      strokeCtx.fill(strokePathFog(stroke));
-    }
-    strokeCtx.restore();
-  });
-}
 
-// Rebuild the committed fog bitmap as the union of the polygon layer and the freeform layer.
-// Full opacity; the GM tint/opacity is applied once at composite time so overlap never darkens.
-function rebuildFog() {
-  resizeFogLayer();
-  const color = isPlayer ? "#080909" : state.fog.gmColor;
-  // Polygon/stamp areas.
-  polyCtx.setTransform(1, 0, 0, 1, 0, 0);
-  polyCtx.clearRect(0, 0, polyCanvas.width, polyCanvas.height);
-  polyCtx.save();
-  polyCtx.globalAlpha = 1;
-  polyCtx.fillStyle = color;
-  state.fog.rooms.forEach((room) => {
-    if (room.revealed) return;
-    polyCtx.fill(roomPathFog(room.points));
-  });
-  polyCtx.restore();
-  // Freeform layer.
-  buildStrokeLayer();
-  // Union the two into the displayed fog bitmap.
-  fogCtx.setTransform(1, 0, 0, 1, 0, 0);
-  fogCtx.clearRect(0, 0, fogCanvas.width, fogCanvas.height);
-  fogCtx.drawImage(polyCanvas, 0, 0);
-  fogCtx.drawImage(strokeCanvas, 0, 0);
-  fogDirty = false;
-}
 
-function compositeFog() {
-  let source = fogCanvas;
-  if (activeStroke) {
-    // Preview the in-progress brush stroke on the freeform layer only, then re-union the
-    // polygon layer beneath it so an erase preview never appears to remove polygon fog.
-    liveCtx.setTransform(1, 0, 0, 1, 0, 0);
-    liveCtx.clearRect(0, 0, liveCanvas.width, liveCanvas.height);
-    liveCtx.drawImage(strokeCanvas, 0, 0);
-    liveCtx.save();
-    liveCtx.globalCompositeOperation = activeStroke.kind === "erase" ? "destination-out" : "source-over";
-    liveCtx.globalAlpha = 1;
-    liveCtx.fillStyle = isPlayer ? "#080909" : state.fog.gmColor;
-    liveCtx.fill(strokePathFog(activeStroke));
-    liveCtx.restore();
-    liveCtx.save();
-    liveCtx.globalCompositeOperation = "destination-over";
-    liveCtx.drawImage(polyCanvas, 0, 0);
-    liveCtx.restore();
-    source = liveCanvas;
-  }
-  ctx.save();
-  ctx.globalAlpha = isPlayer ? 1 : state.fog.gmOpacity;
-  ctx.imageSmoothingEnabled = true;
-  ctx.drawImage(source, 0, 0, fogCanvas.width, fogCanvas.height, 0, 0, state.imageWidth, state.imageHeight);
-  ctx.restore();
-}
 
-function roomPathFog(points) {
-  const path = new Path2D();
-  if (!points.length) return path;
-  path.moveTo(points[0].x * fogResScale, points[0].y * fogResScale);
-  points.slice(1).forEach((p) => path.lineTo(p.x * fogResScale, p.y * fogResScale));
-  path.closePath();
-  return path;
-}
 
-function strokePathFog(stroke) {
-  const path = new Path2D();
-  const radius = (stroke.size * fogResScale) / 2;
-  stroke.points.forEach((point) => {
-    const x = point.x * fogResScale;
-    const y = point.y * fogResScale;
-    if (stroke.shape === "square") {
-      path.rect(x - radius, y - radius, radius * 2, radius * 2);
-    } else {
-      path.moveTo(x + radius, y);
-      path.arc(x, y, radius, 0, Math.PI * 2);
-    }
-  });
-  return path;
-}
 
 function drawRoomOutlines() {
   ctx.save();
@@ -2694,15 +2585,6 @@ function drawDraftObstacle() {
   ctx.restore();
 }
 
-function polygonCentroid(points) {
-  let x = 0;
-  let y = 0;
-  points.forEach((p) => {
-    x += p.x;
-    y += p.y;
-  });
-  return { x: x / points.length, y: y / points.length };
-}
 
 // Wrap text to maxW screen px (ctx.font must already be set). Hard-breaks words longer than
 // the line, and caps at maxLines with an ellipsis so a long name never overflows its label.
@@ -2891,27 +2773,7 @@ function updateAoePresets() {
   });
 }
 
-function drawStampDraft() {
-  if (!stampDraft) return;
-  const points = stampPolygon(stampDraft.shape, stampDraft.start, stampDraft.end);
-  if (!points) return;
-  ctx.save();
-  ctx.fillStyle = "rgba(127, 182, 166, 0.18)";
-  ctx.strokeStyle = "rgba(127, 182, 166, 0.95)";
-  ctx.lineWidth = 2 / (cur.k * cur.ms);
-  drawPolygon(points);
-  ctx.fill();
-  ctx.stroke();
-  ctx.restore();
-}
 
-function drawPolygon(points) {
-  if (!points.length) return;
-  ctx.beginPath();
-  ctx.moveTo(points[0].x, points[0].y);
-  points.slice(1).forEach((point) => ctx.lineTo(point.x, point.y));
-  ctx.closePath();
-}
 
 /* ----------------------------- tokens ----------------------------- */
 
@@ -3748,7 +3610,7 @@ function deleteTokenOrRoom(native) {
     state.fog.rooms = state.fog.rooms.filter((item) => item !== room);
     // Also clear freeform (brush/bucket) fog inside this area — other polygons are unaffected.
     state.fog.strokes.push({ id: uuid(), kind: "erase", region: "polygon", points: room.points });
-    fogDirty = true;
+    fogBuf.dirty = true;
     renderAndSync();
     return true;
   }
@@ -3996,7 +3858,7 @@ function onPointerDown(event) {
   }
 
   if (mode === "stamp") {
-    stampDraft = { shape: state.fog.stampShape, start: native, end: native };
+    fogBuf.stampDraft = { shape: state.fog.stampShape, start: native, end: native };
     isDragging = true;
     capturePointer(event.pointerId);
     render();
@@ -4129,7 +3991,7 @@ function onPointerDown(event) {
 
   if (mode === "brush" || mode === "eraser") {
     pushHistory();
-    activeStroke = {
+    fogBuf.activeStroke = {
       id: uuid(),
       kind: mode === "eraser" ? "erase" : "paint",
       shape: state.fog.toolShape,
@@ -4207,17 +4069,17 @@ function onPointerMove(event) {
     return;
   }
 
-  if (stampDraft) {
-    stampDraft.end = toNativePoint(event);
+  if (fogBuf.stampDraft) {
+    fogBuf.stampDraft.end = toNativePoint(event);
     render();
     return;
   }
 
-  if (activeStroke) {
+  if (fogBuf.activeStroke) {
     const point = toNativePoint(event);
-    const previous = activeStroke.points[activeStroke.points.length - 1];
-    const spacing = Math.max(2, activeStroke.size / 4);
-    addInterpolatedStrokePoints(activeStroke, previous, point, spacing);
+    const previous = fogBuf.activeStroke.points[fogBuf.activeStroke.points.length - 1];
+    const spacing = Math.max(2, fogBuf.activeStroke.size / 4);
+    addInterpolatedStrokePoints(fogBuf.activeStroke, previous, point, spacing);
     render();
     return;
   }
@@ -4308,23 +4170,23 @@ function onPointerUp(event) {
     return;
   }
 
-  if (stampDraft) {
-    const points = stampPolygon(stampDraft.shape, stampDraft.start, stampDraft.end);
-    stampDraft = null;
+  if (fogBuf.stampDraft) {
+    const points = stampPolygon(fogBuf.stampDraft.shape, fogBuf.stampDraft.start, fogBuf.stampDraft.end);
+    fogBuf.stampDraft = null;
     if (points) {
       pushHistory();
       state.fog.rooms.push({ id: uuid(), points, revealed: false, name: "" });
-      fogDirty = true;
+      fogBuf.dirty = true;
       renderAndSync();
     } else {
       render();
     }
   }
 
-  if (activeStroke) {
-    state.fog.strokes.push(activeStroke);
-    activeStroke = null;
-    fogDirty = true; // re-bake the freeform layer so the committed stroke composites correctly
+  if (fogBuf.activeStroke) {
+    state.fog.strokes.push(fogBuf.activeStroke);
+    fogBuf.activeStroke = null;
+    fogBuf.dirty = true; // re-bake the freeform layer so the committed stroke composites correctly
     renderAndSync();
   }
 
@@ -4823,13 +4685,13 @@ function playerVisionPolygons() {
   return polys;
 }
 
-// A visibility polygon as a Path2D in fog-buffer resolution (native px * fogResScale), matching
+// A visibility polygon as a Path2D in fog-buffer resolution (native px * fogBuf.resScale), matching
 // roomPathFog so the LoS mask lines up with the fog layers it composites alongside.
 function losPath(points) {
   const path = new Path2D();
   if (!points.length) return path;
-  path.moveTo(points[0].x * fogResScale, points[0].y * fogResScale);
-  for (let i = 1; i < points.length; i++) path.lineTo(points[i].x * fogResScale, points[i].y * fogResScale);
+  path.moveTo(points[0].x * fogBuf.resScale, points[0].y * fogBuf.resScale);
+  for (let i = 1; i < points.length; i++) path.lineTo(points[i].x * fogBuf.resScale, points[i].y * fogBuf.resScale);
   path.closePath();
   return path;
 }
@@ -4901,9 +4763,9 @@ function buildLightCoverage() {
   lightSources().forEach(({ pos, radius }) => {
     const poly = getLightPolygon(pos);
     if (poly.length < 3 || radius <= 0) return;
-    const cx = pos.x * fogResScale;
-    const cy = pos.y * fogResScale;
-    const rOuter = radius * fogResScale;
+    const cx = pos.x * fogBuf.resScale;
+    const cy = pos.y * fogBuf.resScale;
+    const rOuter = radius * fogBuf.resScale;
     const grad = lightCtx.createRadialGradient(cx, cy, rOuter * LIGHT_BRIGHT_FRACTION, cx, cy, rOuter);
     grad.addColorStop(0, "rgba(255,255,255,1)");
     grad.addColorStop(1, "rgba(255,255,255,0)");
@@ -5080,7 +4942,7 @@ function finishRoom() {
   };
   state.fog.rooms.push(room);
   drawingRoom = [];
-  fogDirty = true;
+  fogBuf.dirty = true;
   renderAndSync();
   if (mode === "namedPolygon") {
     // Defer one tick so the Enter keypress that finished the polygon can't also submit the dialog.
@@ -5110,64 +4972,7 @@ function promptRoomName(room) {
   controls.roomNameInput.select();
 }
 
-// Build a polygon (in native coords) for a drag-drawn fog stamp. Shapes become regular
-// rooms, so they reveal, get outlines/names, undo, and delete just like polygon areas.
-// "square" and "circle" force an equal-sided bounding box following the drag direction.
-function stampPolygon(shape, a, b) {
-  let x0 = Math.min(a.x, b.x);
-  let y0 = Math.min(a.y, b.y);
-  let x1 = Math.max(a.x, b.x);
-  let y1 = Math.max(a.y, b.y);
-  if (shape === "square" || shape === "circle") {
-    const side = Math.max(x1 - x0, y1 - y0);
-    const sx = b.x >= a.x ? 1 : -1;
-    const sy = b.y >= a.y ? 1 : -1;
-    x0 = Math.min(a.x, a.x + sx * side);
-    x1 = Math.max(a.x, a.x + sx * side);
-    y0 = Math.min(a.y, a.y + sy * side);
-    y1 = Math.max(a.y, a.y + sy * side);
-  }
-  const w = x1 - x0;
-  const h = y1 - y0;
-  if (w < 4 || h < 4) return null; // ignore stray clicks
-  if (shape === "rectangle" || shape === "square") {
-    return [
-      { x: x0, y: y0 },
-      { x: x1, y: y0 },
-      { x: x1, y: y1 },
-      { x: x0, y: y1 },
-    ];
-  }
-  if (shape === "triangle") {
-    return [
-      { x: (x0 + x1) / 2, y: y0 },
-      { x: x1, y: y1 },
-      { x: x0, y: y1 },
-    ];
-  }
-  // ellipse / circle, approximated as a 64-gon
-  const cx = (x0 + x1) / 2;
-  const cy = (y0 + y1) / 2;
-  const rx = w / 2;
-  const ry = h / 2;
-  const points = [];
-  const segments = 64;
-  for (let i = 0; i < segments; i++) {
-    const angle = (i / segments) * Math.PI * 2;
-    points.push({ x: cx + rx * Math.cos(angle), y: cy + ry * Math.sin(angle) });
-  }
-  return points;
-}
 
-function addInterpolatedStrokePoints(stroke, from, to, spacing) {
-  const dx = to.x - from.x;
-  const dy = to.y - from.y;
-  const distance = Math.hypot(dx, dy);
-  const steps = Math.max(1, Math.floor(distance / spacing));
-  for (let index = 1; index <= steps; index++) {
-    stroke.points.push({ x: from.x + (dx * index) / steps, y: from.y + (dy * index) / steps });
-  }
-}
 
 /* ----------------------------- misc ----------------------------- */
 

@@ -267,6 +267,9 @@ const hooks = { render: () => {}, renderAndSync: () => {}, relay: () => {} };
 // GM Move-mode selection of non-token objects, read by the annotation draws (to ring the selected
 // item) and written by the Move-mode handlers. Ephemeral; not part of the saved `state` document.
 const sel = { image: null, note: null };
+// Ephemeral fog raster buffer + in-progress tool drafts (distinct from state.fog, the saved doc).
+// Shared by fog.js (raster) and vision.js (reads resScale). Mutated, never rebound.
+const fogBuf = { dirty: true, resScale: 1, activeStroke: null, stampDraft: null };
 
 // Each floor is its own map (image + fog + tokens + stairs + view). The top-level
 // imageData/fog/tokens/stairs/view fields below always mirror the CURRENT floor so the
@@ -367,4 +370,5 @@ export {
   cur,
   hooks,
   sel,
+  fogBuf,
 };
