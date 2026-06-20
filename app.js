@@ -340,6 +340,10 @@ let selectedImage = null; // map image selected in Move mode (GM only)
 let selectedNote = null; // floating note selected in Move mode (GM only)
 let selectedPlayerTokens = []; // player-screen selection SET (tap, shift-click, or marquee; arrow-moves as a group)
 let playerMarquee = null; // active rubber-band box on the player screen, {x0,y0,x1,y1,additive} in canvas px
+let followParty = false; // player-screen follow-camera: when on, the view tracks the party centroid
+let followFitZoom = false; // when on (with follow), also auto-zoom to fit the whole party in frame
+const FOLLOW_FIT_PADDING = 0.9; // fraction of the viewport the party box should fill (tunable feel)
+const FOLLOW_FIT_MIN_CELLS = 8; // never frame tighter than this many cells — keeps context, caps zoom-in
 let tokenImageData = ""; // image applied to newly placed tokens (data URL), authoring default
 const tokenImageCache = new Map(); // data URL -> HTMLImageElement, so token art draws each frame
 
@@ -2682,6 +2686,46 @@ function activeView() {
   return isPlayer && !state.playerView.matchDM ? state.playerView : state.view;
 }
 
+// Player follow-camera: when on, re-center the active view on the party centroid every render, so the
+// view tracks the party as it walks. With followFitZoom also on, additionally zoom to fit the whole
+// party in frame. Overrides the GM's player-view framing while active — it re-applies on every render,
+// so a GM frame-drag or a sync can't pull it off the party. No-op without player tokens.
+function applyFollowCamera() {
+  if (!isPlayer || !followParty) return;
+  const players = state.tokens.filter((t) => t.type === "player");
+  if (!players.length) return;
+  const v = activeView();
+
+  // 2a: center on the centroid.
+  let sx = 0, sy = 0;
+  for (const t of players) { sx += t.x; sy += t.y; }
+  v.cx = sx / players.length;
+  v.cy = sy / players.length;
+  if (!followFitZoom) return;
+
+  // 2b: zoom to fit the party's bounding box (token footprints included) into the padded viewport.
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const t of players) {
+    const r = tokenRadius(t);
+    minX = Math.min(minX, t.x - r); maxX = Math.max(maxX, t.x + r);
+    minY = Math.min(minY, t.y - r); maxY = Math.max(maxY, t.y + r);
+  }
+  // Center on the BOX center, not the centroid: with the party unevenly spread (one stray, a cluster),
+  // the centroid sits inside the cluster and the fit would push the stray token off the edge. The box
+  // center keeps the whole extent framed with even margin.
+  v.cx = (minX + maxX) / 2;
+  v.cy = (minY + maxY) / 2;
+  const minSpan = FOLLOW_FIT_MIN_CELLS * gridCellNative(); // floor so one bunched token doesn't fill the screen
+  const boxW = Math.max(maxX - minX, minSpan);
+  const boxH = Math.max(maxY - minY, minSpan);
+  const rect = canvas.getBoundingClientRect();
+  const ms = state.map.scale || 1;
+  // On screen, native px scale by k*ms; pick k so the box fits the padded viewport.
+  const sFit = Math.min((rect.width * FOLLOW_FIT_PADDING) / boxW, (rect.height * FOLLOW_FIT_PADDING) / boxH);
+  const kMin = fitScaleFor(rect.width, rect.height, v.rotation || 0); // never zoom out past the whole map
+  v.scale = Math.max(kMin, sFit / ms);
+}
+
 function worldDims() {
   return { w: state.imageWidth * state.map.scale, h: state.imageHeight * state.map.scale };
 }
@@ -2941,6 +2985,8 @@ function render() {
 
   emptyState.classList.toggle("hidden", Boolean(state.imageData));
   if (!state.imageData || !mapImage.complete) return;
+
+  applyFollowCamera(); // player follow-cam: re-center on the party before the transform is read
 
   const t = viewTransform();
   curK = t.k;
@@ -5419,6 +5465,17 @@ function onKeyDown(event) {
   if (isPlayer) {
     if (event.key === "f" || event.key === "F") {
       toggleFullscreen();
+      return;
+    }
+    if (event.key === "c" || event.key === "C") {
+      followParty = !followParty; // toggle the party follow-camera
+      render();
+      return;
+    }
+    if (event.key === "z" || event.key === "Z") {
+      followFitZoom = !followFitZoom; // toggle fit-to-party zoom
+      if (followFitZoom) followParty = true; // fitting implies following the party
+      render();
       return;
     }
     // Arrow keys walk the selected player token(s). First press steps instantly; holding marches at
