@@ -2872,10 +2872,16 @@ function onPointerDown(event) {
   if (ui.mode === "token") {
     const hit = hitToken(native);
     if (hit) {
+      // Clicking a placed token selects it (opens the edit panel) AND starts a drag — so you can
+      // rename/recolor/resize a token without leaving Token mode. Empty space still drops a new one.
       pushHistory();
+      sel.token = hit;
+      sel.image = sel.note = null;
       draggingToken = hit;
       isDragging = true;
       capturePointer(event.pointerId);
+      updateSelectionPanels();
+      render();
     } else {
       addToken(native);
     }
