@@ -109,6 +109,15 @@ function drawTokens() {
     const r = tokenRadius(token);
     ctx.save();
     keepUpright(token.x, token.y, rot); // art + label stay upright when the map is rotated
+    // Conceal zones (invisible obstacles): on the player view, a token whose center sits inside one
+    // fades to a faint ghost — it's "descending out of view" — while staying selectable/steerable.
+    // The GM always draws tokens full, so the table-runner never loses track of anyone.
+    const concealed = isPlayer && state.obstacles.some(
+      (o) => o.conceal && o.points && o.points.length >= 3 &&
+        pointInPolygon({ x: token.x, y: token.y }, o.points.map((p) => ({ x: p[0], y: p[1] }))),
+    );
+    const baseAlpha = concealed ? 0.3 : 1;
+    ctx.globalAlpha = baseAlpha;
     const img = getTokenImage(token.image);
     if (img && img.complete && img.naturalWidth) {
       // Token art: cover-fit the image into the token outline and ring it.
@@ -131,9 +140,9 @@ function drawTokens() {
       ctx.beginPath();
       tokenOutline(token, r);
       ctx.fillStyle = token.color || "#d6a94d";
-      ctx.globalAlpha = 0.95;
+      ctx.globalAlpha = baseAlpha * 0.95;
       ctx.fill();
-      ctx.globalAlpha = 1;
+      ctx.globalAlpha = baseAlpha;
       ctx.lineWidth = lineW;
       ctx.strokeStyle = "rgba(0,0,0,0.65)";
       ctx.stroke();
