@@ -51,6 +51,9 @@ import {
 import {
   drawRoomOutlines, drawObstacleOutlines, drawDraftObstacle, drawRoomNames, drawDraftRoom, obstacleDefaults, hitObstacle, moveSegments,
 } from "./rooms-obstacles.js";
+import {
+  ensureCameraLoop, stopCameraLoop, rotateMap,
+} from "./view.js";
 
 // Wire the orchestration hooks now that the render/sync/relay functions exist (all hoisted).
 hooks.render = render;
@@ -65,10 +68,6 @@ let mode = "pan";
 let aoeSyncQueued = false;
 const AOE_PRESETS = { circle: [5, 10, 15, 20], square: [10, 20, 30], cone: [15, 30] };
 let playerMarquee = null; // active rubber-band box on the player screen, {x0,y0,x1,y1,additive} in canvas px
-const CAM_EASE = 0.15; // follow-camera smoothing: fraction of the gap closed per frame (higher = snappier)
-const CAM_EASE_EPS = 0.5; // px: how close (center) counts as "arrived" so the easing loop can stop
-const CAM_EASE_K_EPS = 0.001; // scale: how close (zoom) counts as "arrived"
-let camEaseRaf = 0; // rAF handle for the on-demand camera-easing loop (0 = stopped)
 let tokenImageData = ""; // image applied to newly placed tokens (data URL), authoring default
 
 // --- Token palette: a browsable library of reusable token templates (TOKEN_STORE) ---
@@ -2051,40 +2050,8 @@ function watchCanvasSize() {
 
 
 
-// --- Follow-camera easing -------------------------------------------------------------------------
-// The follow camera glides toward followView()'s target instead of snapping to it: each frame the eased
-// camera closes a fraction of the gap (center + zoom). An on-demand rAF loop runs while catching up and
-// stops once settled, so there's no idle power cost. viewTransform reads playerCam.ease; the movement hooks
-// (glide, drag, sync, toggle) call ensureCameraLoop() to (re)start it when the party moves.
-function tickCamera() {
-  camEaseRaf = 0;
-  if (!isPlayer || !playerCam.follow) { playerCam.ease = null; return; }
-  const rect = canvas.getBoundingClientRect();
-  const v = activeView();
-  const ms = state.map.scale || 1;
-  const target = followView(rect, v, ms);
-  if (!target) { playerCam.ease = null; return; }
-  if (!playerCam.ease) playerCam.ease = { ...target }; // first frame after enable: snap to the party, then ease
-  playerCam.ease.cx += (target.cx - playerCam.ease.cx) * CAM_EASE;
-  playerCam.ease.cy += (target.cy - playerCam.ease.cy) * CAM_EASE;
-  playerCam.ease.k += (target.k - playerCam.ease.k) * CAM_EASE;
-  const arrived =
-    Math.abs(target.cx - playerCam.ease.cx) < CAM_EASE_EPS &&
-    Math.abs(target.cy - playerCam.ease.cy) < CAM_EASE_EPS &&
-    Math.abs(target.k - playerCam.ease.k) < CAM_EASE_K_EPS;
-  if (arrived) playerCam.ease = { ...target }; // settle exactly so it stops drifting
-  render(); // draws through viewTransform, which reads playerCam.ease
-  if (!arrived) camEaseRaf = requestAnimationFrame(tickCamera);
-}
 
-function ensureCameraLoop() {
-  if (isPlayer && playerCam.follow && !camEaseRaf) camEaseRaf = requestAnimationFrame(tickCamera);
-}
 
-function stopCameraLoop() {
-  if (camEaseRaf) { cancelAnimationFrame(camEaseRaf); camEaseRaf = 0; }
-  playerCam.ease = null;
-}
 
 
 
@@ -2099,19 +2066,6 @@ function fitMap(sync) {
   if (sync) broadcastState();
 }
 
-// GM "rotate map": rotates the GM view in 90° steps and carries the orientation to the
-// player too (overriding any independent player rotation). All content rides the view
-// transform, so fog, tokens and stairs rotate with the map.
-function rotateMap(deg) {
-  state.view.rotation = ((((state.view.rotation || 0) + deg) % 360) + 360) % 360;
-  state.playerView.rotation = state.view.rotation; // authoritative — overrides the player setting
-  if (state.playerView.matchDM) {
-    state.playerView.scale = state.view.scale;
-    state.playerView.cx = state.view.cx;
-    state.playerView.cy = state.view.cy;
-  }
-  renderAndSync();
-}
 
 // Rotate ONLY the player display. Like the zoom/offset sliders, this gives the player an
 // independent view so the rotation is visible while the GM keeps their own orientation.
