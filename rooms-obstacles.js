@@ -21,7 +21,7 @@ import {
 
 const OBSTACLE_COLORS = {
   wall: "rgba(214,169,77,0.9)",
-  object: "rgba(214,169,77,0.9)",
+  object: "rgba(230,150,90,0.9)",
   door: "rgba(120,200,140,0.95)",
   window: "rgba(120,200,220,0.95)",
   invisible: "rgba(180,150,220,0.85)",
@@ -163,13 +163,16 @@ function drawDraftRoom() {
 }
 
 // Closed-state behavior flags per kind. Doors block until opened (the session tracks open doors);
-// windows are see-through but block movement; invisible walls block sight/light but draw no line.
+// windows and objects are see-through but block movement (window = a drawn pane; object = an
+// invisible railing/ledge — pier edges, low hedges, anything you can see over but not cross);
+// invisible walls block sight/light but draw no line.
 function obstacleDefaults(kind) {
   switch (kind) {
     case "window":    return { blocksSight: false, blocksLight: false, blocksMove: true, drawn: true, openable: false };
+    case "object":    return { blocksSight: false, blocksLight: false, blocksMove: true, drawn: true, openable: false }; // see-through barrier: railings, pier edges, low hedges
     case "door":      return { blocksSight: true, blocksLight: true, blocksMove: true, drawn: true, openable: true };
     case "invisible": return { blocksSight: true, blocksLight: true, blocksMove: true, drawn: false, openable: false };
-    default:          return { blocksSight: true, blocksLight: true, blocksMove: true, drawn: true, openable: false }; // wall/object/ethereal
+    default:          return { blocksSight: true, blocksLight: true, blocksMove: true, drawn: true, openable: false }; // wall/ethereal
   }
 }
 
