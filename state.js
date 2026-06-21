@@ -272,6 +272,9 @@ const hooks = { render: () => {}, renderAndSync: () => {}, relay: () => {} };
 // GM Move-mode selection of non-token objects, read by the annotation draws (to ring the selected
 // item) and written by the Move-mode handlers. Ephemeral; not part of the saved `state` document.
 const sel = { image: null, note: null, token: null, playerTokens: [] };
+// Handle to the popped-out player window (GM side); the player side reaches the GM via window.opener.
+// Mutated when the popup opens or a message identifies its source. Never rebound across modules.
+const peerWindow = { ref: null };
 // Cast/light visibility caches (promoted from app.js): the cast-polygon cache keyed by version+origin,
 // and the per-frame key sets render() prunes against. Mutated by vision.js, pruned by render.
 const castCache = new Map();
@@ -381,6 +384,7 @@ export {
   hooks,
   sel,
   fogBuf,
+  peerWindow,
   castCache,
   castFrameKeys,
   lightFrameKeys,
