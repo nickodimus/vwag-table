@@ -18,6 +18,8 @@ import {
   isPlayer, DEFAULT_GM_FOG_OPACITY, INITIAL_FLOOR_ID, makeFloor, state, normalizeInput, uuid, escapeHtml,
   playerCam, tools, cur, hooks, sel, fogBuf, peerWindow,
   castCache, castFrameKeys, lightFrameKeys,
+  ui,
+  scene,
 } from "./state.js";
 import {
   saveMapRecord, listMapRecords, deleteMapRecord, saveModuleRecord, listModuleRecords, getModuleRecord, deleteModuleRecord, saveSessionRecord,
@@ -61,6 +63,9 @@ import {
   reportPlayerViewport, relay, applyRemoteView, applyIncomingPlayerView, syncPlayerViewControls, snapPlayerViewToGM, broadcastAssets, broadcastState,
   broadcastView, renderAndSync, renderAndSyncView,
 } from "./sync.js";
+import {
+  render, playerFrameCorners,
+} from "./render.js";
 async function saveSession() {
   captureCurrentFloor();
   if (!state.floors.some((floor) => floor.imageData)) {
@@ -190,14 +195,10 @@ hooks.render = render;
 hooks.renderAndSync = renderAndSync;
 hooks.relay = relay;
 
-let mapImage = new Image();
-let splashImage = new Image();
-let mode = "pan";
 // Area of effect is a live "hover template" (not placed): the shape follows the cursor
 // and is mirrored to the player display in real time.
 let aoeSyncQueued = false;
 const AOE_PRESETS = { circle: [5, 10, 15, 20], square: [10, 20, 30], cone: [15, 30] };
-let playerMarquee = null; // active rubber-band box on the player screen, {x0,y0,x1,y1,additive} in canvas px
 let tokenImageData = ""; // image applied to newly placed tokens (data URL), authoring default
 
 // --- Token palette: a browsable library of reusable token templates (TOKEN_STORE) ---
@@ -216,17 +217,11 @@ let draggingFrame = false; // GM is dragging the player-view frame to pan the pl
 let dragGrab = { dx: 0, dy: 0 }; // offset from cursor to object center while dragging images/notes/frame
 let groupDragOffsets = null; // [{token,dx,dy}] formation captured at grab, for a player group-drag
 let dragGrabbed = false; // a token-grab has been relayed for the current player pointer-drag
-let lastPointer = { clientX: 0, clientY: 0 };
-let castDebug = false; // GM-only: draw the visibility polygon cast from the selected token
 
 const undoStack = [];
 const redoStack = [];
 
 let seenMids = []; // recently handled message ids, for de-duplicating the two transports
-let playerViewport = null; // {w,h} CSS px the player reports, used to draw the player frame
-let showPlayerFrame = true; // GM-only: draw a red rectangle of what the players currently see
-let playerFrameColor = "#e24a4a"; // GM-only: color of that rectangle
-let playerFrameOpacity = 0.9; // GM-only: opacity of that rectangle
 // IRL play: keep one grid square a constant physical size on the player screen (TV). The
 // target is screen px per square; the player zoom is re-derived per map from its grid size.
 let lockPlayerSquare = false;
@@ -259,7 +254,7 @@ function handleMessage(message, source) {
   }
   if (message.type === "request-assets" && !isPlayer) broadcastAssets();
   if (message.type === "viewport" && !isPlayer) {
-    playerViewport = { w: message.w, h: message.h };
+    ui.playerViewport = { w: message.w, h: message.h };
     render();
   }
   if (message.type === "token-grab" && !isPlayer) {
@@ -403,7 +398,7 @@ function setup() {
   canvas.addEventListener("pointerup", onPointerUp);
   canvas.addEventListener("pointercancel", onPointerUp);
   canvas.addEventListener("pointerleave", () => {
-    if (mode === "aoe" && !isPlayer && tools.aoe.template.visible) {
+    if (ui.mode === "aoe" && !isPlayer && tools.aoe.template.visible) {
       tools.aoe.template.visible = false;
       renderAndSyncView();
     }
@@ -581,7 +576,7 @@ function bindControls() {
     renderAndSync();
   });
   controls.darknessEnabled?.addEventListener("input", () => { state.los.darkness = controls.darknessEnabled.checked; renderAndSync(); });
-  controls.castDebug?.addEventListener("change", () => { castDebug = controls.castDebug.checked; render(); });
+  controls.castDebug?.addEventListener("change", () => { ui.castDebug = controls.castDebug.checked; render(); });
 
   // Floor navigation
   controls.floorUp?.addEventListener("click", () => goToFloor(currentFloorIndex() + 1));
@@ -628,15 +623,15 @@ function bindControls() {
   controls.measureCalibrate?.addEventListener("click", () => armCalibration("measure"));
   controls.gridCalibrate?.addEventListener("click", () => armCalibration("grid"));
   controls.playerFrameToggle?.addEventListener("input", () => {
-    showPlayerFrame = controls.playerFrameToggle.checked;
+    ui.showPlayerFrame = controls.playerFrameToggle.checked;
     render();
   });
   controls.playerFrameColor?.addEventListener("input", () => {
-    playerFrameColor = controls.playerFrameColor.value;
+    ui.playerFrameColor = controls.playerFrameColor.value;
     render();
   });
   controls.playerFrameOpacity?.addEventListener("input", () => {
-    playerFrameOpacity = parseFloat(controls.playerFrameOpacity.value);
+    ui.playerFrameOpacity = parseFloat(controls.playerFrameOpacity.value);
     render();
   });
   controls.panelToggle?.addEventListener("click", togglePanelCollapsed);
@@ -838,8 +833,8 @@ function installMap(dataURL, name, gridOpts, onReady) {
   redoStack.length = 0;
   updateUndoButtons();
   loadImage(state.imageData, () => {
-    state.imageWidth = mapImage.naturalWidth;
-    state.imageHeight = mapImage.naturalHeight;
+    state.imageWidth = scene.map.naturalWidth;
+    state.imageHeight = scene.map.naturalHeight;
     if (gridOpts) applyGridFromCells(gridOpts.cellsX, gridOpts.cellsY);
     if (onReady) onReady(); // DTT import layers obstacles/lights/notes here (6b–6d); grid now set
     fogBuf.dirty = true;
@@ -1185,7 +1180,7 @@ function loadSnapshot(snapshot) {
   if (state.imageData) {
     loadImage(state.imageData, finish);
   } else {
-    mapImage = new Image();
+    scene.map = new Image();
     finish();
   }
   if (state.splash.imageData) {
@@ -1201,8 +1196,8 @@ function applyAssets(message) {
   state.splash.imageName = message.splash?.imageName || "";
   if (state.imageData) {
     loadImage(state.imageData, () => {
-      state.imageWidth = mapImage.naturalWidth;
-      state.imageHeight = mapImage.naturalHeight;
+      state.imageWidth = scene.map.naturalWidth;
+      state.imageHeight = scene.map.naturalHeight;
       fogBuf.dirty = true;
       render();
     });
@@ -1284,7 +1279,7 @@ function applyFloor(floor) {
   undoStack.length = 0;
   redoStack.length = 0;
   updateUndoButtons();
-  mapImage = new Image();
+  scene.map = new Image();
   if (state.imageData) {
     loadImage(state.imageData, () => {
       fitMap(false);
@@ -1416,79 +1411,6 @@ function hitStair(native) {
   return null;
 }
 
-function drawStairs() {
-  if (!state.stairs.length) return;
-
-  const myIdx = !isPlayer && state.floors
-    ? state.floors.findIndex((f) => f.id === state.currentFloorId)
-    : -1;
-
-  // Marker fills exactly one grid cell — scales with grid size AND zoom, just like tokens.
-  const cell = gridCellNative();
-  const half = cell / 2;
-  // Constant 2px screen line width regardless of zoom.
-  const sw = 2 / (cur.k * cur.ms);
-
-  ctx.save();
-  const rot = currentViewRotation();
-
-  state.stairs.forEach((stair) => {
-    const { x, y } = stair;
-    ctx.save();
-    keepUpright(x, y, rot); // icon + label stay upright when the map is rotated
-
-    // Determine direction: 1 = going UP (target floor has a higher index), -1 = DOWN.
-    let dir = 0;
-    if (!isPlayer && myIdx !== -1 && state.floors) {
-      const targetIdx = state.floors.findIndex((f) => f.id === stair.targetFloorId);
-      if (targetIdx !== -1) dir = targetIdx > myIdx ? 1 : -1;
-    }
-
-    // ---- bare stair icon (no box/background) in the tunable stair color ----
-    // The Tabler icons are defined in a 24×24 coordinate space; fill ~90% of the cell.
-    const stairColor = state.stairColor || "#ffffff";
-    const iconFill = cell * 0.90;
-    const iconScale = iconFill / 24;
-    const iconPad = (cell - iconFill) / 2;
-
-    ctx.save();
-    ctx.translate(x - half + iconPad, y - half + iconPad);
-    ctx.scale(iconScale, iconScale);
-    ctx.strokeStyle = stairColor;
-    ctx.lineWidth = 2.4 / (cur.k * cur.ms * iconScale); // stays a constant width on screen
-    ctx.lineCap = "round";
-    ctx.lineJoin = "round";
-    const icon = dir > 0 ? STAIRS_ICON_UP : dir < 0 ? STAIRS_ICON_DOWN : STAIRS_ICON_NEUTRAL;
-    ctx.stroke(icon);
-    ctx.restore();
-
-    // ---- optional text label below the square ----
-    if (stair.label) {
-      ctx.save();
-      ctx.font = `600 ${Math.round(half * 0.65)}px Inter, sans-serif`;
-      ctx.textAlign = "center";
-      ctx.textBaseline = "top";
-      ctx.fillStyle = "#f4e8c8";
-      ctx.fillText(stair.label, x, y + half + sw * 2);
-      ctx.restore();
-    }
-
-    // ---- hover highlight outline in stair placement mode (GM only) ----
-    if (!isPlayer && mode === "stair") {
-      const gap = sw * 3;
-      ctx.save();
-      ctx.beginPath();
-      ctx.rect(x - half - gap, y - half - gap, cell + gap * 2, cell + gap * 2);
-      ctx.strokeStyle = "rgba(177,195,1,0.50)";
-      ctx.lineWidth = sw * 1.5;
-      ctx.stroke();
-      ctx.restore();
-    }
-    ctx.restore();
-  });
-
-  ctx.restore();
-}
 
 
 
@@ -1534,11 +1456,11 @@ function toggleFogRibbon() {
 }
 
 function setMode(nextMode) {
-  if (mode === "aoe" && nextMode !== "aoe") {
+  if (ui.mode === "aoe" && nextMode !== "aoe") {
     tools.aoe.template.visible = false;
     broadcastView();
   }
-  mode = nextMode;
+  ui.mode = nextMode;
   closeFogRibbon();
   tools.drawingRoom = [];
   tools.drawingObstacle = [];
@@ -1755,8 +1677,8 @@ function fitPlayerView() {
   state.playerView.matchDM = false;
   if (controls.playerMatchDM) controls.playerMatchDM.checked = false;
   const rect = canvas.getBoundingClientRect();
-  const vw = playerViewport?.w || rect.width;
-  const vh = playerViewport?.h || rect.height;
+  const vw = ui.playerViewport?.w || rect.width;
+  const vh = ui.playerViewport?.h || rect.height;
   state.playerView.scale = fitScaleFor(vw, vh, state.playerView.rotation || 0);
   state.playerView.cx = state.imageWidth / 2;
   state.playerView.cy = state.imageHeight / 2;
@@ -1875,161 +1797,10 @@ function releasePointer(pointerId) {
 
 /* ----------------------------- render ----------------------------- */
 
-function render() {
-  const rect = canvas.getBoundingClientRect();
-  castFrameKeys.clear();
-  lightFrameKeys.clear();
-  ctx.clearRect(0, 0, rect.width, rect.height);
-  ctx.fillStyle = "#080909";
-  ctx.fillRect(0, 0, rect.width, rect.height);
 
-  if (isPlayer && state.blackout) {
-    emptyState.classList.add("hidden");
-    return;
-  }
-  if (isPlayer && state.splash.enabled) {
-    renderSplash(rect);
-    return;
-  }
 
-  emptyState.classList.toggle("hidden", Boolean(state.imageData));
-  if (!state.imageData || !mapImage.complete) return;
 
-  const t = viewTransform();
-  cur.k = t.k;
-  cur.ms = t.ms;
-  const { w, h } = worldDims();
 
-  ctx.save();
-  // Center the view, rotate, scale, then shift so (cx,cy) sits at the canvas center.
-  ctx.translate(t.centerX, t.centerY);
-  ctx.rotate(t.rot);
-  ctx.scale(t.k, t.k);
-  ctx.translate(-t.cx * t.ms, -t.cy * t.ms);
-
-  // World block (native x map.scale)
-  ctx.drawImage(mapImage, 0, 0, w, h);
-  if (state.grid.enabled) drawGrid(w, h);
-
-  // Native block
-  ctx.save();
-  ctx.scale(t.ms, t.ms);
-  if (fogBuf.dirty) rebuildFog();
-  // Images and tokens sit BELOW the fog so anything in an unrevealed area is hidden (solid
-  // black for players, dimmed under the GM tint).
-  drawImages();
-  drawTokens();
-  compositeFog();
-  if (isPlayer && state.los.enabled) compositeLoS();
-  drawAoeTemplate(); // hover template sits above fog; visible to both GM and player
-  if (!isPlayer) drawRoomOutlines();
-  if (!isPlayer) drawObstacleOutlines();
-  if (!isPlayer) drawLights();
-  if (!isPlayer) drawCastDebug();
-  if (!isPlayer) drawStairs(); // stairs are a GM-only navigation aid stays above fog
-  if (!isPlayer) drawDraftRoom();
-  if (!isPlayer) drawDraftObstacle();
-  if (!isPlayer) drawStampDraft();
-  if (!isPlayer) drawCalibrationDraft();
-  if (tools.measureLine) drawMeasureLine();
-  if (!isPlayer && ["brush", "eraser"].includes(mode) && state.imageData) {
-    drawToolPreview(screenToNative(clientToCanvasPoint(lastPointer)));
-  }
-  ctx.restore();
-
-  ctx.restore();
-
-  // Screen-space overlays
-  drawPings();
-  if (tools.measureLine) drawMeasureLabel();
-  if (!isPlayer) drawRoomNames();
-  if (!isPlayer) drawNotes();
-  if (!isPlayer) drawPlayerFrame();
-  if (isPlayer && playerMarquee) drawPlayerMarquee();
-
-  // Keep the caches bounded to origins actually used this frame (~live token + light count).
-  for (const k of castCache.keys()) if (!castFrameKeys.has(k)) castCache.delete(k);
-  for (const k of lightCache.keys()) if (!lightFrameKeys.has(k)) lightCache.delete(k);
-}
-
-// GM-only: a red rectangle marking the region the player display currently shows, so the
-// GM can tell exactly what their players see. Uses the player's reported pixel size.
-// Screen-space corners of the player's visible region, or null when no frame is shown.
-// Un-rotates by the player's own rotation, then projects through the GM transform, so the
-// frame is correct even when the GM and player views are rotated differently.
-function playerFrameCorners() {
-  if (!showPlayerFrame || !playerViewport || !state.imageData) return null;
-  const ms = state.map.scale || 1;
-  const pv = state.playerView.matchDM ? state.view : state.playerView;
-  if (!pv.scale) return null;
-  const s = pv.scale * ms;
-  const hw = playerViewport.w / 2;
-  const hh = playerViewport.h / 2;
-  const pr = ((pv.rotation || 0) * Math.PI) / 180;
-  const cosP = Math.cos(-pr);
-  const sinP = Math.sin(-pr);
-  const toNative = (ox, oy) => ({
-    x: pv.cx + (ox * cosP - oy * sinP) / s,
-    y: pv.cy + (ox * sinP + oy * cosP) / s,
-  });
-  return [
-    nativeToScreen(toNative(-hw, -hh)),
-    nativeToScreen(toNative(hw, -hh)),
-    nativeToScreen(toNative(hw, hh)),
-    nativeToScreen(toNative(-hw, hh)),
-  ];
-}
-
-function drawPlayerFrame() {
-  const corners = playerFrameCorners();
-  if (!corners) return;
-  ctx.save();
-  ctx.globalAlpha = playerFrameOpacity;
-  ctx.strokeStyle = playerFrameColor;
-  ctx.lineWidth = 2;
-  ctx.setLineDash([10, 6]);
-  ctx.beginPath();
-  ctx.moveTo(corners[0].x, corners[0].y);
-  for (let i = 1; i < corners.length; i++) ctx.lineTo(corners[i].x, corners[i].y);
-  ctx.closePath();
-  ctx.stroke();
-  ctx.restore();
-}
-
-function renderSplash(rect) {
-  emptyState.classList.add("hidden");
-  if (!state.splash.imageData || !splashImage.complete) {
-    ctx.fillStyle = "#080909";
-    ctx.fillRect(0, 0, rect.width, rect.height);
-    return;
-  }
-  const scale = Math.min(rect.width / splashImage.naturalWidth, rect.height / splashImage.naturalHeight);
-  const width = splashImage.naturalWidth * scale;
-  const height = splashImage.naturalHeight * scale;
-  ctx.drawImage(splashImage, (rect.width - width) / 2, (rect.height - height) / 2, width, height);
-}
-
-function drawGrid(worldW, worldH) {
-  const size = state.grid.size;
-  if (size <= 0) return;
-  ctx.save();
-  ctx.globalAlpha = state.grid.opacity;
-  ctx.strokeStyle = state.grid.color;
-  ctx.lineWidth = 1 / cur.k;
-  ctx.beginPath();
-  const startX = ((state.grid.offsetX % size) + size) % size;
-  const startY = ((state.grid.offsetY % size) + size) % size;
-  for (let x = startX; x <= worldW; x += size) {
-    ctx.moveTo(x, 0);
-    ctx.lineTo(x, worldH);
-  }
-  for (let y = startY; y <= worldH; y += size) {
-    ctx.moveTo(0, y);
-    ctx.lineTo(worldW, y);
-  }
-  ctx.stroke();
-  ctx.restore();
-}
 
 /* ----------------------------- fog ----------------------------- */
 
@@ -2046,27 +1817,7 @@ function drawGrid(worldW, worldH) {
 
 
 
-function drawToolPreview(point) {
-  ctx.save();
-  ctx.globalAlpha = 1;
-  ctx.strokeStyle = mode === "eraser" ? "rgba(214,106,95,0.95)" : "rgba(127,182,166,0.95)";
-  ctx.fillStyle = mode === "eraser" ? "rgba(214,106,95,0.12)" : "rgba(127,182,166,0.12)";
-  ctx.lineWidth = 2 / (cur.k * cur.ms);
-  drawToolShapePath(point, state.fog.toolSize, state.fog.toolShape);
-  ctx.fill();
-  ctx.stroke();
-  ctx.restore();
-}
 
-function drawToolShapePath(point, size, shape) {
-  const radius = size / 2;
-  ctx.beginPath();
-  if (shape === "square") {
-    ctx.rect(point.x - radius, point.y - radius, size, size);
-  } else {
-    ctx.arc(point.x, point.y, radius, 0, Math.PI * 2);
-  }
-}
 
 
 // Arm a "drag one square" calibration. The next drag on the map sets either the grid
@@ -2699,7 +2450,7 @@ function onKeyUp(event) {
 // token whose center projects inside it (additive when shift was held at the start); a no-drag tap
 // just clears the selection (a shift-tap leaves it alone).
 function finishPlayerMarquee() {
-  const m = playerMarquee;
+  const m = sel.marquee;
   if (!m) return;
   const minX = Math.min(m.x0, m.x1), maxX = Math.max(m.x0, m.x1);
   const minY = Math.min(m.y0, m.y1), maxY = Math.max(m.y0, m.y1);
@@ -2723,21 +2474,6 @@ function finishPlayerMarquee() {
   render();
 }
 
-// Draw the rubber-band box in screen space (canvas px), matching the cyan selection accent.
-function drawPlayerMarquee() {
-  const m = playerMarquee;
-  if (!m) return;
-  const x = Math.min(m.x0, m.x1), y = Math.min(m.y0, m.y1);
-  const w = Math.abs(m.x1 - m.x0), h = Math.abs(m.y1 - m.y0);
-  ctx.save();
-  ctx.fillStyle = "rgba(58,210,230,0.12)";
-  ctx.strokeStyle = "#3ad2e6";
-  ctx.lineWidth = 1.5;
-  ctx.setLineDash([6, 4]);
-  ctx.fillRect(x, y, w, h);
-  ctx.strokeRect(x, y, w, h);
-  ctx.restore();
-}
 
 /* ----------------------------- map images & notes ----------------------------- */
 
@@ -3034,7 +2770,7 @@ function triggerPing(native) {
 /* ----------------------------- pointer input ----------------------------- */
 
 function onPointerDown(event) {
-  lastPointer = { clientX: event.clientX, clientY: event.clientY };
+  ui.lastPointer = { clientX: event.clientX, clientY: event.clientY };
 
   // Player display: only PLAYER-type tokens can be picked up and moved by touch. NPC and
   // monster tokens are GM-controlled and inert here — a touch on one does nothing. Empty space
@@ -3068,7 +2804,7 @@ function onPointerDown(event) {
       // Empty space starts a marquee. Shift keeps the current selection and adds the box; without
       // shift the box replaces the selection (and a no-drag tap clears it — handled on pointer-up).
       const p = clientToCanvasPoint(event);
-      playerMarquee = { x0: p.x, y0: p.y, x1: p.x, y1: p.y, additive: event.shiftKey };
+      sel.marquee = { x0: p.x, y0: p.y, x1: p.x, y1: p.y, additive: event.shiftKey };
       isDragging = true;
       capturePointer(event.pointerId);
     }
@@ -3104,7 +2840,7 @@ function onPointerDown(event) {
     return;
   }
 
-  if (mode === "stamp") {
+  if (ui.mode === "stamp") {
     fogBuf.stampDraft = { shape: state.fog.stampShape, start: native, end: native };
     isDragging = true;
     capturePointer(event.pointerId);
@@ -3112,28 +2848,28 @@ function onPointerDown(event) {
     return;
   }
 
-  if (mode === "aoe") {
+  if (ui.mode === "aoe") {
     return; // hover-only: no click/drag action
   }
 
-  if (mode === "polygon" || mode === "namedPolygon") {
+  if (ui.mode === "polygon" || ui.mode === "namedPolygon") {
     tools.drawingRoom.push(native);
     render();
     return;
   }
 
-  if (mode === "draw") {
+  if (ui.mode === "draw") {
     tools.drawingObstacle.push(native);
     render();
     return;
   }
 
-  if (mode === "light") {
+  if (ui.mode === "light") {
     addLight(native);
     return;
   }
 
-  if (mode === "token") {
+  if (ui.mode === "token") {
     const hit = hitToken(native);
     if (hit) {
       pushHistory();
@@ -3146,7 +2882,7 @@ function onPointerDown(event) {
     return;
   }
 
-  if (mode === "stair") {
+  if (ui.mode === "stair") {
     if (state.floors.length < 2) {
       window.alert("Add a second floor first.");
       return;
@@ -3157,7 +2893,7 @@ function onPointerDown(event) {
 
   // In Move mode: click a token to select it (for arrow-key nudging), a note or image to
   // select+drag it, or a stair to jump floors. Clicking empty space clears selection and pans.
-  if (mode === "pan") {
+  if (ui.mode === "pan") {
     const token = hitToken(native);
     if (token) {
       // Select it (edit panel + arrow-key nudge) AND start a drag, so a click-drag moves the
@@ -3227,7 +2963,7 @@ function onPointerDown(event) {
     }
   }
 
-  if (mode === "measure") {
+  if (ui.mode === "measure") {
     tools.measureLine = { start: native, end: native };
     isDragging = true;
     capturePointer(event.pointerId);
@@ -3236,11 +2972,11 @@ function onPointerDown(event) {
     return;
   }
 
-  if (mode === "brush" || mode === "eraser") {
+  if (ui.mode === "brush" || ui.mode === "eraser") {
     pushHistory();
     fogBuf.activeStroke = {
       id: uuid(),
-      kind: mode === "eraser" ? "erase" : "paint",
+      kind: ui.mode === "eraser" ? "erase" : "paint",
       shape: state.fog.toolShape,
       size: state.fog.toolSize,
       points: [native],
@@ -3260,7 +2996,7 @@ function onPointerDown(event) {
 }
 
 function onPointerMove(event) {
-  lastPointer = { clientX: event.clientX, clientY: event.clientY };
+  ui.lastPointer = { clientX: event.clientX, clientY: event.clientY };
 
   // Player display: drag the selected formation locally for feedback, or stretch a marquee.
   if (isPlayer) {
@@ -3284,18 +3020,18 @@ function onPointerMove(event) {
         streamGroupMove();
         ensureCameraLoop(); // glide the follow camera as the party is dragged
       }
-    } else if (playerMarquee) {
+    } else if (sel.marquee) {
       const p = clientToCanvasPoint(event);
-      playerMarquee.x1 = p.x;
-      playerMarquee.y1 = p.y;
+      sel.marquee.x1 = p.x;
+      sel.marquee.y1 = p.y;
       render();
     }
     return;
   }
 
   if (!isDragging) {
-    if (["brush", "eraser"].includes(mode)) render(); // live tool preview
-    if (mode === "aoe" && state.imageData) {
+    if (["brush", "eraser"].includes(ui.mode)) render(); // live tool preview
+    if (ui.mode === "aoe" && state.imageData) {
       const native = toNativePoint(event);
       tools.aoe.template.x = native.x;
       tools.aoe.template.y = native.y;
@@ -3303,7 +3039,7 @@ function onPointerMove(event) {
       renderAndSyncView();
     }
     // Hint that the player-view frame can be dragged.
-    if (mode === "pan" && state.imageData) {
+    if (ui.mode === "pan" && state.imageData) {
       const frame = playerFrameCorners();
       canvas.style.cursor = frame && pointInPolygon(clientToCanvasPoint(event), frame) ? "move" : "";
     }
@@ -3402,9 +3138,9 @@ function onPointerUp(event) {
       draggingToken = null;
       groupDragOffsets = null;
       dragGrabbed = false;
-    } else if (playerMarquee) {
+    } else if (sel.marquee) {
       finishPlayerMarquee();
-      playerMarquee = null;
+      sel.marquee = null;
     }
     isDragging = false;
     return;
@@ -3463,7 +3199,7 @@ function onPointerUp(event) {
     renderAndSync(); // persist the player view position
   }
 
-  if (tools.measureLine && mode === "measure") {
+  if (tools.measureLine && ui.mode === "measure") {
     tools.measureLine = null;
     render();
     relay({ type: "measure", line: null });
@@ -3483,7 +3219,7 @@ function onWheel(event) {
   if (isPlayer) return;
 
   // Rotate cone when in AoE mode (don't zoom)
-  if (mode === "aoe" && tools.aoe.shape === "cone") {
+  if (ui.mode === "aoe" && tools.aoe.shape === "cone") {
     event.preventDefault();
     tools.aoe.angle += event.deltaY < 0 ? -0.1 : 0.1;
     if (controls.aoeAngleSlider) {
@@ -3527,8 +3263,8 @@ function onDoubleClick(event) {
     editNote(note);
     return;
   }
-  if (mode === "polygon" || mode === "namedPolygon") finishRoom();
-  if (mode === "draw") finishObstacle();
+  if (ui.mode === "polygon" || ui.mode === "namedPolygon") finishRoom();
+  if (ui.mode === "draw") finishObstacle();
 }
 
 function onContextMenu(event) {
@@ -3542,7 +3278,7 @@ function onContextMenu(event) {
     render();
     return;
   }
-  if (mode === "draw") {
+  if (ui.mode === "draw") {
     const ob = hitObstacle(toNativePoint(event));
     if (ob) {
       pushHistory();
@@ -3552,7 +3288,7 @@ function onContextMenu(event) {
     }
     return;
   }
-  if (mode === "light") {
+  if (ui.mode === "light") {
     const lt = hitLight(toNativePoint(event));
     if (lt) {
       pushHistory();
@@ -3600,7 +3336,7 @@ function onKeyDown(event) {
   }
   if (event.target?.matches?.("input, button, textarea, select")) return;
 
-  const drawingPolygon = mode === "polygon" || mode === "namedPolygon";
+  const drawingPolygon = ui.mode === "polygon" || ui.mode === "namedPolygon";
   const ctrl = event.ctrlKey || event.metaKey;
   if (ctrl && event.key.toLowerCase() === "z") {
     event.preventDefault();
@@ -3611,7 +3347,7 @@ function onKeyDown(event) {
       render();
       return;
     }
-    if (!event.shiftKey && mode === "draw" && tools.drawingObstacle.length) {
+    if (!event.shiftKey && ui.mode === "draw" && tools.drawingObstacle.length) {
       tools.drawingObstacle.pop();
       render();
       return;
@@ -3633,7 +3369,7 @@ function onKeyDown(event) {
     render();
     return;
   }
-  if ((event.key === "Backspace" || event.key === "Delete") && mode === "draw" && tools.drawingObstacle.length) {
+  if ((event.key === "Backspace" || event.key === "Delete") && ui.mode === "draw" && tools.drawingObstacle.length) {
     event.preventDefault();
     tools.drawingObstacle.pop();
     render();
@@ -3678,7 +3414,7 @@ function onKeyDown(event) {
     finishRoom();
     return;
   }
-  if (event.key === "Enter" && mode === "draw") {
+  if (event.key === "Enter" && ui.mode === "draw") {
     event.preventDefault();
     finishObstacle();
     return;
@@ -3689,7 +3425,7 @@ function onKeyDown(event) {
     render();
     return;
   }
-  if (event.key === "Escape" && mode === "draw" && tools.drawingObstacle.length) {
+  if (event.key === "Escape" && ui.mode === "draw" && tools.drawingObstacle.length) {
     event.preventDefault();
     tools.drawingObstacle = [];
     render();
@@ -3708,7 +3444,7 @@ function onKeyDown(event) {
 }
 
 function adjustBrush(delta) {
-  if (!["brush", "eraser"].includes(mode)) return;
+  if (!["brush", "eraser"].includes(ui.mode)) return;
   const next = Math.min(Number(controls.brushSize.max), Math.max(Number(controls.brushSize.min), state.fog.toolSize + delta));
   state.fog.toolSize = next;
   controls.brushSize.value = next;
@@ -3837,30 +3573,6 @@ function resetExplored() {
 }
 
 
-// GM-only debug overlay: when castDebug is on and a token is selected, fill + outline the
-// visibility polygon cast from that token so the engine can be eyeballed (walls occlude,
-// windows pass, corners peek) before any consumer is wired up. Drawn in the Native block.
-function drawCastDebug() {
-  if (isPlayer || !castDebug || !sel.token || !state.imageData) return;
-  const poly = getVisibilityPolygon({ x: sel.token.x, y: sel.token.y });
-  if (poly.length < 3) return;
-  ctx.save();
-  ctx.beginPath();
-  ctx.moveTo(poly[0].x, poly[0].y);
-  for (let i = 1; i < poly.length; i++) ctx.lineTo(poly[i].x, poly[i].y);
-  ctx.closePath();
-  ctx.fillStyle = "rgba(120, 220, 255, 0.16)";
-  ctx.fill();
-  ctx.lineWidth = 1.5 / (cur.k * cur.ms);
-  ctx.strokeStyle = "rgba(120, 220, 255, 0.85)";
-  ctx.stroke();
-  // Mark the cast origin.
-  ctx.beginPath();
-  ctx.arc(sel.token.x, sel.token.y, 4 / (cur.k * cur.ms), 0, Math.PI * 2);
-  ctx.fillStyle = "rgba(120, 220, 255, 0.95)";
-  ctx.fill();
-  ctx.restore();
-}
 
 function finishRoom() {
   if (isPlayer || tools.drawingRoom.length < 3) return;
@@ -3875,7 +3587,7 @@ function finishRoom() {
   tools.drawingRoom = [];
   fogBuf.dirty = true;
   renderAndSync();
-  if (mode === "namedPolygon") {
+  if (ui.mode === "namedPolygon") {
     // Defer one tick so the Enter keypress that finished the polygon can't also submit the dialog.
     setTimeout(() => promptRoomName(room), 0);
   }
@@ -3908,15 +3620,15 @@ function promptRoomName(room) {
 /* ----------------------------- misc ----------------------------- */
 
 function loadImage(src, afterLoad) {
-  mapImage = new Image();
-  mapImage.onload = afterLoad;
-  mapImage.src = src;
+  scene.map = new Image();
+  scene.map.onload = afterLoad;
+  scene.map.src = src;
 }
 
 function loadSplashImage(src, afterLoad) {
-  splashImage = new Image();
-  splashImage.onload = afterLoad;
-  splashImage.src = src;
+  scene.splash = new Image();
+  scene.splash.onload = afterLoad;
+  scene.splash.src = src;
 }
 
 function toggleFullscreen() {
