@@ -61,6 +61,7 @@ function drawObstacleOutlines() {
     ctx.beginPath();
     ctx.moveTo(pts[0].x, pts[0].y);
     for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
+    if (ob.conceal) ctx.closePath(); // conceal zones are closed boxes, not open wall runs
     ctx.stroke();
   });
   ctx.setLineDash([]);
@@ -165,13 +166,14 @@ function drawDraftRoom() {
 // Closed-state behavior flags per kind. Doors block until opened (the session tracks open doors);
 // windows and objects are see-through but block movement (window = a drawn pane; object = an
 // invisible railing/ledge — pier edges, low hedges, anything you can see over but not cross);
-// invisible walls block sight/light but draw no line.
+// invisible is a conceal zone: a passable closed box that blocks nothing but ghosts any token
+// standing inside it on the player view (the field-to-dungeon "descend out of view" effect).
 function obstacleDefaults(kind) {
   switch (kind) {
     case "window":    return { blocksSight: false, blocksLight: false, blocksMove: true, drawn: true, openable: false };
     case "object":    return { blocksSight: false, blocksLight: false, blocksMove: true, drawn: true, openable: false }; // see-through barrier: railings, pier edges, low hedges
     case "door":      return { blocksSight: true, blocksLight: true, blocksMove: true, drawn: true, openable: true };
-    case "invisible": return { blocksSight: true, blocksLight: true, blocksMove: true, drawn: false, openable: false };
+    case "invisible": return { blocksSight: false, blocksLight: false, blocksMove: false, drawn: false, openable: false, conceal: true }; // conceal zone: passable closed box; ghosts tokens inside it on the player view
     default:          return { blocksSight: true, blocksLight: true, blocksMove: true, drawn: true, openable: false }; // wall/ethereal
   }
 }
