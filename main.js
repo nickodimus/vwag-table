@@ -3495,43 +3495,98 @@ function finishObstacle() {
 // skipping any OPEN door, plus the map boundary. Memoized by castVersion so it rebuilds only when
 // geometry changes — and the ob.open check means it cooperates with door-open-close once that lands.
 
-// Nearest wall the move (origin -> origin+move) crosses, as { t, seg } where t is the fraction
-// along `move` (rayHit returns origin + move*t); null if the whole move is clear.
-function firstMoveHit(origin, move, segs) {
-  let best = 1, hitSeg = null;
-  for (const seg of segs) {
-    const h = rayHit(origin, move, seg);
-    if (h && h.t < best) { best = h.t; hitSeg = seg; }
+// Token movement collision radius, as a fraction of a cell. Kept under 0.5 so a token still fits
+// through a one-cell doorway. This is the radius the old center-path resolveMove lacked: with no
+// margin, a token's center could land exactly on a grid-aligned wall (hit at t=1.0, which the scan
+// skipped) and then leave through it (hit at t~=0, also skipped), which walked players through walls
+// on integer-grid maps like the converted DungeonDraft modules. With a radius the center stops this
+// far short of every wall and can never reach, rest on, or cross one.
+const COLLIDE_RADIUS_CELLS = 0.4;
+
+// Earliest time t in [0,1] that a circle of radius r centered at p0 and displaced by d first touches
+// segment a-b, as { t, nx, ny } with (nx,ny) the unit contact normal pointing back toward p0 — or
+// null if the swept circle never reaches it. Tests the segment body (the parallel offset lines, only
+// where the closest point projects onto the segment) and both endpoint caps (the moving center vs a
+// circle of radius r at a and at b). Reports an immediate hit (t=0) only when p0 already lies within
+// r AND d pushes deeper, so a token resting against a wall can still slide along it or step away —
+// it just can never cross it.
+function sweepCircleSeg(p0, d, a, b, r) {
+  let bestT = Infinity, nx = 0, ny = 0;
+  const ex = b.x - a.x, ey = b.y - a.y;
+  const elen2 = ex * ex + ey * ey;
+  if (elen2 > 1e-12) {
+    const elen = Math.sqrt(elen2);
+    let onx = -ey / elen, ony = ex / elen;                  // a unit normal of the segment
+    const s0 = (p0.x - a.x) * onx + (p0.y - a.y) * ony;     // signed distance of p0 to the segment line
+    if (s0 < 0) { onx = -onx; ony = -ony; }                 // orient the normal toward p0
+    const sn = d.x * onx + d.y * ony;                       // closing rate (negative = moving toward wall)
+    const dist = Math.abs(s0);
+    let tBody = null;
+    if (dist <= r) { if (sn < 0) tBody = 0; }               // already within r and pushing deeper
+    else if (sn < -1e-12) tBody = (dist - r) / (-sn);       // reach distance r at this fraction of d
+    if (tBody !== null && tBody <= 1 + 1e-9) {
+      const cx = p0.x + d.x * tBody, cy = p0.y + d.y * tBody;
+      const u = ((cx - a.x) * ex + (cy - a.y) * ey) / elen2; // projection onto the segment
+      if (u >= 0 && u <= 1 && tBody < bestT) { bestT = tBody; nx = onx; ny = ony; }
+    }
   }
-  return hitSeg ? { t: best, seg: hitSeg } : null;
+  for (const c of [a, b]) {                                  // endpoint caps: moving center vs circle r
+    const fx = p0.x - c.x, fy = p0.y - c.y;
+    const A = d.x * d.x + d.y * d.y;
+    if (A < 1e-12) continue;
+    const B = 2 * (fx * d.x + fy * d.y);
+    const C = fx * fx + fy * fy - r * r;
+    if (C <= 0) {                                            // p0 already within r of this endpoint
+      if (B < 0 && bestT > 0) { const m = Math.hypot(fx, fy) || 1; bestT = 0; nx = fx / m; ny = fy / m; }
+      continue;
+    }
+    const disc = B * B - 4 * A * C;
+    if (disc < 0) continue;
+    const t = (-B - Math.sqrt(disc)) / (2 * A);              // earliest root (entering the cap)
+    if (t >= 0 && t <= 1 + 1e-9 && t < bestT) {
+      const hx = p0.x + d.x * t, hy = p0.y + d.y * t;
+      const m = Math.hypot(hx - c.x, hy - c.y) || 1;
+      bestT = t; nx = (hx - c.x) / m; ny = (hy - c.y) / m;
+    }
+  }
+  if (bestT === Infinity) return null;
+  return { t: Math.max(0, bestT), nx, ny };
 }
 
-// Resolve a token move from -> to against move-blocking walls: stop just short of the first wall
-// crossed, then slide the leftover motion along that wall (one pass, so a perpendicular wall still
-// stops the slide). Center-path — the token is a point at its center; radius is a future chunk.
+// Earliest wall the swept token (center origin, radius r, displacement move) reaches, as
+// { t, nx, ny }, or null if the whole sweep is clear. Replaces the old point-vs-segment rayHit scan.
+function firstMoveHit(origin, move, segs, r) {
+  let best = null;
+  for (const seg of segs) {
+    const h = sweepCircleSeg(origin, move, seg.a, seg.b, r);
+    if (h && h.t <= 1 + 1e-9 && (!best || h.t < best.t)) best = h;
+  }
+  return best;
+}
+
+// Resolve a token move from -> to against move-blocking walls as a circle of radius r: stop the
+// center r short of the first wall the body reaches, then slide the leftover motion along that wall
+// (one pass, so a perpendicular wall still stops the slide). The radius is what closes the grid-
+// aligned walk-through — the center can never reach, rest on, or cross a wall.
 function resolveMove(from, to) {
-  const move = { x: to.x - from.x, y: to.y - from.y };
-  const len = Math.hypot(move.x, move.y);
-  if (len < 1e-9) return { x: to.x, y: to.y };
   const segs = moveSegments();
-  const hit = firstMoveHit(from, move, segs);
-  if (!hit) return { x: to.x, y: to.y }; // clear path
-  const back = Math.max(0, hit.t - 0.5 / len); // rest ~0.5px off the wall
-  const contact = { x: from.x + move.x * back, y: from.y + move.y * back };
-  // Slide: project the leftover motion onto the wall's direction, then sweep that too.
-  const rem = { x: move.x * (1 - hit.t), y: move.y * (1 - hit.t) };
-  const wx = hit.seg.b.x - hit.seg.a.x, wy = hit.seg.b.y - hit.seg.a.y;
-  const wlen = Math.hypot(wx, wy);
-  if (wlen < 1e-9) return contact;
-  const ux = wx / wlen, uy = wy / wlen;
-  const d = rem.x * ux + rem.y * uy;
-  const slide = { x: ux * d, y: uy * d };
-  const slen = Math.hypot(slide.x, slide.y);
-  if (slen < 1e-9) return contact;
-  const sHit = firstMoveHit(contact, slide, segs);
-  if (!sHit) return { x: contact.x + slide.x, y: contact.y + slide.y };
-  const sBack = Math.max(0, sHit.t - 0.5 / slen);
-  return { x: contact.x + slide.x * sBack, y: contact.y + slide.y * sBack };
+  const r = COLLIDE_RADIUS_CELLS * pxPerCellNative();
+  let cur = { x: from.x, y: from.y };
+  let move = { x: to.x - from.x, y: to.y - from.y };
+  for (let pass = 0; pass < 2; pass++) {
+    if (Math.hypot(move.x, move.y) < 1e-9) break;
+    const hit = firstMoveHit(cur, move, segs, r);
+    if (!hit) { cur = { x: cur.x + move.x, y: cur.y + move.y }; break; } // clear path
+    const adv = Math.max(0, hit.t - 1e-4);                  // stop a hair before contact
+    cur = { x: cur.x + move.x * adv, y: cur.y + move.y * adv };
+    if (pass === 1) break;                                  // one slide pass only
+    // Slide: project the leftover motion onto the wall tangent (perpendicular to the contact normal).
+    const rem = { x: move.x * (1 - adv), y: move.y * (1 - adv) };
+    const tx = -hit.ny, ty = hit.nx;
+    const d = rem.x * tx + rem.y * ty;
+    move = { x: tx * d, y: ty * d };
+  }
+  return cur;
 }
 
 
