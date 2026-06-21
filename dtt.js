@@ -2,9 +2,22 @@
  * Reads a DungeonDraft .dtt module (a plain .zip) entirely in-browser with no libraries, so the
  * off-grid solar Pi needs no CDN. Pure: turns archive bytes into a structured object and stops
  * there. Applying that object to state (geometry/lights/tokens/notes) is the apply layer, which
- * stays in app.js until geometry.js and vision.js exist, then rejoins here.
+ * rejoined here once geometry.js and vision.js existed (it needs both to place geometry).
  */
 
+
+import {
+  state, uuid,
+} from "./state.js";
+import {
+  cellsToNative, pxPerCellNative, simplifyPolyline,
+} from "./geometry.js";
+import {
+  invalidateCast,
+} from "./vision.js";
+import {
+  obstacleDefaults,
+} from "./rooms-obstacles.js";
 // DTT modules are plain .zip archives (data.dtt + save.json + map.webp + fog.webp + thumb).
 // We read them entirely in-browser with no libraries — the play table is an off-grid solar Pi,
 // so a runtime CDN dependency is unacceptable. The browser's built-in DecompressionStream
@@ -85,4 +98,125 @@ function parseDtt(entries) {
   };
 }
 
-export { readZip, parseDtt };
+
+// ---------------------------------------------------------------------------------------------
+// Apply layer: turn a parsed DTT object into live board state. Parked in app.js since step 3 until
+// geometry + vision existed; now reunited with the reader. importDtt is the public entry; the rest
+// are internal dispatch. loadDttFile (app.js) drives readZip -> parseDtt -> importDtt -> installMap.
+// ---------------------------------------------------------------------------------------------
+
+const DTT_SIMPLIFY_TOLERANCE = 0.2;
+const DTT_TOKEN_COLORS = {
+  red: "#e24a4a", blue: "#3b82f6", green: "#3aa655", yellow: "#d6a94d",
+  orange: "#e08a3c", purple: "#8b5cf6", white: "#e8e8e8", black: "#222222",
+  cyan: "#3ec6c6", magenta: "#d4537e", gray: "#9aa0a6", grey: "#9aa0a6",
+};
+
+// Map a parsed DTT's six obstacle kinds into the obstacle store. DTT polylines are already open
+// polylines in cell coordinates — the exact shape state.obstacles holds — so geometry maps
+// directly; only Douglas-Peucker simplification (simplifyPolyline) thins the dense polylines. Each record draws its blocking rules from obstacleDefaults(kind), identical to a
+// hand-drawn obstacle (so wall/object/ethereal share the default profile, windows pass sight and
+// light, invisibles block but don't render, doors are openable). Replaces the store wholesale: a
+// fresh module import never appends to whatever was on the map before.
+function importObstacles(dtt) {
+  const KINDS = [
+    ["walls", "wall"],
+    ["doors", "door"],
+    ["windows", "window"],
+    ["objects", "object"],
+    ["ethereals", "ethereal"],
+    ["invisibles", "invisible"],
+  ];
+  const obstacles = [];
+  for (const [src, kind] of KINDS) {
+    for (const poly of dtt[src] || []) {
+      if (!Array.isArray(poly) || poly.length < 2) continue;
+      obstacles.push({
+        id: uuid(),
+        kind,
+        // Simplify in cell space (tolerance is in cells), then bake to native px so geometry is
+        // locked to the image and independent of the display grid (decouple-walls-from-grid).
+        points: simplifyPolyline(poly, DTT_SIMPLIFY_TOLERANCE).map((p) => {
+          const n = cellsToNative({ x: p[0], y: p[1] });
+          return [n.x, n.y];
+        }),
+        ...obstacleDefaults(kind),
+        defaultOpen: false,
+      });
+    }
+  }
+  state.obstacles = obstacles;
+}
+
+// DTT token types collapse to vwag's three: player / npc / monster (enemy and anything else read
+// as monster).
+function dttTokenType(t) {
+  if (t === "player") return "player";
+  if (t === "npc") return "npc";
+  return "monster";
+}
+
+// Import placed lights. DTT positions are cells and radii are feet (÷5 = cells); both are baked to
+// native px here so lights lock to the image like obstacles. Inactive lights are skipped.
+function importLights(dtt) {
+  const lights = [];
+  for (const l of (dtt.save && dtt.save.lights) || []) {
+    if (l.active === false) continue;
+    const p = l.position || {};
+    const n = cellsToNative({ x: p.x || 0, y: p.y || 0 });
+    lights.push({ id: uuid(), x: n.x, y: n.y, radius: ((l.radius || 0) / 5) * pxPerCellNative() });
+  }
+  state.lights = lights;
+}
+
+// Import tokens. Position converts cells -> native px (vwag tokens carry native coords); size and
+// torch radii are feet -> cells (/5). A torch_on token carries a light of dim_radius cells. The
+// token art path is a local file outside the zip, so images import blank — type + color stand in.
+function importTokens(dtt) {
+  const tokens = [];
+  for (const t of (dtt.save && dtt.save.tokens) || []) {
+    const p = t.position || {};
+    const n = cellsToNative({ x: p.x || 0, y: p.y || 0 });
+    tokens.push({
+      id: uuid(),
+      x: n.x,
+      y: n.y,
+      cells: Math.max(1, Math.round((t.size || 5) / 5)),
+      color: DTT_TOKEN_COLORS[t.border_color] || "#d6a94d",
+      label: "",
+      type: dttTokenType(t.type),
+      light: t.torch_on ? (t.dim_radius || 0) / 5 : 0,
+      image: "",
+    });
+  }
+  state.tokens = tokens;
+}
+
+// Import room labels as GM-only floating notes. Position converts cells -> native px; text is 1:1.
+// (DTT calls these "notes"; they map to vwag's notes feature, not the reserved pins field, which
+// stays for Encounter-Area linkage.)
+function importNotes(dtt) {
+  const notes = [];
+  for (const nt of (dtt.save && dtt.save.notes) || []) {
+    const p = nt.position || {};
+    const n = cellsToNative({ x: p.x || 0, y: p.y || 0 });
+    notes.push({ id: uuid(), x: n.x, y: n.y, text: nt.text || "", scale: 1 });
+  }
+  state.notes = notes;
+}
+
+// Orchestrate a full DTT import into the live stores: geometry (6b), lights + tokens (6c), room
+// notes (6d), and the line-of-sight flag. A single cast invalidation covers all of them; the LoS
+// checkbox re-syncs when installMap calls refreshFloorUI right after this runs.
+function importDtt(dtt) {
+  importObstacles(dtt);
+  importLights(dtt);
+  importTokens(dtt);
+  importNotes(dtt);
+  if (dtt.save && typeof dtt.save.line_of_sight === "boolean") {
+    state.los.enabled = dtt.save.line_of_sight;
+  }
+  invalidateCast();
+}
+
+export { readZip, parseDtt, importDtt };
