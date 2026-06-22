@@ -1091,6 +1091,31 @@ input:disabled {
   width: 8px;
 }
 
+.floor-ov-tv {
+  align-items: center;
+  color: #6fcf8e;
+  display: inline-flex;
+  flex: none;
+}
+
+.floor-ov-tv svg {
+  fill: none;
+  height: 14px;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2;
+  width: 14px;
+}
+
+.floor-ov-list li.on-table {
+  box-shadow: inset 2px 0 0 #6fcf8e;
+}
+
+.floor-ov-list li.current.on-table {
+  box-shadow: inset 0 0 0 1px var(--accent), inset 2px 0 0 #6fcf8e;
+}
+
 /* ---- Player floor badge ---- */
 .player-floor-badge {
   background: rgba(6, 2, 28, 0.82);
@@ -1144,6 +1169,50 @@ input:disabled {
   stroke-linejoin: round;
   stroke-width: 2;
   width: 16px;
+}
+
+.floor-table-sync {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 14px;
+  margin-top: 8px;
+}
+
+.floor-table-sync .ghost-button {
+  align-items: center;
+  display: flex;
+  gap: 6px;
+}
+
+.floor-table-sync .ghost-button svg {
+  fill: none;
+  flex-shrink: 0;
+  height: 16px;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2;
+  width: 16px;
+}
+
+.floor-table-sync .ghost-button:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
+.pin-toggle {
+  align-items: center;
+  color: var(--muted);
+  cursor: pointer;
+  display: flex;
+  flex-direction: row;
+  font-size: 0.82rem;
+  gap: 6px;
+}
+
+.pin-toggle input {
+  margin: 0;
 }
 
 .danger-button {

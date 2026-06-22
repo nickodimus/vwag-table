@@ -211,6 +211,8 @@ const controls = {
   addFloorUp: document.getElementById("addFloorUp"),
   addFloorDown: document.getElementById("addFloorDown"),
   deleteFloor: document.getElementById("deleteFloor"),
+  pushToTable: document.getElementById("pushToTable"),
+  pinTable: document.getElementById("pinTable"),
   playerFloorBadge: document.getElementById("playerFloorBadge"),
   fitMapBtn: document.getElementById("fitMapBtn"),
   initToggle: document.getElementById("initToggle"),
@@ -275,7 +277,7 @@ const sel = { image: null, note: null, token: null, playerTokens: [], marquee: n
 const peerWindow = { ref: null };
 // GM-side interaction + overlay state. mode = active tool; lastPointer = last cursor pos (for previews);
 // castDebug = draw the LOS cast polygon; playerFrame* = the dashed rect on the GM screen showing the player viewport.
-const ui = { mode: "pan", lastPointer: { clientX: 0, clientY: 0 }, castDebug: false, playerFrameColor: "#e24a4a", playerFrameOpacity: 0.9, playerViewport: null, showPlayerFrame: true };
+const ui = { mode: "pan", lastPointer: { clientX: 0, clientY: 0 }, castDebug: false, playerFrameColor: "#e24a4a", playerFrameOpacity: 0.9, playerViewport: null, showPlayerFrame: true, pinTable: false };
 // The two background <img> sources: the active map and the splash image.
 const scene = { map: new Image(), splash: new Image() };
 // Cast/light visibility caches (promoted from app.js): the cast-polygon cache keyed by version+origin,
@@ -356,6 +358,7 @@ const state = {
   view: { scale: 1, cx: 0, cy: 0, rotation: 0 },
   playerView: { matchDM: true, scale: 1, cx: 0, cy: 0, rotation: 0 },
   currentFloorId: INITIAL_FLOOR_ID,
+  activeFloorId: INITIAL_FLOOR_ID, // the floor the players' table is showing; == currentFloorId unless the table is pinned
   floors: [makeFloor(INITIAL_FLOOR_ID)],
   floorPosition: 1, // player-side display only
   floorCount: 1, // player-side display only
