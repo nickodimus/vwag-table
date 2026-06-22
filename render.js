@@ -158,7 +158,7 @@ function render() {
   if (!isPlayer) drawObstacleOutlines();
   if (!isPlayer) drawLights();
   if (!isPlayer) drawCastDebug();
-  if (!isPlayer) drawStairs(); // stairs are a GM-only navigation aid stays above fog
+  drawStairs(); // GM and player alike, above fog — players need to see a stair to stand on it (show-all for now; FoW-gating is a later refinement)
   if (!isPlayer) drawDraftRoom();
   if (!isPlayer) drawDraftObstacle();
   if (!isPlayer) drawStampDraft();
