@@ -18,7 +18,12 @@ function sortedCombatants() {
 // highlight on both screens. Null when initiative is off/empty or the combatant has no token.
 function activeTurnTokenId() {
   const init = state.initiative;
-  if (!init.active || !init.combatants.length) return null;
+  // The active-turn ring follows whoever's turn it is whenever there are combatants — independent
+  // of whether the docked panel is open. init.active means only "the panel is docked"; the compact
+  // overlay is the panel-closed turn control, and its arrows must move the ring. Gating on
+  // init.active stranded the ring (and, since the player mirrors initiative, the players' ring too)
+  // the moment the panel closed — which is exactly when the overlay is in use.
+  if (!init.combatants.length) return null;
   const c = sortedCombatants()[init.turn];
   return c ? c.tokenId || null : null;
 }
