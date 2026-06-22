@@ -644,6 +644,9 @@ function bindControls() {
     tools.lightRadius = Number(controls.lightRadius.value) || 1;
     if (controls.lightRadiusVal) controls.lightRadiusVal.textContent = tools.lightRadius;
   });
+  controls.lightColor?.addEventListener("input", () => {
+    tools.lightColor = controls.lightColor.value || "#ffd9a0";
+  });
   controls.tokenLight?.addEventListener("input", () => {
     if (controls.tokenLightVal) controls.tokenLightVal.textContent = Number(controls.tokenLight.value) || 0;
   });
@@ -3836,7 +3839,7 @@ function resolveMove(from, to) {
 function addLight(native) {
   if (isPlayer) return;
   pushHistory();
-  state.lights.push({ id: uuid(), x: native.x, y: native.y, radius: tools.lightRadius * pxPerCellNative() });
+  state.lights.push({ id: uuid(), x: native.x, y: native.y, radius: tools.lightRadius * pxPerCellNative(), color: tools.lightColor });
   invalidateCast();
   renderAndSync();
 }

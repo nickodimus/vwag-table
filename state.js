@@ -34,6 +34,10 @@ const darkCtx = darkCanvas.getContext("2d");
 // radius-clipped). When darkness is on, the player only sees line-of-sight INTERSECT this.
 const lightCanvas = document.createElement("canvas");
 const lightCtx = lightCanvas.getContext("2d");
+// 5e: colored-light tint for the current frame — each source's wall-occluded reach painted in
+// its own color, composited additively over the map on both the GM and player views.
+const tintCanvas = document.createElement("canvas");
+const tintCtx = tintCanvas.getContext("2d");
 const exploredMasks = new Map(); // floorId -> offscreen canvas at fog-buffer resolution
 const lightCache = new Map(); // "version|lx|ly|radius" -> light visibility polygon (cleared on invalidateCast)
 const shell = document.querySelector(".app-shell");
@@ -166,6 +170,7 @@ const controls = {
   lightOptions: document.getElementById("lightOptions"),
   lightRadius: document.getElementById("lightRadius"),
   lightRadiusVal: document.getElementById("lightRadiusVal"),
+  lightColor: document.getElementById("lightColor"),
   darknessEnabled: document.getElementById("darknessEnabled"),
   obstacleKind: document.getElementById("obstacleKind"),
   showObstacles: document.getElementById("showObstacles"),
@@ -254,6 +259,7 @@ const tools = {
   calibrating: null,
   calibrationDraft: null,
   lightRadius: 3, // radius (cells) applied to newly placed lights — small=torch, large=firepit
+  lightColor: "#ffd9a0", // color applied to newly placed lights (warm torch by default)
   drawingRoom: [], // in-progress room polyline (native px) while drawing in Draw Mode
   drawingObstacle: [], // in-progress obstacle polyline (native px) while drawing in Draw Mode
   showObstacles: true, // GM-only obstacle overlay toggle ("Walls Visible to DM")
@@ -339,8 +345,8 @@ const state = {
   // Obstacle geometry (walls/doors/windows…) for the current floor — authored, mirrors the
   // floor record like tokens/stairs. Points are stored in cell units.
   obstacles: [],
-  // Placed lights for the current floor (5d): { id, x, y, radius } in cell units. Authored,
-  // per-floor like obstacles. Token-carried lights come later (5d-2).
+  // Placed lights for the current floor (5d): { id, x, y, radius, color }. Authored, per-floor
+  // like obstacles. color (5e) tints the light's reach; absent on old saves -> warm default.
   lights: [],
   // Droppable map images (synced to players; only those with showPlayers render there) and
   // GM-only floating notes (never synced). Both are per-floor like tokens/stairs.
@@ -380,7 +386,7 @@ function escapeHtml(text) {
 
 export {
   canvas, ctx, fogCanvas, fogCtx, liveCanvas, liveCtx, polyCanvas, polyCtx,
-  strokeCanvas, strokeCtx, losCanvas, losCtx, darkCanvas, darkCtx, lightCanvas, lightCtx,
+  strokeCanvas, strokeCtx, losCanvas, losCtx, darkCanvas, darkCtx, lightCanvas, lightCtx, tintCanvas, tintCtx,
   exploredMasks, lightCache, shell, emptyState, channel, APP_NAME, LEGACY_APP_NAME, SAVE_FILE_VERSION,
   DB_NAME, DB_VERSION, MAP_STORE, IMAGE_STORE, MODULE_STORE, SESSION_STORE, TOKEN_STORE, FOG_MAX_EDGE,
   HISTORY_LIMIT, STAIRS_ICON_NEUTRAL, STAIRS_ICON_UP, STAIRS_ICON_DOWN, FEET_PER_CELL, MEASURE_UNITS, PING_DURATION, controls,

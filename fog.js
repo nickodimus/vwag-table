@@ -9,7 +9,7 @@
 import {
   FOG_MAX_EDGE, ctx, cur, darkCanvas, fogBuf, fogCanvas, fogCtx, isPlayer,
   lightCanvas, liveCanvas, liveCtx, losCanvas, polyCanvas, polyCtx, state, strokeCanvas,
-  strokeCtx,
+  strokeCtx, tintCanvas,
 } from "./state.js";
 
 function resizeFogLayer() {
@@ -17,7 +17,7 @@ function resizeFogLayer() {
   fogBuf.resScale = Math.min(1, FOG_MAX_EDGE / maxEdge);
   const w = Math.max(1, Math.round(state.imageWidth * fogBuf.resScale));
   const h = Math.max(1, Math.round(state.imageHeight * fogBuf.resScale));
-  [fogCanvas, liveCanvas, polyCanvas, strokeCanvas, losCanvas, darkCanvas, lightCanvas].forEach((c) => {
+  [fogCanvas, liveCanvas, polyCanvas, strokeCanvas, losCanvas, darkCanvas, lightCanvas, tintCanvas].forEach((c) => {
     if (c.width !== w || c.height !== h) {
       c.width = w;
       c.height = h;

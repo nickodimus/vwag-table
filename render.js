@@ -15,7 +15,7 @@ import {
   clientToCanvasPoint, currentViewRotation, gridCellNative, keepUpright, nativeToScreen, screenToNative, viewTransform, worldDims,
 } from "./geometry.js";
 import {
-  compositeLoS, drawLights, getVisibilityPolygon,
+  compositeLoS, compositeLightTint, drawLights, getVisibilityPolygon,
 } from "./vision.js";
 import {
   drawTokens,
@@ -150,6 +150,7 @@ function render() {
   // Images and tokens sit BELOW the fog so anything in an unrevealed area is hidden (solid
   // black for players, dimmed under the GM tint).
   drawImages();
+  compositeLightTint(); // 5e: colored-light glow over the map, beneath tokens (GM + player)
   drawTokens();
   compositeFog();
   if (isPlayer && state.los.enabled) compositeLoS();

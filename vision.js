@@ -9,7 +9,7 @@
 import {
   canvas, castCache, castFrameKeys, ctx, cur, darkCanvas, darkCtx, exploredMasks,
   fogBuf, isPlayer, lightCache, lightCanvas, lightCtx, lightFrameKeys, losCanvas, losCtx,
-  state,
+  state, tintCanvas, tintCtx,
 } from "./state.js";
 import {
   pxPerCellNative,
@@ -17,6 +17,18 @@ import {
 
 let castVersion = 0; // bumps when sight obstacles or the active floor change, invalidating the cast cache
 const LIGHT_BRIGHT_FRACTION = 0.5; // inner radius (fraction of outer) held at full brightness before falloff
+const LIGHT_DEFAULT_COLOR = "#ffd9a0"; // warm torch — used for lights/torches authored before 5e (no color field)
+const LIGHT_TINT_CORE_ALPHA = 0.55; // additive tint strength at the bright core; fades to 0 at the rim
+
+// Parse a #rgb or #rrggbb hex into an rgba() string at the given alpha. Falls back to the warm
+// default for anything unparseable, so an old or malformed light still glows rather than vanishing.
+function hexToRgba(hex, a) {
+  let h = String(hex || LIGHT_DEFAULT_COLOR).replace("#", "");
+  if (h.length === 3) h = h.split("").map((c) => c + c).join("");
+  if (h.length !== 6 || /[^0-9a-fA-F]/.test(h)) h = LIGHT_DEFAULT_COLOR.replace("#", "");
+  const n = parseInt(h, 16);
+  return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${a})`;
+}
 
 // Call whenever sight obstacles or the active floor change, so the next cast rebuilds.
 function invalidateCast() {
@@ -145,9 +157,9 @@ function lightSegments() {
 function lightSources() {
   const ppc = pxPerCellNative();
   const sources = [];
-  state.lights.forEach((l) => sources.push({ pos: { x: l.x, y: l.y }, radius: l.radius || 0 }));
+  state.lights.forEach((l) => sources.push({ pos: { x: l.x, y: l.y }, radius: l.radius || 0, color: l.color || LIGHT_DEFAULT_COLOR }));
   state.tokens.forEach((t) => {
-    if ((t.light || 0) > 0) sources.push({ pos: { x: t.x, y: t.y }, radius: t.light * ppc });
+    if ((t.light || 0) > 0) sources.push({ pos: { x: t.x, y: t.y }, radius: t.light * ppc, color: t.lightColor || LIGHT_DEFAULT_COLOR });
   });
   return sources;
 }
@@ -188,6 +200,45 @@ function buildLightCoverage() {
   });
 }
 
+// 5e: paint every light's wall-occluded reach into tintCanvas in its own color, the alpha falling
+// from LIGHT_TINT_CORE_ALPHA at the bright core to 0 at the rim — the colored counterpart to
+// buildLightCoverage. tintCanvas is sized with the other fog buffers (resizeFogLayer), so it always
+// matches lightCanvas. Takes the already-computed source list to avoid recomputing positions.
+function buildLightTint(sources) {
+  tintCtx.setTransform(1, 0, 0, 1, 0, 0);
+  tintCtx.clearRect(0, 0, tintCanvas.width, tintCanvas.height);
+  sources.forEach(({ pos, radius, color }) => {
+    const poly = getLightPolygon(pos);
+    if (poly.length < 3 || radius <= 0) return;
+    const cx = pos.x * fogBuf.resScale;
+    const cy = pos.y * fogBuf.resScale;
+    const rOuter = radius * fogBuf.resScale;
+    const grad = tintCtx.createRadialGradient(cx, cy, rOuter * LIGHT_BRIGHT_FRACTION, cx, cy, rOuter);
+    grad.addColorStop(0, hexToRgba(color, LIGHT_TINT_CORE_ALPHA));
+    grad.addColorStop(1, hexToRgba(color, 0));
+    tintCtx.save();
+    tintCtx.fillStyle = grad;
+    tintCtx.fill(losPath(poly));
+    tintCtx.restore();
+  });
+}
+
+// 5e: composite the colored-light glow over the map additively (`lighter`), on BOTH the GM and the
+// player view, drawn under the tokens so minis stay readable. Always-on: a brazier glows whether or
+// not darkness is enabled. On the player view the later LoS/darkness overlay clips the glow to what
+// the party can currently see, so unseen rooms don't light up. Native-space draw, mirroring
+// compositeLoS's scale from fog-buffer resolution to the full image.
+function compositeLightTint() {
+  const sources = lightSources();
+  if (!sources.length) return;
+  buildLightTint(sources);
+  ctx.save();
+  ctx.globalCompositeOperation = "lighter";
+  ctx.imageSmoothingEnabled = true;
+  ctx.drawImage(tintCanvas, 0, 0, tintCanvas.width, tintCanvas.height, 0, 0, state.imageWidth, state.imageHeight);
+  ctx.restore();
+}
+
 function hitLight(native) {
   const ppc = pxPerCellNative();
   let best = null;
@@ -210,7 +261,7 @@ function drawLights() {
     if ((t.light || 0) <= 0) return;
     ctx.beginPath();
     ctx.arc(t.x, t.y, t.light * ppc, 0, Math.PI * 2);
-    ctx.strokeStyle = "rgba(255,210,120,0.35)";
+    ctx.strokeStyle = hexToRgba(t.lightColor, 0.35);
     ctx.lineWidth = 1.5 / (cur.k * cur.ms);
     ctx.setLineDash([5 / (cur.k * cur.ms), 6 / (cur.k * cur.ms)]);
     ctx.stroke();
@@ -221,14 +272,14 @@ function drawLights() {
     const rNative = light.radius || 0;
     ctx.beginPath();
     ctx.arc(p.x, p.y, rNative, 0, Math.PI * 2);
-    ctx.strokeStyle = "rgba(255,210,120,0.45)";
+    ctx.strokeStyle = hexToRgba(light.color, 0.45);
     ctx.lineWidth = 1.5 / (cur.k * cur.ms);
     ctx.setLineDash([6 / (cur.k * cur.ms), 5 / (cur.k * cur.ms)]);
     ctx.stroke();
     ctx.setLineDash([]);
     ctx.beginPath();
     ctx.arc(p.x, p.y, 6 / (cur.k * cur.ms), 0, Math.PI * 2);
-    ctx.fillStyle = "rgba(255,200,90,0.95)";
+    ctx.fillStyle = hexToRgba(light.color, 0.95);
     ctx.fill();
     ctx.strokeStyle = "rgba(70,45,0,0.85)";
     ctx.lineWidth = 1 / (cur.k * cur.ms);
@@ -303,6 +354,6 @@ function compositeLoS() {
 }
 
 export {
-  invalidateCast, rayHit, castVisibility, getVisibilityPolygon, playerVisionPolygons, losPath, lightSegments, lightSources,
+  invalidateCast, rayHit, castVisibility, getVisibilityPolygon, playerVisionPolygons, losPath, lightSegments, lightSources, compositeLightTint,
   getLightPolygon, buildLightCoverage, hitLight, drawLights, compositeLoS, getExploredCanvas, sightSegments, castVersion,
 };
