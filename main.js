@@ -687,6 +687,11 @@ function bindControls() {
   });
   controls.pinTable?.addEventListener("change", () => {
     ui.pinTable = controls.pinTable.checked;
+    // Pin and follow are mutually exclusive table drivers — turning pin on clears follow.
+    if (ui.pinTable && ui.followInitiative) {
+      ui.followInitiative = false;
+      if (controls.followInitiative) controls.followInitiative.checked = false;
+    }
     // Unpinning re-couples the table to the GM's current view immediately.
     if (!ui.pinTable && state.activeFloorId !== state.currentFloorId) {
       state.activeFloorId = state.currentFloorId;
@@ -694,6 +699,27 @@ function bindControls() {
       broadcastState();
     }
     refreshFloorUI();
+  });
+  controls.followInitiative?.addEventListener("change", () => {
+    ui.followInitiative = controls.followInitiative.checked;
+    if (ui.followInitiative) {
+      // Mutually exclusive with pin; turning follow on clears pin and immediately points the
+      // table at the active combatant's floor.
+      if (ui.pinTable) {
+        ui.pinTable = false;
+        if (controls.pinTable) controls.pinTable.checked = false;
+      }
+      if (!followTableToActiveTurn()) refreshFloorUI();
+      broadcastState();
+    } else {
+      // Turning follow off re-couples the table to the GM's current view (like unpinning).
+      if (state.activeFloorId !== state.currentFloorId) {
+        state.activeFloorId = state.currentFloorId;
+        broadcastAssets();
+      }
+      refreshFloorUI();
+      broadcastState();
+    }
   });
   controls.roundShape.addEventListener("click", () => setToolShape("round"));
   controls.squareShape.addEventListener("click", () => setToolShape("square"));
@@ -1440,9 +1466,9 @@ function goToFloor(index) {
   tools.drawingRoom = [];
   fogBuf.activeStroke = null;
   applyFloor(state.floors[index]);
-  // Unless the table is pinned, it follows the GM's view (the long-standing behavior). Pinned,
-  // the GM roams freely while the players' table keeps showing whatever was last pushed.
-  if (!ui.pinTable) state.activeFloorId = state.currentFloorId;
+  // Unless the table is pinned OR following initiative, it follows the GM's view (the long-standing
+  // behavior). Pinned or following, the GM roams freely while the table is driven by something else.
+  if (!ui.pinTable && !ui.followInitiative) state.activeFloorId = state.currentFloorId;
   updatePlayerSliderRanges();
   syncControlsFromState();
   refreshFloorUI();
@@ -1503,6 +1529,7 @@ function refreshFloorUI() {
   }
   renderFloorOverlay();
   if (controls.pinTable) controls.pinTable.checked = ui.pinTable;
+  if (controls.followInitiative) controls.followInitiative.checked = ui.followInitiative;
   // Push is meaningful only when the table is showing a different floor than the GM is viewing.
   if (controls.pushToTable) controls.pushToTable.disabled = state.activeFloorId === state.currentFloorId;
   if (controls.deleteFloor) controls.deleteFloor.disabled = total <= 1;
@@ -2920,8 +2947,36 @@ function setTurnToId(id) {
   if (idx >= 0) {
     state.initiative.turn = idx;
     updateInitiativeUI();
+    followTableToActiveTurn();
     broadcastState();
   }
+}
+
+// Phase C (initiative-follow): which floor a token sits on — live tokens for the GM's current
+// floor, records for every other floor. Returns the floor id, or null if the token isn't placed.
+function floorIdOfToken(tokenId) {
+  if (!tokenId || !state.floors) return null;
+  for (const f of state.floors) {
+    const toks = f.id === state.currentFloorId ? state.tokens : (f.tokens || []);
+    if (toks.some((t) => t.id === tokenId)) return f.id;
+  }
+  return null;
+}
+
+// When "Follow initiative" is on, point the players' table at the floor the active combatant stands
+// on. A name-only combatant or a deleted token (no resolvable floor) leaves the table where it is —
+// no blank jump, no skipped turn. Ships the new floor's image but leaves the state broadcast to the
+// caller (so a turn step still sends one broadcast). Returns true if the table floor changed.
+function followTableToActiveTurn() {
+  if (!ui.followInitiative) return false;
+  const tokenId = activeTurnTokenId();
+  if (!tokenId) return false;
+  const floorId = floorIdOfToken(tokenId);
+  if (!floorId || floorId === state.activeFloorId) return false;
+  state.activeFloorId = floorId;
+  refreshFloorUI();
+  broadcastAssets();
+  return true;
 }
 
 function stepInitiative(dir) {
@@ -2939,6 +2994,7 @@ function stepInitiative(dir) {
   state.initiative.turn = turn;
   state.initiative.round = round;
   updateInitiativeUI();
+  followTableToActiveTurn();
   broadcastState();
 }
 
