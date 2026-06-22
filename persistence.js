@@ -129,6 +129,7 @@ function splitState(stateObj) {
     initiative: JSON.parse(JSON.stringify(stateObj.initiative || {})),
     playerView: JSON.parse(JSON.stringify(stateObj.playerView || {})),
     currentFloorId: stateObj.currentFloorId,
+    activeFloorId: stateObj.activeFloorId || stateObj.currentFloorId,
     openDoors: [], // session-tracked open door ids (forward; the toggle that uses it is step 5)
     floorPosition: stateObj.floorPosition || 1,
     floorCount: stateObj.floorCount || floors.length || 1,
@@ -188,6 +189,7 @@ function mergeModuleSession(module, session) {
       stampShape: session.fog?.stampShape ?? "rectangle",
     },
     currentFloorId: session.currentFloorId || (floors[0] && floors[0].id),
+    activeFloorId: session.activeFloorId || session.currentFloorId || (floors[0] && floors[0].id),
     floorPosition: session.floorPosition || 1,
     floorCount: session.floorCount || floors.length,
     floors,

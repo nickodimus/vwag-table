@@ -271,7 +271,14 @@
             </button>
           </div>
           <button id="deleteFloor" class="danger-button" type="button" disabled>Delete this floor</button>
-          <p class="hint">Use the ↑ / ↓ arrows in the map area to switch floors.</p>
+          <div class="floor-table-sync">
+            <button id="pushToTable" class="ghost-button" type="button" title="Show the players' table the floor you're viewing">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="12" rx="1.5"/><path d="M9 21h6"/><path d="M12 17v4"/></svg>
+              Push to table
+            </button>
+            <label class="pin-toggle"><input id="pinTable" type="checkbox"> Pin table to its floor</label>
+          </div>
+          <p class="hint">Click any floor in the top-right list to jump to it. Pin the table to roam other floors without moving the players' screen, then Push to table when you're ready to show them.</p>
         </section>
 
         <section class="control-section">

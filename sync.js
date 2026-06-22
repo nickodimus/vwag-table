@@ -86,13 +86,16 @@ function snapPlayerViewToGM(sync) {
 
 function broadcastAssets() {
   if (isPlayer) return;
-  // Only the current floor's image is sent — the player follows the GM's active floor,
-  // so it never needs the other floors' images.
+  // The table shows the active floor. When it's pinned to a floor the GM isn't viewing, send that
+  // floor's image — records carry their bytes at runtime (hydrateFloorImages). When the table
+  // follows the GM (the common case), the live current-floor image is freshest, so use it.
+  const active = state.floors.find((f) => f.id === state.activeFloorId);
+  const onCurrent = !active || active.id === state.currentFloorId;
   relay({
     type: "assets",
-    imageId: state.imageId,
-    imageData: state.imageData,
-    imageName: state.imageName,
+    imageId: onCurrent ? state.imageId : (active.imageId || ""),
+    imageData: onCurrent ? state.imageData : (active.imageData || ""),
+    imageName: onCurrent ? state.imageName : (active.imageName || ""),
     splash: { imageData: state.splash.imageData, imageName: state.splash.imageName },
   });
 }
@@ -107,13 +110,30 @@ function sanitizedState() {
   const clone = JSON.parse(JSON.stringify(rest));
   if (clone.splash) delete clone.splash.imageData;
   delete clone.notes; // floating notes are GM-only and never leave the GM window
-  // Names-only "rest of party" summary: every OTHER floor that currently holds player tokens.
-  // No total count, no current-floor name, no position — the player learns WHERE split-off
+  // The players' table shows the ACTIVE floor, which differs from the GM's current view while the
+  // table is pinned. captureCurrentFloor() above flushed the live floor into its record, so every
+  // record (the active one included) is current; override the live-mirror fields with the active
+  // floor's record so the table keeps rendering its own floor while the GM roams elsewhere.
+  const activeIdx = floors.findIndex((f) => f.id === state.activeFloorId);
+  const active = floors[activeIdx] || floors.find((f) => f.id === state.currentFloorId) || floors[0];
+  clone.imageId = active.imageId || "";
+  clone.imageName = active.imageName || "";
+  clone.imageWidth = active.imageWidth || 0;
+  clone.imageHeight = active.imageHeight || 0;
+  clone.map = { ...(clone.map || {}), scale: active.mapScale || 1 };
+  clone.fog = { ...(clone.fog || {}), rooms: active.rooms || [], strokes: active.strokes || [] };
+  clone.tokens = active.tokens || [];
+  clone.stairs = active.stairs || [];
+  clone.obstacles = active.obstacles || [];
+  clone.lights = active.lights || [];
+  clone.images = active.images || [];
+  clone.view = active.view ? { ...active.view } : clone.view;
+  // Names-only "rest of party" summary: every OTHER floor (vs the active/table floor) that holds
+  // player tokens. No total, no table-floor name, no position — the player learns WHERE split-off
   // teammates are without learning how deep the dungeon runs.
-  const idx = floors.findIndex((f) => f.id === state.currentFloorId);
   clone.floorSummary = floors
     .map((f, i) => ({ i, name: f.name, players: (f.tokens || []).filter((t) => t.type === "player").length }))
-    .filter((f) => f.i !== idx && f.players > 0)
+    .filter((f) => f.i !== activeIdx && f.players > 0)
     .map((f) => ({ name: f.name && f.name.trim() ? f.name : "another floor", players: f.players }));
   return clone;
 }

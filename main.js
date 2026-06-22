@@ -618,6 +618,23 @@ function bindControls() {
       broadcastState();
     }
   });
+  controls.pushToTable?.addEventListener("click", () => {
+    // Point the players' table at the floor the GM is currently viewing, and broadcast it.
+    state.activeFloorId = state.currentFloorId;
+    refreshFloorUI();
+    broadcastAssets();
+    broadcastState();
+  });
+  controls.pinTable?.addEventListener("change", () => {
+    ui.pinTable = controls.pinTable.checked;
+    // Unpinning re-couples the table to the GM's current view immediately.
+    if (!ui.pinTable && state.activeFloorId !== state.currentFloorId) {
+      state.activeFloorId = state.currentFloorId;
+      broadcastAssets();
+      broadcastState();
+    }
+    refreshFloorUI();
+  });
   controls.roundShape.addEventListener("click", () => setToolShape("round"));
   controls.squareShape.addEventListener("click", () => setToolShape("square"));
   controls.stampRect?.addEventListener("click", () => setStampShape("rectangle"));
@@ -1153,6 +1170,7 @@ function loadSnapshot(snapshot) {
     // Full load (library / GM): the floor stack is authoritative.
     state.floors = snapshot.floors;
     state.currentFloorId = snapshot.currentFloorId || state.floors[0].id;
+    state.activeFloorId = snapshot.activeFloorId || state.currentFloorId;
     applyFloor(state.floors.find((f) => f.id === state.currentFloorId) || state.floors[0]);
   } else {
     // Lightweight sync (player) — only the current floor's live fields are present.
@@ -1328,6 +1346,9 @@ function goToFloor(index) {
   tools.drawingRoom = [];
   fogBuf.activeStroke = null;
   applyFloor(state.floors[index]);
+  // Unless the table is pinned, it follows the GM's view (the long-standing behavior). Pinned,
+  // the GM roams freely while the players' table keeps showing whatever was last pushed.
+  if (!ui.pinTable) state.activeFloorId = state.currentFloorId;
   updatePlayerSliderRanges();
   syncControlsFromState();
   refreshFloorUI();
@@ -1387,6 +1408,9 @@ function refreshFloorUI() {
     controls.floorName.placeholder = `Floor ${idx + 1}`;
   }
   renderFloorOverlay();
+  if (controls.pinTable) controls.pinTable.checked = ui.pinTable;
+  // Push is meaningful only when the table is showing a different floor than the GM is viewing.
+  if (controls.pushToTable) controls.pushToTable.disabled = state.activeFloorId === state.currentFloorId;
   if (controls.deleteFloor) controls.deleteFloor.disabled = total <= 1;
   if (controls.mapScale) controls.mapScale.value = state.map.scale;
 }
@@ -1403,12 +1427,16 @@ function renderFloorOverlay() {
   ov.hidden = total <= 1;
   if (ov.hidden) return;
   let rows = "";
+  const activeIdx = state.floors.findIndex((f) => f.id === state.activeFloorId);
   for (let i = total - 1; i >= 0; i--) {
     const name = escapeHtml(state.floors[i].name || `Floor ${i + 1}`);
     const tokensOn = i === idx ? state.tokens : (state.floors[i].tokens || []);
     const players = tokensOn.filter((t) => t.type === "player").length;
     const badge = players ? `<span class="floor-ov-count"><span class="floor-ov-dot"></span>${players}</span>` : "";
-    rows += `<li class="${i === idx ? "current" : ""}" data-idx="${i}"><span class="floor-ov-name">${name}</span>${badge}</li>`;
+    const onTable = i === activeIdx;
+    const tv = onTable ? `<span class="floor-ov-tv" title="Showing on the players' table"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="12" rx="1.5"/><path d="M9 21h6"/><path d="M12 17v4"/></svg></span>` : "";
+    const cls = `${i === idx ? "current" : ""}${onTable ? " on-table" : ""}`.trim();
+    rows += `<li class="${cls}" data-idx="${i}"><span class="floor-ov-name">${name}</span>${badge}${tv}</li>`;
   }
   ov.innerHTML = `<div class="floor-ov-head">
       <button type="button" class="floor-ov-btn" data-act="floor-up" title="Go up one floor" aria-label="Go up"${idx >= total - 1 ? " disabled" : ""}>▲</button>
