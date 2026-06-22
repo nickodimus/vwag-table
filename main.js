@@ -312,11 +312,13 @@ function handleMessage(message, source) {
   if (message.type === "stair-traverse" && !isPlayer) {
     // A player took a stair with a selection of tokens. They all live on the ACTIVE (table) floor —
     // live state when the GM is viewing that floor, a stored record otherwise. What happens next keys
-    // off whether the table is PINNED, not whether the two floor pointers happen to coincide: pinned,
-    // only the TABLE moves to the target and the GM's view stays put (the party walks floors
-    // independently of the GM); unpinned, the GM and party descend together (goToFloor, whose
-    // broadcast re-binds the players' selection by id). Branching on active!=current instead would
-    // strand the table for one traverse whenever the GM happened to be co-located on the table's floor.
+    // off whether the table is DECOUPLED from the GM's view (pinned OR following initiative), not on
+    // whether the two floor pointers happen to coincide. Decoupled: only the token data and the table
+    // move while the GM's view stays put (the party walks floors independently of the GM) — pinned
+    // walks the table to the target, following points it at the active combatant's floor. Coupled
+    // (neither pinned nor following): the GM and party descend together (goToFloor, whose broadcast
+    // re-binds the players' selection by id). Branching on active!=current would strand the table for
+    // one traverse whenever the GM happened to be co-located on the table's floor.
     const ids = Array.isArray(message.ids) ? message.ids : (message.id != null ? [message.id] : []);
     const targetIdx = state.floors.findIndex((f) => f.id === message.targetFloorId);
     const activeIsLive = state.activeFloorId === state.currentFloorId;
@@ -342,23 +344,33 @@ function handleMessage(message, source) {
         return traveler;
       });
       const riderIds = new Set(riders.map((t) => t.id));
-      if (!ui.pinTable) {
-        // Unpinned: the GM and the party descend together (the long-standing behavior). goToFloor
-        // captures this floor (minus the riders), applies the target (with the travelers), and syncs
-        // the table to the GM's new floor.
+      if (!ui.pinTable && !ui.followInitiative) {
+        // Coupled (neither pinned nor following): the GM and the party descend together (the
+        // long-standing behavior). goToFloor captures this floor (minus the riders), applies the
+        // target (with the travelers), and syncs the table to the GM's new floor.
         targetFloor.tokens = [...(targetFloor.tokens || []), ...travelers]; // onto the next floor
         state.tokens = state.tokens.filter((t) => !riderIds.has(t.id)); // off this floor
         goToFloor(targetIdx);
       } else {
-        // Pinned: only the TABLE moves to the target floor; the GM's view stays where it is.
+        // Decoupled (pinned or following): the GM's view stays put; only the token data and the
+        // table move. Pull the riders off the source floor and drop the travelers onto the target —
+        // live state when the GM is viewing that floor, the stored record otherwise.
         if (activeIsLive) state.tokens = state.tokens.filter((t) => !riderIds.has(t.id)); // off the live floor
         else sourceFloor.tokens = (sourceFloor.tokens || []).filter((t) => !riderIds.has(t.id)); // off the record
         if (targetIsLive) state.tokens = [...state.tokens, ...travelers]; // target is the GM's live floor
         else targetFloor.tokens = [...(targetFloor.tokens || []), ...travelers]; // target is a record
-        state.activeFloorId = targetFloor.id; // the table follows the players
+        if (ui.followInitiative) {
+          // Following: the table tracks the active combatant — it lands on the target floor if the
+          // active combatant was among the travelers, and stays put otherwise (asset broadcast is
+          // handled inside the helper when the table floor actually changes).
+          if (!followTableToActiveTurn()) refreshFloorUI();
+        } else {
+          // Pinned: the table walks with the party to the target floor.
+          state.activeFloorId = targetFloor.id;
+          refreshFloorUI();
+          broadcastAssets();
+        }
         render(); // the GM may have just watched the group leave or arrive on their own floor
-        refreshFloorUI();
-        broadcastAssets();
         broadcastState();
       }
     }
