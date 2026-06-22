@@ -1405,7 +1405,10 @@ function renderFloorOverlay() {
   let rows = "";
   for (let i = total - 1; i >= 0; i--) {
     const name = escapeHtml(state.floors[i].name || `Floor ${i + 1}`);
-    rows += `<li class="${i === idx ? "current" : ""}" data-idx="${i}"><span class="floor-ov-name">${name}</span></li>`;
+    const tokensOn = i === idx ? state.tokens : (state.floors[i].tokens || []);
+    const players = tokensOn.filter((t) => t.type === "player").length;
+    const badge = players ? `<span class="floor-ov-count"><span class="floor-ov-dot"></span>${players}</span>` : "";
+    rows += `<li class="${i === idx ? "current" : ""}" data-idx="${i}"><span class="floor-ov-name">${name}</span>${badge}</li>`;
   }
   ov.innerHTML = `<div class="floor-ov-head">
       <button type="button" class="floor-ov-btn" data-act="floor-up" title="Go up one floor" aria-label="Go up"${idx >= total - 1 ? " disabled" : ""}>▲</button>
