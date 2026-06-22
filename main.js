@@ -285,6 +285,27 @@ function handleMessage(message, source) {
       renderAndSync();
     }
   }
+  if (message.type === "stair-traverse" && !isPlayer) {
+    // A player asked to take a stair. The GM owns the floor stack, so the migration happens here:
+    // lift the token off this floor, set it down on the linked floor at the paired stair (the one
+    // there that links back), then change floors. goToFloor's single broadcast carries the moved
+    // token, so the player's selection re-binds by id and they keep "holding" it across the change.
+    const token = state.tokens.find((t) => t.id === message.id);
+    const targetIdx = state.floors.findIndex((f) => f.id === message.targetFloorId);
+    if (token && targetIdx !== -1) {
+      const sourceFloorId = state.currentFloorId;
+      const targetFloor = state.floors[targetIdx];
+      const traveler = JSON.parse(JSON.stringify(token));
+      const paired = (targetFloor.stairs || []).find((s) => s.targetFloorId === sourceFloorId);
+      const dest = snapNative(paired ? { x: paired.x, y: paired.y } : { x: traveler.x, y: traveler.y });
+      const landing = freeCellOnFloor(dest, targetFloor.tokens || []);
+      traveler.x = landing.x;
+      traveler.y = landing.y;
+      state.tokens = state.tokens.filter((t) => t !== token); // off this floor
+      targetFloor.tokens = [...(targetFloor.tokens || []), traveler]; // onto the next one
+      goToFloor(targetIdx);
+    }
+  }
 }
 
 
@@ -2352,6 +2373,26 @@ function nearestFreeCell(desired, movingToken) {
   }
   return desired;
 }
+
+// Nearest cell free of any token in an explicit list — used to place a token onto a floor that
+// isn't live yet (a stair traveler landing on the floor it's about to switch to). Occupancy only,
+// no wall test: the paired stair always sits on walkable floor, so a wall check buys nothing here.
+function freeCellOnFloor(dest, floorTokens) {
+  const stepPx = gridCellNative();
+  const half = stepPx * 0.5;
+  const taken = (c) => floorTokens.some((t) => Math.abs(t.x - c.x) < half && Math.abs(t.y - c.y) < half);
+  if (!taken(dest)) return dest;
+  for (let radius = 1; radius <= COLLISION_NUDGE_MAX; radius++) {
+    for (let dx = -radius; dx <= radius; dx++) {
+      for (let dy = -radius; dy <= radius; dy++) {
+        if (Math.max(Math.abs(dx), Math.abs(dy)) !== radius) continue; // only the current ring
+        const cand = { x: dest.x + dx * stepPx, y: dest.y + dy * stepPx };
+        if (!taken(cand)) return cand;
+      }
+    }
+  }
+  return dest;
+}
 // cell (no wall stopping it short) AND land on a cell free of any non-group token, or the entire
 // formation holds. Because the group moves by one uniform vector it can never collide with itself, so
 // occupancy is only tested against non-group tokens. Grabs lazily on the first step that actually
@@ -3324,6 +3365,16 @@ function onKeyDown(event) {
       if (playerCam.fitZoom) playerCam.follow = true; // fitting implies following the party
       if (playerCam.follow) ensureCameraLoop(); else stopCameraLoop();
       render();
+      return;
+    }
+    // 's' takes the stairs: if a selected token stands on a stair, ask the GM (who owns the floor
+    // stack) to carry it to the linked floor. v1 is single-token — the first selected token that's
+    // on a stair goes; the rest stay. Group traversal waits on multi-cell staircases.
+    if (event.key === "s" || event.key === "S") {
+      const rider = sel.playerTokens
+        .map((t) => ({ token: t, stair: hitStair({ x: t.x, y: t.y }) }))
+        .find((o) => o.stair && o.stair.targetFloorId);
+      if (rider) relay({ type: "stair-traverse", id: rider.token.id, targetFloorId: rider.stair.targetFloorId });
       return;
     }
     // Arrow keys walk the selected player token(s). First press steps instantly; holding marches at
