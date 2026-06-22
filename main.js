@@ -258,52 +258,90 @@ function handleMessage(message, source) {
     render();
   }
   if (message.type === "token-grab" && !isPlayer) {
-    // Snapshot once at the start of a remote drag so the whole move is one undo step.
-    pushHistory();
+    // Snapshot once at the start of a remote drag so the whole move is one undo step — but only when
+    // the table follows the GM's view. A drag on a floor the GM isn't viewing (table pinned
+    // elsewhere) shouldn't land on the GM's local undo stack.
+    if (state.activeFloorId === state.currentFloorId) pushHistory();
   }
   if (message.type === "token-move" && !isPlayer) {
-    // Live position during a drag: update and render locally, but do NOT broadcast — a
-    // full state sync mid-drag would replace the player's tokens and orphan its drag.
-    const token = state.tokens.find((t) => t.id === message.id);
-    if (token) {
-      token.x = message.x;
-      token.y = message.y;
-      render();
+    // Live position during a drag: update and render locally, but do NOT broadcast — a full state
+    // sync mid-drag would replace the player's tokens and orphan its drag.
+    if (state.activeFloorId !== state.currentFloorId) {
+      // Table pinned to another floor: update the token in the active floor's record. No GM render
+      // (the GM isn't viewing it) and no broadcast (the player previews its own drag locally).
+      const active = state.floors.find((f) => f.id === state.activeFloorId);
+      const token = active && (active.tokens || []).find((t) => t.id === message.id);
+      if (token) { token.x = message.x; token.y = message.y; }
+    } else {
+      const token = state.tokens.find((t) => t.id === message.id);
+      if (token) {
+        token.x = message.x;
+        token.y = message.y;
+        render();
+      }
     }
   }
   if (message.type === "token-drop" && !isPlayer) {
     // Commit a player move: pick the target cell (nudged to the nearest free one so no two tokens
     // share a cell), clamp the move to it so it can't cross a wall, then broadcast to all displays.
     // The GM's own drags don't come through here, so the GM stays free to place anything anywhere.
-    const token = state.tokens.find((t) => t.id === message.id);
+    const active = state.activeFloorId !== state.currentFloorId
+      ? state.floors.find((f) => f.id === state.activeFloorId)
+      : null;
+    const tokens = active ? (active.tokens || []) : state.tokens;
+    const token = tokens.find((t) => t.id === message.id);
     if (token) {
-      const snapped = snapNative({ x: message.x, y: message.y });
-      const free = nearestFreeCell(snapped, token);
-      const dest = resolveMove({ x: message.x, y: message.y }, free);
-      token.x = dest.x;
-      token.y = dest.y;
-      renderAndSync();
+      const commit = () => {
+        const snapped = snapNative({ x: message.x, y: message.y });
+        const free = nearestFreeCell(snapped, token);
+        const dest = resolveMove({ x: message.x, y: message.y }, free);
+        token.x = dest.x;
+        token.y = dest.y;
+      };
+      if (active) {
+        // Table pinned elsewhere: resolve collision and walls against the active floor, then
+        // broadcast (sanitizedState sources the active floor). The GM's canvas is untouched.
+        withActiveFloor(active, commit);
+        broadcastState();
+      } else {
+        commit();
+        renderAndSync();
+      }
     }
   }
   if (message.type === "stair-traverse" && !isPlayer) {
-    // A player asked to take a stair. The GM owns the floor stack, so the migration happens here:
-    // lift the token off this floor, set it down on the linked floor at the paired stair (the one
-    // there that links back), then change floors. goToFloor's single broadcast carries the moved
-    // token, so the player's selection re-binds by id and they keep "holding" it across the change.
-    const token = state.tokens.find((t) => t.id === message.id);
+    // A player took a stair. The GM owns the floor stack, so the migration happens here: lift the
+    // token off its floor and set it on the linked floor at the paired stair (the one there that
+    // links back). When the table follows the GM's view, the GM follows the party down (goToFloor,
+    // whose single broadcast re-binds the player's selection by id). When the table is pinned to a
+    // floor the GM isn't viewing, only the TABLE moves to the new floor — the players walk between
+    // floors on the table while the GM's prep view stays put.
+    const decoupled = state.activeFloorId !== state.currentFloorId;
+    const sourceFloor = decoupled
+      ? state.floors.find((f) => f.id === state.activeFloorId)
+      : state.floors.find((f) => f.id === state.currentFloorId);
     const targetIdx = state.floors.findIndex((f) => f.id === message.targetFloorId);
-    if (token && targetIdx !== -1) {
-      const sourceFloorId = state.currentFloorId;
+    const sourceTokens = decoupled ? (sourceFloor && sourceFloor.tokens) || [] : state.tokens;
+    const token = sourceTokens.find((t) => t.id === message.id);
+    if (token && sourceFloor && targetIdx !== -1) {
       const targetFloor = state.floors[targetIdx];
       const traveler = JSON.parse(JSON.stringify(token));
-      const paired = (targetFloor.stairs || []).find((s) => s.targetFloorId === sourceFloorId);
+      const paired = (targetFloor.stairs || []).find((s) => s.targetFloorId === sourceFloor.id);
       const dest = snapNative(paired ? { x: paired.x, y: paired.y } : { x: traveler.x, y: traveler.y });
       const landing = freeCellOnFloor(dest, targetFloor.tokens || []);
       traveler.x = landing.x;
       traveler.y = landing.y;
-      state.tokens = state.tokens.filter((t) => t !== token); // off this floor
-      targetFloor.tokens = [...(targetFloor.tokens || []), traveler]; // onto the next one
-      goToFloor(targetIdx);
+      targetFloor.tokens = [...(targetFloor.tokens || []), traveler]; // onto the next floor
+      if (decoupled) {
+        sourceFloor.tokens = (sourceFloor.tokens || []).filter((t) => t !== token); // off the table's floor
+        state.activeFloorId = targetFloor.id; // the table follows the player; the GM's view stays put
+        refreshFloorUI();
+        broadcastAssets();
+        broadcastState();
+      } else {
+        state.tokens = state.tokens.filter((t) => t !== token); // off this floor
+        goToFloor(targetIdx);
+      }
     }
   }
 }
@@ -1334,6 +1372,40 @@ function applyFloor(floor) {
     render();
   }
   applyPlayerSquareLock(); // keep the locked TV square size across map/floor changes
+}
+
+// Run fn with live state's collision-relevant fields temporarily pointed at `floor` instead of the
+// GM's current floor, then restore them. This lets the single collision/clamp implementation
+// (snapNative -> nearestFreeCell -> resolveMove, all of which read live state) resolve a player move
+// against the floor the players' table is showing while the GM views a different one. Mutations to
+// individual tokens persist because state.tokens points at the same array the record holds.
+// Synchronous only: handlers never await between swap and restore, so the swap can never leak.
+function withActiveFloor(floor, fn) {
+  if (!floor.tokens) floor.tokens = [];
+  if (!floor.obstacles) floor.obstacles = [];
+  const saved = {
+    tokens: state.tokens,
+    obstacles: state.obstacles,
+    imageWidth: state.imageWidth,
+    imageHeight: state.imageHeight,
+    scale: state.map.scale,
+  };
+  state.tokens = floor.tokens;
+  state.obstacles = floor.obstacles;
+  state.imageWidth = floor.imageWidth || 0;
+  state.imageHeight = floor.imageHeight || 0;
+  state.map.scale = floor.mapScale || 1;
+  invalidateCast(); // the wall-segment cache is keyed on castVersion; bump it so it rebuilds for this floor
+  try {
+    return fn();
+  } finally {
+    state.tokens = saved.tokens;
+    state.obstacles = saved.obstacles;
+    state.imageWidth = saved.imageWidth;
+    state.imageHeight = saved.imageHeight;
+    state.map.scale = saved.scale;
+    invalidateCast(); // restore the GM floor's cache
+  }
 }
 
 function currentFloorIndex() {
