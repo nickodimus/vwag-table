@@ -310,44 +310,53 @@ function handleMessage(message, source) {
     }
   }
   if (message.type === "stair-traverse" && !isPlayer) {
-    // A player took a stair. The token lives on the ACTIVE (table) floor — live state when the GM is
-    // viewing that floor, a stored record otherwise. What happens next keys off whether the table is
-    // PINNED, not whether the two floor pointers happen to coincide: pinned, only the TABLE moves to
-    // the target and the GM's view stays put (the party walks floors independently of the GM);
-    // unpinned, the GM and party descend together (goToFloor, whose broadcast re-binds the player's
-    // selection by id). Branching on active!=current instead would strand the table for one traverse
-    // whenever the GM happened to be co-located on the table's floor.
+    // A player took a stair with a selection of tokens. They all live on the ACTIVE (table) floor —
+    // live state when the GM is viewing that floor, a stored record otherwise. What happens next keys
+    // off whether the table is PINNED, not whether the two floor pointers happen to coincide: pinned,
+    // only the TABLE moves to the target and the GM's view stays put (the party walks floors
+    // independently of the GM); unpinned, the GM and party descend together (goToFloor, whose
+    // broadcast re-binds the players' selection by id). Branching on active!=current instead would
+    // strand the table for one traverse whenever the GM happened to be co-located on the table's floor.
+    const ids = Array.isArray(message.ids) ? message.ids : (message.id != null ? [message.id] : []);
     const targetIdx = state.floors.findIndex((f) => f.id === message.targetFloorId);
     const activeIsLive = state.activeFloorId === state.currentFloorId;
     const sourceFloor = state.floors.find((f) => f.id === state.activeFloorId);
     const sourceTokens = activeIsLive ? state.tokens : ((sourceFloor && sourceFloor.tokens) || []);
-    const token = sourceTokens.find((t) => t.id === message.id);
-    if (token && sourceFloor && targetIdx !== -1) {
+    // The riders are every selected token that still lives on the source floor.
+    const riders = ids.map((id) => sourceTokens.find((t) => t.id === id)).filter(Boolean);
+    if (riders.length && sourceFloor && targetIdx !== -1) {
       const targetFloor = state.floors[targetIdx];
       const targetIsLive = targetFloor.id === state.currentFloorId; // the GM is viewing the target floor
-      const traveler = JSON.parse(JSON.stringify(token));
       const paired = (targetFloor.stairs || []).find((s) => s.targetFloorId === sourceFloor.id);
-      const dest = snapNative(paired ? { x: paired.x, y: paired.y } : { x: traveler.x, y: traveler.y });
-      // Land on a free cell, checked against whichever copy of the target floor is authoritative:
-      // live state when the GM is viewing it, the stored record otherwise.
-      const landing = freeCellOnFloor(dest, targetIsLive ? state.tokens : (targetFloor.tokens || []));
-      traveler.x = landing.x;
-      traveler.y = landing.y;
+      // Fan the group out around the paired stair (or each token's own cell if there is none), seeding
+      // occupancy with the target floor's existing tokens — live state when the GM is viewing it, the
+      // stored record otherwise — so nobody lands on an occupant or on another arriving teammate.
+      const occupied = [...(targetIsLive ? state.tokens : (targetFloor.tokens || []))];
+      const travelers = riders.map((token) => {
+        const traveler = JSON.parse(JSON.stringify(token));
+        const base = paired ? { x: paired.x, y: paired.y } : { x: traveler.x, y: traveler.y };
+        const landing = freeCellOnFloor(snapNative(base), occupied);
+        traveler.x = landing.x;
+        traveler.y = landing.y;
+        occupied.push(traveler); // the next rider nudges away from this one
+        return traveler;
+      });
+      const riderIds = new Set(riders.map((t) => t.id));
       if (!ui.pinTable) {
         // Unpinned: the GM and the party descend together (the long-standing behavior). goToFloor
-        // captures this floor (minus the token), applies the target (with the traveler), and syncs
+        // captures this floor (minus the riders), applies the target (with the travelers), and syncs
         // the table to the GM's new floor.
-        targetFloor.tokens = [...(targetFloor.tokens || []), traveler]; // onto the next floor
-        state.tokens = state.tokens.filter((t) => t !== token); // off this floor
+        targetFloor.tokens = [...(targetFloor.tokens || []), ...travelers]; // onto the next floor
+        state.tokens = state.tokens.filter((t) => !riderIds.has(t.id)); // off this floor
         goToFloor(targetIdx);
       } else {
         // Pinned: only the TABLE moves to the target floor; the GM's view stays where it is.
-        if (activeIsLive) state.tokens = state.tokens.filter((t) => t !== token); // off the live floor
-        else sourceFloor.tokens = (sourceFloor.tokens || []).filter((t) => t !== token); // off the record
-        if (targetIsLive) state.tokens = [...state.tokens, traveler]; // target is the GM's live floor
-        else targetFloor.tokens = [...(targetFloor.tokens || []), traveler]; // target is a record
-        state.activeFloorId = targetFloor.id; // the table follows the player
-        render(); // the GM may have just watched a token leave or arrive on their own floor
+        if (activeIsLive) state.tokens = state.tokens.filter((t) => !riderIds.has(t.id)); // off the live floor
+        else sourceFloor.tokens = (sourceFloor.tokens || []).filter((t) => !riderIds.has(t.id)); // off the record
+        if (targetIsLive) state.tokens = [...state.tokens, ...travelers]; // target is the GM's live floor
+        else targetFloor.tokens = [...(targetFloor.tokens || []), ...travelers]; // target is a record
+        state.activeFloorId = targetFloor.id; // the table follows the players
+        render(); // the GM may have just watched the group leave or arrive on their own floor
         refreshFloorUI();
         broadcastAssets();
         broadcastState();
@@ -3521,14 +3530,17 @@ function onKeyDown(event) {
       render();
       return;
     }
-    // 's' takes the stairs: if a selected token stands on a stair, ask the GM (who owns the floor
-    // stack) to carry it to the linked floor. v1 is single-token — the first selected token that's
-    // on a stair goes; the rest stay. Group traversal waits on multi-cell staircases.
+    // 's' takes the stairs: if any selected token stands on a stair, ask the GM (who owns the floor
+    // stack) to carry the WHOLE selection to the linked floor. The rider on the stair sets the
+    // destination; everyone selected rides along and fans out around the paired stair on arrival.
     if (event.key === "s" || event.key === "S") {
       const rider = sel.playerTokens
         .map((t) => ({ token: t, stair: hitStair({ x: t.x, y: t.y }) }))
         .find((o) => o.stair && o.stair.targetFloorId);
-      if (rider) relay({ type: "stair-traverse", id: rider.token.id, targetFloorId: rider.stair.targetFloorId });
+      if (rider) {
+        const ids = sel.playerTokens.map((t) => t.id); // the whole selection rides together
+        relay({ type: "stair-traverse", ids, targetFloorId: rider.stair.targetFloorId });
+      }
       return;
     }
     // Arrow keys walk the selected player token(s). First press steps instantly; holding marches at
