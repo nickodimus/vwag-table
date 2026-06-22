@@ -310,18 +310,17 @@ function handleMessage(message, source) {
     }
   }
   if (message.type === "stair-traverse" && !isPlayer) {
-    // A player took a stair. The GM owns the floor stack, so the migration happens here: lift the
-    // token off its floor and set it on the linked floor at the paired stair (the one there that
-    // links back). When the table follows the GM's view, the GM follows the party down (goToFloor,
-    // whose single broadcast re-binds the player's selection by id). When the table is pinned to a
-    // floor the GM isn't viewing, only the TABLE moves to the new floor — the players walk between
-    // floors on the table while the GM's prep view stays put.
-    const decoupled = state.activeFloorId !== state.currentFloorId;
-    const sourceFloor = decoupled
-      ? state.floors.find((f) => f.id === state.activeFloorId)
-      : state.floors.find((f) => f.id === state.currentFloorId);
+    // A player took a stair. The token lives on the ACTIVE (table) floor — live state when the GM is
+    // viewing that floor, a stored record otherwise. What happens next keys off whether the table is
+    // PINNED, not whether the two floor pointers happen to coincide: pinned, only the TABLE moves to
+    // the target and the GM's view stays put (the party walks floors independently of the GM);
+    // unpinned, the GM and party descend together (goToFloor, whose broadcast re-binds the player's
+    // selection by id). Branching on active!=current instead would strand the table for one traverse
+    // whenever the GM happened to be co-located on the table's floor.
     const targetIdx = state.floors.findIndex((f) => f.id === message.targetFloorId);
-    const sourceTokens = decoupled ? (sourceFloor && sourceFloor.tokens) || [] : state.tokens;
+    const activeIsLive = state.activeFloorId === state.currentFloorId;
+    const sourceFloor = state.floors.find((f) => f.id === state.activeFloorId);
+    const sourceTokens = activeIsLive ? state.tokens : ((sourceFloor && sourceFloor.tokens) || []);
     const token = sourceTokens.find((t) => t.id === message.id);
     if (token && sourceFloor && targetIdx !== -1) {
       const targetFloor = state.floors[targetIdx];
@@ -334,26 +333,21 @@ function handleMessage(message, source) {
       const landing = freeCellOnFloor(dest, targetIsLive ? state.tokens : (targetFloor.tokens || []));
       traveler.x = landing.x;
       traveler.y = landing.y;
-      if (!decoupled) {
-        // Coupled: the GM follows the party down. goToFloor captures this floor (minus the token)
-        // and applies the target record (with the traveler), re-binding the player's selection by id.
+      if (!ui.pinTable) {
+        // Unpinned: the GM and the party descend together (the long-standing behavior). goToFloor
+        // captures this floor (minus the token), applies the target (with the traveler), and syncs
+        // the table to the GM's new floor.
         targetFloor.tokens = [...(targetFloor.tokens || []), traveler]; // onto the next floor
         state.tokens = state.tokens.filter((t) => t !== token); // off this floor
         goToFloor(targetIdx);
       } else {
-        // Pinned: the token leaves the table's floor and only the TABLE moves to the target; the GM's
-        // view stays put.
-        sourceFloor.tokens = (sourceFloor.tokens || []).filter((t) => t !== token); // off the table's floor
+        // Pinned: only the TABLE moves to the target floor; the GM's view stays where it is.
+        if (activeIsLive) state.tokens = state.tokens.filter((t) => t !== token); // off the live floor
+        else sourceFloor.tokens = (sourceFloor.tokens || []).filter((t) => t !== token); // off the record
+        if (targetIsLive) state.tokens = [...state.tokens, traveler]; // target is the GM's live floor
+        else targetFloor.tokens = [...(targetFloor.tokens || []), traveler]; // target is a record
         state.activeFloorId = targetFloor.id; // the table follows the player
-        if (targetIsLive) {
-          // The target IS the floor the GM is viewing, so it's live — the traveler must enter live
-          // state (a record write would be clobbered by captureCurrentFloor on the next broadcast).
-          // Render so the GM sees the party arrive on their own screen.
-          state.tokens = [...state.tokens, traveler];
-          render();
-        } else {
-          targetFloor.tokens = [...(targetFloor.tokens || []), traveler]; // onto the next floor's record
-        }
+        render(); // the GM may have just watched a token leave or arrive on their own floor
         refreshFloorUI();
         broadcastAssets();
         broadcastState();
