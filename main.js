@@ -600,8 +600,13 @@ function bindControls() {
   controls.castDebug?.addEventListener("change", () => { ui.castDebug = controls.castDebug.checked; render(); });
 
   // Floor navigation
-  controls.floorUp?.addEventListener("click", () => goToFloor(currentFloorIndex() + 1));
-  controls.floorDown?.addEventListener("click", () => goToFloor(currentFloorIndex() - 1));
+  controls.floorOverlay?.addEventListener("click", (event) => {
+    const act = event.target.closest("[data-act]")?.dataset.act;
+    if (act === "floor-up") { goToFloor(currentFloorIndex() + 1); return; }
+    if (act === "floor-down") { goToFloor(currentFloorIndex() - 1); return; }
+    const row = event.target.closest("[data-idx]");
+    if (row) goToFloor(Number(row.dataset.idx)); // jump straight to any floor
+  });
   controls.addFloorUp?.addEventListener("click", () => addFloor("up"));
   controls.addFloorDown?.addEventListener("click", () => addFloor("down"));
   controls.deleteFloor?.addEventListener("click", deleteCurrentFloor);
@@ -1363,14 +1368,32 @@ function refreshFloorUI() {
   const total = state.floors.length;
   const floor = state.floors[idx];
   if (controls.floorName) controls.floorName.value = floor.name || `Floor ${idx + 1}`;
-  if (controls.floorIndicator) {
-    controls.floorIndicator.textContent = `${idx + 1} / ${total}`;
-    controls.floorIndicator.title = floor.name || `Floor ${idx + 1}`;
-  }
-  if (controls.floorUp) controls.floorUp.disabled = idx >= total - 1;
-  if (controls.floorDown) controls.floorDown.disabled = idx <= 0;
+  renderFloorOverlay();
   if (controls.deleteFloor) controls.deleteFloor.disabled = total <= 1;
   if (controls.mapScale) controls.mapScale.value = state.map.scale;
+}
+
+// The floor overlay (top-right) mirrors the initiative overlay: a compact box listing every floor,
+// highest at the top, the current one highlighted, click a row to jump straight there. The ‹ ›
+// header arrows still nudge one floor up/down. Hidden when there's only one floor (nothing to
+// navigate) and GM-only — the player window gets this same box later, once parties can split.
+function renderFloorOverlay() {
+  const ov = controls.floorOverlay;
+  if (!ov || isPlayer) return;
+  const total = state.floors.length;
+  const idx = currentFloorIndex();
+  ov.hidden = total <= 1;
+  if (ov.hidden) return;
+  let rows = "";
+  for (let i = total - 1; i >= 0; i--) {
+    const name = escapeHtml(state.floors[i].name || `Floor ${i + 1}`);
+    rows += `<li class="${i === idx ? "current" : ""}" data-idx="${i}"><span class="floor-ov-name">${name}</span></li>`;
+  }
+  ov.innerHTML = `<div class="floor-ov-head">
+      <button type="button" class="floor-ov-btn" data-act="floor-up" title="Go up one floor" aria-label="Go up"${idx >= total - 1 ? " disabled" : ""}>▲</button>
+      <span class="floor-ov-title">Floors</span>
+      <button type="button" class="floor-ov-btn" data-act="floor-down" title="Go down one floor" aria-label="Go down"${idx <= 0 ? " disabled" : ""}>▼</button>
+    </div><ol class="floor-ov-list">${rows}</ol>`;
 }
 
 /* ----------------------------- stairs ----------------------------- */

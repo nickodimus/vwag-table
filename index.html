@@ -537,15 +537,7 @@
 
         <!-- GM top-right widgets -->
         <div class="stage-top-right">
-          <div class="floor-widget" id="floorWidget" aria-label="Floor navigation">
-            <button id="floorUp" class="floor-widget-btn" type="button" title="Go up one floor" aria-label="Go up" disabled>
-              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m18 15-6-6-6 6"/></svg>
-            </button>
-            <span id="floorIndicator" class="floor-widget-label" title="Current floor">1 / 1</span>
-            <button id="floorDown" class="floor-widget-btn" type="button" title="Go down one floor" aria-label="Go down" disabled>
-              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
-            </button>
-          </div>
+          <div class="floor-overlay" id="floorOverlay" aria-label="Floors" hidden></div>
         </div>
 
         <!-- Initiative order overlay (GM always when active; player when shared) -->
