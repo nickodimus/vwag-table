@@ -1936,3 +1936,99 @@ input:disabled {
   white-space: nowrap;
   color: var(--accent-2);
 }
+
+/* Token status conditions — toggle grid in the selected-token panel (5e). */
+.condition-block {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+.condition-heading {
+  display: block;
+  font-size: 12px;
+  color: var(--muted);
+  margin-bottom: 6px;
+}
+.condition-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(34px, 1fr));
+  gap: 4px;
+}
+.condition-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  aspect-ratio: 1 / 1;
+  padding: 0;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  cursor: pointer;
+}
+.condition-btn svg {
+  width: 76%;
+  height: 76%;
+}
+.condition-btn svg path {
+  fill: none;
+  stroke: var(--cond, var(--muted));
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  opacity: 0.5;
+}
+.condition-btn:hover {
+  border-color: var(--muted);
+}
+.condition-btn.active {
+  border-color: var(--cond, var(--accent));
+  background: color-mix(in srgb, var(--cond, var(--accent)) 20%, var(--panel-2));
+}
+.condition-btn.active svg path {
+  opacity: 1;
+}
+.condition-extras {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 8px;
+  flex-wrap: wrap;
+}
+.exhaustion-stepper {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.exhaustion-stepper button {
+  width: 22px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  color: var(--text);
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+}
+.exhaustion-stepper button:hover {
+  border-color: var(--muted);
+}
+.exhaustion-stepper #tokenSelExhVal {
+  min-width: 12px;
+  text-align: center;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+.down-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--muted);
+}

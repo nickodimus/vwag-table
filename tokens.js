@@ -6,7 +6,7 @@
  */
 
 import {
-  ctx, cur, isPlayer, sel, state,
+  CONDITIONS, EXHAUSTION_ICON, ctx, cur, isPlayer, sel, state,
 } from "./state.js";
 import {
   currentViewRotation, gridCellNative, keepUpright, tokenRadius, pointInPolygon,
@@ -89,6 +89,90 @@ function drawActiveTurnRing(token, r) {
   ctx.stroke();
 }
 
+// Status markers (5e): id -> registry entry, and a Path2D cache (glyphs are static, built once).
+const CONDITION_BY_ID = new Map(CONDITIONS.map((c) => [c.id, c]));
+const conditionPaths = new Map();
+function conditionPath(d) {
+  let p = conditionPaths.get(d);
+  if (!p) { p = new Path2D(d); conditionPaths.set(d, p); }
+  return p;
+}
+
+// The status layer for a token: a dead/down red X over the art, then a centered row of condition
+// marker badges in the margin ABOVE the footprint (so a physical mini on the cell doesn't hide
+// them). Each badge is a dark chip with the condition's 24x24 glyph; exhaustion shows its level as a
+// numeral. Sizes scale with the grid like tokens; stroke widths stay screen-constant. Drawn upright
+// (the caller applied keepUpright) on both GM and player views, since conditions are shared info.
+function drawTokenStatus(token, r) {
+  const sw = 1 / (cur.k * cur.ms);
+
+  if (token.down) {
+    ctx.save();
+    ctx.strokeStyle = "#e24b4a";
+    ctx.lineWidth = Math.max(2.5, 5 * sw);
+    ctx.lineCap = "round";
+    ctx.beginPath();
+    ctx.moveTo(token.x - r * 0.78, token.y - r * 0.78);
+    ctx.lineTo(token.x + r * 0.78, token.y + r * 0.78);
+    ctx.moveTo(token.x + r * 0.78, token.y - r * 0.78);
+    ctx.lineTo(token.x - r * 0.78, token.y + r * 0.78);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  const markers = (token.conditions || [])
+    .filter((id) => CONDITION_BY_ID.has(id))
+    .map((id) => CONDITION_BY_ID.get(id));
+  const exh = Math.max(0, Math.min(6, token.exhaustion || 0));
+  if (exh > 0) markers.push({ ...EXHAUSTION_ICON, level: exh });
+  if (!markers.length) return;
+
+  const cell = gridCellNative();
+  const badge = cell * 0.4;        // diameter; scales with the grid like tokens
+  const gap = badge * 0.16;
+  const pitch = badge + gap;
+  const totalW = markers.length * pitch - gap;
+  const cy = token.y - r - badge * 0.7;   // sit just above the footprint
+  let x = token.x - totalW / 2 + badge / 2;
+
+  markers.forEach((m) => {
+    ctx.beginPath();
+    ctx.arc(x, cy, badge / 2, 0, Math.PI * 2);
+    ctx.fillStyle = "rgba(20,22,24,0.9)";
+    ctx.fill();
+    ctx.lineWidth = 1.2 * sw;
+    ctx.strokeStyle = m.color;
+    ctx.stroke();
+
+    const g = badge * 0.62;
+    const s = g / 24;
+    ctx.save();
+    ctx.translate(x - g / 2, cy - g / 2);
+    ctx.scale(s, s);
+    ctx.lineWidth = (1.8 / s) * sw;
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    ctx.strokeStyle = m.color;
+    ctx.stroke(conditionPath(m.d));
+    ctx.restore();
+
+    if (m.level) {
+      ctx.save();
+      ctx.font = `700 ${Math.round(badge * 0.44)}px Inter, sans-serif`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.lineWidth = Math.max(1, 2 * sw);
+      ctx.strokeStyle = "rgba(0,0,0,0.85)";
+      ctx.fillStyle = "#ffffff";
+      const nx = x + badge * 0.32, ny = cy + badge * 0.32;
+      ctx.strokeText(String(m.level), nx, ny);
+      ctx.fillText(String(m.level), nx, ny);
+      ctx.restore();
+    }
+    x += pitch;
+  });
+}
+
 function drawTokens() {
   const lineW = Math.max(1, 2 / (cur.k * cur.ms));
   const rot = currentViewRotation();
@@ -167,6 +251,7 @@ function drawTokens() {
       ctx.stroke();
     }
     if (token.id === activeTokenId) drawActiveTurnRing(token, r);
+    drawTokenStatus(token, r);
     ctx.restore();
   });
 }

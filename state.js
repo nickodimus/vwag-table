@@ -61,6 +61,30 @@ const HISTORY_LIMIT = 80;
 const STAIRS_ICON_NEUTRAL = new Path2D("M22 5h-5v5h-5v5h-5v5h-5");
 const STAIRS_ICON_UP = new Path2D("M22 6h-5v5h-5v5h-5v5h-5 M6 10v-7 M3 6l3 -3l3 3");
 const STAIRS_ICON_DOWN = new Path2D("M22 21h-5v-5h-5v-5h-5v-5h-5 M18 3v7 M15 7l3 3l3 -3");
+
+// 5e status conditions (token.conditions holds the active ids). Each glyph is an SVG path in a
+// 24x24 box, stroked like the stair icons; `d` is shared by the canvas markers (tokens.js builds a
+// Path2D) and the authoring grid (index.html buttons, built in main.js from this list). The order
+// here is the order markers appear above the token and buttons appear in the panel. Exhaustion is
+// leveled, so it lives in its own field (token.exhaustion 0-6) and renders one marker with a numeral.
+const CONDITIONS = [
+  { id: "blinded", label: "Blinded", color: "#6b8cae", d: "M2 12 C5 7 19 7 22 12 C19 17 5 17 2 12 Z M12 9 a3 3 0 1 0 0.01 0 M4 4 L20 20" },
+  { id: "charmed", label: "Charmed", color: "#d4537e", d: "M12 20 C12 20 3 14 3 8 A4.5 4.5 0 0 1 12 6 A4.5 4.5 0 0 1 21 8 C21 14 12 20 12 20 Z" },
+  { id: "deafened", label: "Deafened", color: "#9c9a92", d: "M9 18 a5 5 0 0 1 -2 -4 a5 5 0 1 1 10 0 c0 2 -2 2 -2 4 M4 4 L20 20" },
+  { id: "frightened", label: "Frightened", color: "#8f88e6", d: "M12 4 L12 14 M12 18 a0.7 0.7 0 1 0 0.01 0" },
+  { id: "grappled", label: "Grappled", color: "#e07a4d", d: "M5 7 L10 12 L5 17 M19 7 L14 12 L19 17" },
+  { id: "incapacitated", label: "Incapacitated", color: "#9c9a92", d: "M12 12 m-8 0 a8 8 0 1 0 16 0 a8 8 0 1 0 -16 0 M6 6 L18 18" },
+  { id: "invisible", label: "Invisible", color: "#3fbf94", d: "M5 20 L5 11 a7 7 0 0 1 14 0 L19 20 L16 18 L13 20 L10 18 L7 20 Z M9.5 11 a0.7 0.7 0 1 0 0.01 0 M14.5 11 a0.7 0.7 0 1 0 0.01 0" },
+  { id: "paralyzed", label: "Paralyzed", color: "#ef9f27", d: "M13 2 L5 13 L11 13 L9 22 L19 9 L13 9 Z" },
+  { id: "petrified", label: "Petrified", color: "#b4b2a9", d: "M12 3 L20 7.5 L20 16.5 L12 21 L4 16.5 L4 7.5 Z M4 7.5 L12 12 L20 7.5 M12 12 L12 21" },
+  { id: "poisoned", label: "Poisoned", color: "#97c459", d: "M12 3 C12 3 6 11 6 15 a6 6 0 0 0 12 0 C18 11 12 3 12 3 Z" },
+  { id: "prone", label: "Prone", color: "#b4b2a9", d: "M12 4 L12 17 M6 11 L12 18 L18 11" },
+  { id: "restrained", label: "Restrained", color: "#4f9be0", d: "M8 10 L8 7 a4 4 0 0 1 8 0 L16 10 M6 10 L18 10 L18 20 L6 20 Z" },
+  { id: "stunned", label: "Stunned", color: "#f0b53e", d: "M10 4 L11.5 8 L15.5 9.5 L11.5 11 L10 15 L8.5 11 L4.5 9.5 L8.5 8 Z M17 13 L17.8 15 L19.8 15.8 L17.8 16.6 L17 18.6 L16.2 16.6 L14.2 15.8 L16.2 15 Z" },
+  { id: "unconscious", label: "Unconscious", color: "#8d90a8", d: "M7 8 L13 8 L7 16 L13 16 M15 5 L19 5 L15 10 L19 10" },
+  { id: "concentration", label: "Concentration", color: "#8f88e6", d: "M12 12 m-8 0 a8 8 0 1 0 16 0 a8 8 0 1 0 -16 0 M12 12 m-3 0 a3 3 0 1 0 6 0 a3 3 0 1 0 -6 0" },
+];
+const EXHAUSTION_ICON = { id: "exhaustion", label: "Exhaustion", color: "#e08a52", d: "M3 9 L16 9 L16 15 L3 15 Z M16 11 L19 11 L19 13 L16 13 M5 11 L7 11 L7 13 L5 13 Z" };
 const FEET_PER_CELL = 5;
 // Real-world distance one grid cell represents, per measurement system.
 const MEASURE_UNITS = {
@@ -118,6 +142,11 @@ const controls = {
   tokenSelCells: document.getElementById("tokenSelCells"),
   tokenSelLight: document.getElementById("tokenSelLight"),
   tokenSelLightVal: document.getElementById("tokenSelLightVal"),
+  tokenSelConditions: document.getElementById("tokenSelConditions"),
+  tokenSelExhDown: document.getElementById("tokenSelExhDown"),
+  tokenSelExhUp: document.getElementById("tokenSelExhUp"),
+  tokenSelExhVal: document.getElementById("tokenSelExhVal"),
+  tokenSelDown: document.getElementById("tokenSelDown"),
   tokenImage: document.getElementById("tokenImage"),
   tokenImagePreview: document.getElementById("tokenImagePreview"),
   tokenImageClear: document.getElementById("tokenImageClear"),
@@ -391,6 +420,7 @@ export {
   exploredMasks, lightCache, shell, emptyState, channel, APP_NAME, LEGACY_APP_NAME, SAVE_FILE_VERSION,
   DB_NAME, DB_VERSION, MAP_STORE, IMAGE_STORE, MODULE_STORE, SESSION_STORE, TOKEN_STORE, FOG_MAX_EDGE,
   HISTORY_LIMIT, STAIRS_ICON_NEUTRAL, STAIRS_ICON_UP, STAIRS_ICON_DOWN, FEET_PER_CELL, MEASURE_UNITS, PING_DURATION, controls,
+  CONDITIONS, EXHAUSTION_ICON,
   isPlayer, DEFAULT_GM_FOG_OPACITY, INITIAL_FLOOR_ID, makeFloor, state, normalizeInput, uuid, escapeHtml,
   playerCam,
   tools,

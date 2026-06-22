@@ -84,6 +84,18 @@
             Torch radius: <span id="tokenSelLightVal">0</span> cells
             <input id="tokenSelLight" type="range" min="0" max="12" step="1" value="0">
           </label>
+          <div class="condition-block">
+            <span class="condition-heading">Conditions</span>
+            <div id="tokenSelConditions" class="condition-grid"></div>
+            <div class="condition-extras">
+              <span class="exhaustion-stepper">Exhaustion
+                <button id="tokenSelExhDown" type="button" aria-label="Lower exhaustion">&minus;</button>
+                <span id="tokenSelExhVal">0</span>
+                <button id="tokenSelExhUp" type="button" aria-label="Raise exhaustion">+</button>
+              </span>
+              <label class="down-toggle"><input id="tokenSelDown" type="checkbox"> Down (0 HP)</label>
+            </div>
+          </div>
           <p class="hint">Editing the selected token. Click empty space to deselect.</p>
         </section>
 

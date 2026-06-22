@@ -15,6 +15,7 @@ import {
   exploredMasks, lightCache, shell, emptyState, channel, APP_NAME, LEGACY_APP_NAME, SAVE_FILE_VERSION,
   DB_NAME, DB_VERSION, MAP_STORE, IMAGE_STORE, MODULE_STORE, SESSION_STORE, TOKEN_STORE, FOG_MAX_EDGE,
   HISTORY_LIMIT, STAIRS_ICON_NEUTRAL, STAIRS_ICON_UP, STAIRS_ICON_DOWN, FEET_PER_CELL, MEASURE_UNITS, PING_DURATION, controls,
+  CONDITIONS,
   isPlayer, DEFAULT_GM_FOG_OPACITY, INITIAL_FLOOR_ID, makeFloor, state, normalizeInput, uuid, escapeHtml,
   playerCam, tools, cur, hooks, sel, fogBuf, peerWindow,
   castCache, castFrameKeys, lightFrameKeys,
@@ -918,6 +919,24 @@ function bindControls() {
   controls.tokenSelCells?.addEventListener("input", () => {
     if (!sel.token) return;
     sel.token.cells = Number(controls.tokenSelCells.value) || 1;
+    renderAndSync();
+  });
+  buildConditionGrid();
+  controls.tokenSelConditions?.addEventListener("click", (event) => {
+    const btn = event.target.closest("[data-cond]");
+    if (!btn || !sel.token) return;
+    const id = btn.dataset.cond;
+    const set = new Set(sel.token.conditions || []);
+    if (set.has(id)) set.delete(id); else set.add(id);
+    sel.token.conditions = [...set];
+    btn.classList.toggle("active", set.has(id));
+    renderAndSync();
+  });
+  controls.tokenSelExhDown?.addEventListener("click", () => stepExhaustion(-1));
+  controls.tokenSelExhUp?.addEventListener("click", () => stepExhaustion(1));
+  controls.tokenSelDown?.addEventListener("change", () => {
+    if (!sel.token) return;
+    sel.token.down = controls.tokenSelDown.checked;
     renderAndSync();
   });
   controls.copyDMView.addEventListener("click", () => snapPlayerViewToGM(true));
@@ -2183,6 +2202,9 @@ function addToken(native) {
     type: controls.tokenType?.value || "monster",
     light: Number(controls.tokenLight?.value) || 0,
     image: tokenImageData || "",
+    conditions: [],
+    exhaustion: 0,
+    down: false,
   });
   renderAndSync();
 }
@@ -2780,6 +2802,24 @@ function editNote(note) {
   render();
 }
 
+// Build the condition toggle grid in the selected-token panel from the CONDITIONS registry — each
+// button carries the same 24x24 glyph the canvas markers use and toggles that id on the token.
+function buildConditionGrid() {
+  const grid = controls.tokenSelConditions;
+  if (!grid || grid.childElementCount) return;
+  grid.innerHTML = CONDITIONS.map((c) =>
+    `<button type="button" class="condition-btn" data-cond="${c.id}" title="${c.label}" aria-label="${c.label}" style="--cond:${c.color}">`
+    + `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="${c.d}"/></svg></button>`,
+  ).join("");
+}
+
+function stepExhaustion(delta) {
+  if (!sel.token) return;
+  sel.token.exhaustion = Math.max(0, Math.min(6, (sel.token.exhaustion || 0) + delta));
+  if (controls.tokenSelExhVal) controls.tokenSelExhVal.textContent = sel.token.exhaustion;
+  renderAndSync();
+}
+
 // Show/populate the View-section panels for the currently selected image or note.
 function updateSelectionPanels() {
   if (isPlayer) return;
@@ -2792,6 +2832,14 @@ function updateSelectionPanels() {
       if (controls.tokenSelCells) controls.tokenSelCells.value = sel.token.cells || 1;
       if (controls.tokenSelLight) controls.tokenSelLight.value = sel.token.light || 0;
       if (controls.tokenSelLightVal) controls.tokenSelLightVal.textContent = sel.token.light || 0;
+      const conds = new Set(sel.token.conditions || []);
+      if (controls.tokenSelConditions) {
+        controls.tokenSelConditions.querySelectorAll("[data-cond]").forEach((btn) => {
+          btn.classList.toggle("active", conds.has(btn.dataset.cond));
+        });
+      }
+      if (controls.tokenSelExhVal) controls.tokenSelExhVal.textContent = sel.token.exhaustion || 0;
+      if (controls.tokenSelDown) controls.tokenSelDown.checked = !!sel.token.down;
     }
   }
   if (controls.imageSelPanel) {
