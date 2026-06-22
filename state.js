@@ -359,6 +359,7 @@ const state = {
   floors: [makeFloor(INITIAL_FLOOR_ID)],
   floorPosition: 1, // player-side display only
   floorCount: 1, // player-side display only
+  floorSummary: [], // player-side only: names-only "rest of party" lines when the party is split
 };
 
 function normalizeInput(value) {

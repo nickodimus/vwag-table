@@ -107,6 +107,14 @@ function sanitizedState() {
   const clone = JSON.parse(JSON.stringify(rest));
   if (clone.splash) delete clone.splash.imageData;
   delete clone.notes; // floating notes are GM-only and never leave the GM window
+  // Names-only "rest of party" summary: every OTHER floor that currently holds player tokens.
+  // No total count, no current-floor name, no position — the player learns WHERE split-off
+  // teammates are without learning how deep the dungeon runs.
+  const idx = floors.findIndex((f) => f.id === state.currentFloorId);
+  clone.floorSummary = floors
+    .map((f, i) => ({ i, name: f.name, players: (f.tokens || []).filter((t) => t.type === "player").length }))
+    .filter((f) => f.i !== idx && f.players > 0)
+    .map((f) => ({ name: f.name && f.name.trim() ? f.name : "another floor", players: f.players }));
   return clone;
 }
 

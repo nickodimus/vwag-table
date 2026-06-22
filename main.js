@@ -1176,6 +1176,7 @@ function loadSnapshot(snapshot) {
     if (snapshot.imageHeight) state.imageHeight = snapshot.imageHeight;
     state.floorPosition = snapshot.floorPosition || 1;
     state.floorCount = snapshot.floorCount || 1;
+    state.floorSummary = Array.isArray(snapshot.floorSummary) ? snapshot.floorSummary : [];
   }
   fogBuf.dirty = true;
 
@@ -1360,14 +1361,31 @@ function deleteCurrentFloor() {
 
 function refreshFloorUI() {
   if (isPlayer) {
-    // Floor level is GM-only information; never reveal it on the player display.
-    if (controls.playerFloorBadge) controls.playerFloorBadge.hidden = true;
+    // The player never sees its own floor level (GM-only), but a names-only "rest of party" line
+    // shows WHERE split-off teammates are — so nobody at the table forgets the other half exists.
+    const badge = controls.playerFloorBadge;
+    if (badge) {
+      const summary = Array.isArray(state.floorSummary) ? state.floorSummary : [];
+      if (summary.length) {
+        const parts = summary.map((f) => `${escapeHtml(f.name)} <em>●${f.players}</em>`).join(", ");
+        badge.innerHTML = `<span class="pfb-label">Rest of party:</span> ${parts}`;
+        badge.hidden = false;
+      } else {
+        badge.hidden = true;
+        badge.textContent = "";
+      }
+    }
     return;
   }
   const idx = currentFloorIndex();
   const total = state.floors.length;
   const floor = state.floors[idx];
-  if (controls.floorName) controls.floorName.value = floor.name || `Floor ${idx + 1}`;
+  if (controls.floorName) {
+    // Show only the real name; an unnamed floor leaves the field empty with the default label as a
+    // greyed placeholder — so it's obvious when a floor is unnamed and a typed name actually sticks.
+    controls.floorName.value = floor.name || "";
+    controls.floorName.placeholder = `Floor ${idx + 1}`;
+  }
   renderFloorOverlay();
   if (controls.deleteFloor) controls.deleteFloor.disabled = total <= 1;
   if (controls.mapScale) controls.mapScale.value = state.map.scale;
@@ -1387,11 +1405,7 @@ function renderFloorOverlay() {
   let rows = "";
   for (let i = total - 1; i >= 0; i--) {
     const name = escapeHtml(state.floors[i].name || `Floor ${i + 1}`);
-    // The current floor's truth is the live token list; other floors read their stored snapshot.
-    const tokensOn = i === idx ? state.tokens : (state.floors[i].tokens || []);
-    const players = tokensOn.filter((t) => t.type === "player").length;
-    const badge = players ? `<span class="floor-ov-count"><span class="floor-ov-dot"></span>${players}</span>` : "";
-    rows += `<li class="${i === idx ? "current" : ""}" data-idx="${i}"><span class="floor-ov-name">${name}</span>${badge}</li>`;
+    rows += `<li class="${i === idx ? "current" : ""}" data-idx="${i}"><span class="floor-ov-name">${name}</span></li>`;
   }
   ov.innerHTML = `<div class="floor-ov-head">
       <button type="button" class="floor-ov-btn" data-act="floor-up" title="Go up one floor" aria-label="Go up"${idx >= total - 1 ? " disabled" : ""}>▲</button>
