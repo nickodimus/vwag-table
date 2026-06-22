@@ -1052,7 +1052,6 @@ input:disabled {
   cursor: pointer;
   display: flex;
   font-size: 0.82rem;
-  gap: 8px;
   padding: 4px 8px;
 }
 
@@ -1066,29 +1065,9 @@ input:disabled {
 }
 
 .floor-ov-name {
-  flex: 1;
-  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.floor-ov-count {
-  align-items: center;
-  color: var(--muted);
-  display: inline-flex;
-  flex: none;
-  font-size: 0.74rem;
-  font-weight: 700;
-  gap: 4px;
-}
-
-.floor-ov-dot {
-  background: #6fb6f2;
-  border-radius: 50%;
-  flex: none;
-  height: 8px;
-  width: 8px;
 }
 
 /* ---- Player floor badge ---- */
@@ -1096,15 +1075,28 @@ input:disabled {
   background: rgba(6, 2, 28, 0.82);
   border: 1px solid var(--accent);
   border-radius: 6px;
-  color: var(--accent);
+  color: var(--text);
   font-size: 0.78rem;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  padding: 5px 10px;
+  line-height: 1.4;
+  max-width: 280px;
+  padding: 6px 11px;
   position: absolute;
   right: 14px;
   top: 14px;
   z-index: 6;
+}
+
+.player-floor-badge .pfb-label {
+  color: var(--accent);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.player-floor-badge em {
+  color: var(--accent);
+  font-style: normal;
+  font-weight: 700;
 }
 
 /* ---- Floor panel controls in sidebar ---- */
