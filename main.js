@@ -219,6 +219,7 @@ let draggingFrame = false; // GM is dragging the player-view frame to pan the pl
 let dragGrab = { dx: 0, dy: 0 }; // offset from cursor to object center while dragging images/notes/frame
 let groupDragOffsets = null; // [{token,dx,dy}] formation captured at grab, for a player group-drag
 let dragGrabbed = false; // a token-grab has been relayed for the current player pointer-drag
+let dragMeasureStart = null; // the dragged token's pre-drag position; anchors the live drag-distance line
 
 const undoStack = [];
 const redoStack = [];
@@ -3234,6 +3235,7 @@ function onPointerDown(event) {
         // selection with just it. A no-move tap on a member leaves the group intact (lazy grab).
         if (!sel.playerTokens.includes(hit)) sel.playerTokens = [hit];
         draggingToken = hit; // the anchor the pointer follows
+        dragMeasureStart = { x: hit.x, y: hit.y };
         groupDragOffsets = sel.playerTokens.map((t) => ({ token: t, dx: t.x - hit.x, dy: t.y - hit.y }));
         dragGrabbed = false; // grab lazily on the first cell that actually moves
         isDragging = true;
@@ -3318,6 +3320,7 @@ function onPointerDown(event) {
       sel.token = hit;
       sel.image = sel.note = sel.stair = null;
       draggingToken = hit;
+      dragMeasureStart = { x: hit.x, y: hit.y };
       isDragging = true;
       capturePointer(event.pointerId);
       updateSelectionPanels();
@@ -3363,6 +3366,7 @@ function onPointerDown(event) {
       sel.token = token;
       sel.image = sel.note = sel.stair = null;
       draggingToken = token;
+      dragMeasureStart = { x: token.x, y: token.y };
       isDragging = true;
       capturePointer(event.pointerId);
       updateSelectionPanels();
@@ -3473,6 +3477,7 @@ function onPointerMove(event) {
         moved.push(o.token);
       }
       if (moved.length) {
+        if (dragMeasureStart) tools.dragMeasureLine = { start: dragMeasureStart, end: { x: draggingToken.x, y: draggingToken.y } };
         if (!dragGrabbed) {
           dragGrabbed = true;
           relay({ type: "token-grab", id: draggingToken.id }); // one history snapshot for the drag
@@ -3541,6 +3546,7 @@ function onPointerMove(event) {
     const native = toNativePoint(event);
     draggingToken.x = native.x;
     draggingToken.y = native.y;
+    if (dragMeasureStart) tools.dragMeasureLine = { start: dragMeasureStart, end: { x: draggingToken.x, y: draggingToken.y } };
     render(); // local only; players get the token's final position on drop
     return;
   }
@@ -3607,6 +3613,8 @@ function onPointerUp(event) {
       draggingToken = null;
       groupDragOffsets = null;
       dragGrabbed = false;
+      tools.dragMeasureLine = null;
+      dragMeasureStart = null;
     } else if (sel.marquee) {
       finishPlayerMarquee();
       sel.marquee = null;
@@ -3647,6 +3655,8 @@ function onPointerUp(event) {
     draggingToken.x = snapped.x;
     draggingToken.y = snapped.y;
     draggingToken = null;
+    tools.dragMeasureLine = null;
+    dragMeasureStart = null;
     renderAndSync();
   }
 

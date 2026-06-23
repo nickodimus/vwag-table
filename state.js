@@ -291,6 +291,7 @@ const playerCam = { follow: false, fitZoom: false, ease: null };
 const tools = {
   aoe: { shape: "circle", color: "#e2603a", sizeFt: 10, angle: -Math.PI / 2, template: { visible: false, x: 0, y: 0 } },
   measureLine: null,
+  dragMeasureLine: null,
   calibrating: null,
   calibrationDraft: null,
   lightRadius: 3, // radius (cells) applied to newly placed lights — small=torch, large=firepit

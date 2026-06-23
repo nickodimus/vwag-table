@@ -177,6 +177,7 @@ function render() {
   if (!isPlayer) drawStampDraft();
   if (!isPlayer) drawCalibrationDraft();
   if (tools.measureLine) drawMeasureLine();
+  if (tools.dragMeasureLine) drawMeasureLine(tools.dragMeasureLine);
   if (!isPlayer && ["brush", "eraser"].includes(ui.mode) && state.imageData) {
     drawToolPreview(screenToNative(clientToCanvasPoint(ui.lastPointer)));
   }
@@ -187,6 +188,7 @@ function render() {
   // Screen-space overlays
   drawPings();
   if (tools.measureLine) drawMeasureLabel();
+  if (tools.dragMeasureLine) drawMeasureLabel(tools.dragMeasureLine);
   if (!isPlayer) drawRoomNames();
   if (!isPlayer) drawNotes();
   if (!isPlayer) drawPlayerFrame();
