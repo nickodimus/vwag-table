@@ -677,6 +677,11 @@ function bindControls() {
     const act = event.target.closest("[data-act]")?.dataset.act;
     if (act === "floor-up") { goToFloor(currentFloorIndex() + 1); return; }
     if (act === "floor-down") { goToFloor(currentFloorIndex() - 1); return; }
+    if (act === "move-up" || act === "move-down") {
+      const li = event.target.closest("[data-idx]");
+      if (li) moveFloor(Number(li.dataset.idx), act === "move-up" ? 1 : -1);
+      return; // must return before the row-jump below, or reordering would also change floors
+    }
     const row = event.target.closest("[data-idx]");
     if (row) goToFloor(Number(row.dataset.idx)); // jump straight to any floor
   });
@@ -1571,6 +1576,20 @@ function refreshFloorUI() {
 // highest at the top, the current one highlighted, click a row to jump straight there. The ‹ ›
 // header arrows still nudge one floor up/down. Hidden when there's only one floor (nothing to
 // navigate) and GM-only — the player window gets this same box later, once parties can split.
+// Swap a floor with its neighbour in the stack. currentFloorId/activeFloorId are id-based, so a pure
+// array reshuffle doesn't disturb which floor is current or on the players' table, and there's no
+// stored floor index anywhere to fix up. Stair up/down arrows are derived from stack order at render
+// time, so they flip correctly on their own. dir +1 = up the stack (higher index / toward top).
+function moveFloor(i, dir) {
+  const f = state.floors;
+  const j = i + dir;
+  if (i < 0 || i >= f.length || j < 0 || j >= f.length) return;
+  [f[i], f[j]] = [f[j], f[i]];
+  refreshFloorUI(); // re-render the overlay; current row + end-disabled states recompute
+  render();         // stair direction arrows recompute from the new stack order
+  broadcastState(); // floors are GM-only, but keep the player's view in lockstep with the contract
+}
+
 function renderFloorOverlay() {
   const ov = controls.floorOverlay;
   if (!ov || isPlayer) return;
@@ -1588,7 +1607,13 @@ function renderFloorOverlay() {
     const onTable = i === activeIdx;
     const tv = onTable ? `<span class="floor-ov-tv" title="Showing on the players' table"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="12" rx="1.5"/><path d="M9 21h6"/><path d="M12 17v4"/></svg></span>` : "";
     const cls = `${i === idx ? "current" : ""}${onTable ? " on-table" : ""}`.trim();
-    rows += `<li class="${cls}" data-idx="${i}"><span class="floor-ov-name">${name}</span>${badge}${tv}</li>`;
+    // Reorder controls: "up" moves the floor toward the top of the stack (higher index), matching
+    // the list order (highest floor on top). Disabled at the ends.
+    const reorder = `<span class="floor-ov-reorder">`
+      + `<button type="button" class="floor-ov-move" data-act="move-up" title="Move floor up" aria-label="Move floor up"${i >= total - 1 ? " disabled" : ""}>▲</button>`
+      + `<button type="button" class="floor-ov-move" data-act="move-down" title="Move floor down" aria-label="Move floor down"${i <= 0 ? " disabled" : ""}>▼</button>`
+      + `</span>`;
+    rows += `<li class="${cls}" data-idx="${i}"><span class="floor-ov-name">${name}</span>${badge}${tv}${reorder}</li>`;
   }
   ov.innerHTML = `<div class="floor-ov-head">
       <button type="button" class="floor-ov-btn" data-act="floor-up" title="Go up one floor" aria-label="Go up"${idx >= total - 1 ? " disabled" : ""}>▲</button>
