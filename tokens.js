@@ -15,7 +15,7 @@ import {
   getTokenImage,
 } from "./annotations.js";
 import {
-  activeTurnTokenId,
+  activeTurnTokenId, tokenHp,
 } from "./initiative.js";
 import {
   playerVisionPolygons,
@@ -48,35 +48,100 @@ function drawTokenTypeRing(token, r) {
   ctx.stroke();
 }
 
-// Draw a token's label centered in the token, auto-shrinking the font so the whole label
-// fits inside the token (down to a floor), with a light outline so it stays legible over
-// token art as well as flat color.
-function drawTokenLabel(token, r, below) {
+// Small rounded-rect path helper (ctx.roundRect isn't guaranteed on the off-grid Pi browser).
+function roundRectPath(x, y, w, h, rad) {
+  const rr = Math.max(0, Math.min(rad, w / 2, h / 2));
+  ctx.beginPath();
+  ctx.moveTo(x + rr, y);
+  ctx.arcTo(x + w, y, x + w, y + h, rr);
+  ctx.arcTo(x + w, y + h, x, y + h, rr);
+  ctx.arcTo(x, y + h, x, y, rr);
+  ctx.arcTo(x, y, x + w, y, rr);
+  ctx.closePath();
+}
+
+// Below-the-token zone: the HP bar (when the token's combatant has HP tracked) then the nameplate,
+// stacked under the footprint with consistent gaps. Centralizing the layout here keeps the two
+// offsets coordinated in one place. Drawn upright (caller applied keepUpright) on both views.
+function drawTokenBelowZone(token, r) {
+  const gap = 4 / (cur.k * cur.ms);
+  let y = token.y + r + gap;
+  const hp = tokenHp(token.id);
+  if (hp) y += drawHpBar(token, r, y, hp) + gap;
+  if (token.label) drawNameplate(token, r, y);
+}
+
+// Thin proportional HP bar, centered under the token, colored by remaining fraction. The GM also
+// sees the cur/max numerals; players see only the bar — a read on the fight, not exact enemy HP.
+// Returns the bar height so the caller can stack the nameplate beneath it.
+function drawHpBar(token, r, top, hp) {
+  const frac = Math.max(0, Math.min(1, hp.hp / hp.maxHp));
+  const w = 2 * r * 0.9;
+  const h = Math.max(3 / (cur.k * cur.ms), gridCellNative() * 0.11);
+  const x = token.x - w / 2;
+  const radius = h / 2;
+  const color = frac > 0.5 ? "#5bbf6a" : frac > 0.25 ? "#e0a72e" : "#d8443a";
+
+  ctx.save();
+  roundRectPath(x, top, w, h, radius);
+  ctx.fillStyle = "rgba(16,18,20,0.85)";
+  ctx.fill();
+  if (frac > 0) {
+    roundRectPath(x, top, Math.max(h, w * frac), h, radius);
+    ctx.fillStyle = color;
+    ctx.fill();
+  }
+  roundRectPath(x, top, w, h, radius);
+  ctx.lineWidth = 1 / (cur.k * cur.ms);
+  ctx.strokeStyle = "rgba(0,0,0,0.6)";
+  ctx.stroke();
+  if (!isPlayer) {
+    const fontPx = Math.max(7, h * 0.95);
+    ctx.font = `700 ${Math.round(fontPx)}px Inter, sans-serif`;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.lineWidth = Math.max(1, 2 / (cur.k * cur.ms));
+    ctx.strokeStyle = "rgba(0,0,0,0.85)";
+    ctx.strokeText(`${hp.hp}/${hp.maxHp}`, token.x, top + h / 2);
+    ctx.fillStyle = "#ffffff";
+    ctx.fillText(`${hp.hp}/${hp.maxHp}`, token.x, top + h / 2);
+  }
+  ctx.restore();
+  return h;
+}
+
+// Nameplate: the token's name on a subtle backing plate, centered below the footprint. Auto-shrinks
+// the font to a sensible width, then sizes the plate to the text so the art stays uncovered.
+function drawNameplate(token, r, top) {
   const text = String(token.label);
   if (!text) return;
-  ctx.textAlign = "center";
-  ctx.lineJoin = "round";
-  // Centered labels must fit inside the token; labels below have lateral room to breathe.
-  const maxWidth = below ? r * 2.4 : r * 1.7;
-  let fontPx = Math.round(gridCellNative() / 2);
-  ctx.font = `700 ${fontPx}px Inter, sans-serif`;
+  const maxWidth = Math.max(gridCellNative() * 1.6, r * 2.4);
+  let fontPx = Math.round(gridCellNative() / 2.2);
+  ctx.font = `600 ${fontPx}px Inter, sans-serif`;
   while (fontPx > 6 && ctx.measureText(text).width > maxWidth) {
     fontPx -= 1;
-    ctx.font = `700 ${fontPx}px Inter, sans-serif`;
+    ctx.font = `600 ${fontPx}px Inter, sans-serif`;
   }
-  let y = token.y;
-  if (below) {
-    // Sit just under the type ring so the art stays clear and the name is readable.
-    ctx.textBaseline = "top";
-    y = token.y + r + 4 / (cur.k * cur.ms);
-  } else {
-    ctx.textBaseline = "middle";
-  }
-  ctx.lineWidth = Math.max(1, fontPx / 6);
-  ctx.strokeStyle = "rgba(255,255,255,0.9)";
-  ctx.strokeText(text, token.x, y);
-  ctx.fillStyle = "#0c0d0d";
-  ctx.fillText(text, token.x, y);
+  const tw = ctx.measureText(text).width;
+  const padX = fontPx * 0.45;
+  const padY = fontPx * 0.28;
+  const plateW = tw + padX * 2;
+  const plateH = fontPx + padY * 2;
+  const x = token.x - plateW / 2;
+
+  ctx.save();
+  roundRectPath(x, top, plateW, plateH, plateH * 0.3);
+  ctx.fillStyle = "rgba(12,13,13,0.78)";
+  ctx.fill();
+  ctx.lineWidth = 1 / (cur.k * cur.ms);
+  ctx.strokeStyle = "rgba(255,255,255,0.14)";
+  ctx.stroke();
+  ctx.font = `600 ${fontPx}px Inter, sans-serif`;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillStyle = "#eef1ef";
+  ctx.fillText(text, token.x, top + plateH / 2);
+  ctx.restore();
 }
 
 // Bright "whose turn it is" ring, drawn outermost on the active combatant's token on both
@@ -219,7 +284,6 @@ function drawTokens() {
       ctx.lineWidth = lineW;
       ctx.strokeStyle = "rgba(0,0,0,0.65)";
       ctx.stroke();
-      if (token.label) drawTokenLabel(token, r, true);
     } else {
       ctx.beginPath();
       tokenOutline(token, r);
@@ -230,9 +294,9 @@ function drawTokens() {
       ctx.lineWidth = lineW;
       ctx.strokeStyle = "rgba(0,0,0,0.65)";
       ctx.stroke();
-      if (token.label) drawTokenLabel(token, r, false);
     }
     drawTokenTypeRing(token, r);
+    drawTokenBelowZone(token, r);
     // Selection highlight (GM only): an accent outline around the active token.
     if (!isPlayer && token === sel.token) {
       ctx.beginPath();
@@ -257,5 +321,5 @@ function drawTokens() {
 }
 
 export {
-  tokenIsSquare, tokenOutline, drawTokenTypeRing, drawTokenLabel, drawActiveTurnRing, drawTokens,
+  tokenIsSquare, tokenOutline, drawTokenTypeRing, drawActiveTurnRing, drawTokens,
 };
