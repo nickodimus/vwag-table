@@ -671,6 +671,7 @@ function bindControls() {
     renderAndSync();
   });
   controls.darknessEnabled?.addEventListener("input", () => { state.los.darkness = controls.darknessEnabled.checked; renderAndSync(); });
+  controls.losSource?.addEventListener("change", () => { state.los.source = controls.losSource.value; renderAndSync(); });
   controls.castDebug?.addEventListener("change", () => { ui.castDebug = controls.castDebug.checked; render(); });
 
   // Floor navigation
@@ -1464,6 +1465,7 @@ function syncControlsFromState() {
   if (controls.losEnabled) controls.losEnabled.checked = state.los.enabled;
   if (controls.losOptions) controls.losOptions.classList.toggle("hidden", !state.los.enabled);
   if (controls.darknessEnabled) controls.darknessEnabled.checked = Boolean(state.los.darkness);
+  if (controls.losSource) controls.losSource.value = state.los.source || "party";
   controls.mapScale.value = state.map.scale;
   controls.brushSize.value = state.fog.toolSize;
   controls.fogTint.value = state.fog.gmColor;

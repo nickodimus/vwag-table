@@ -118,6 +118,7 @@ const controls = {
   fogTint: document.getElementById("fogTint"),
   gmFogOpacity: document.getElementById("gmFogOpacity"),
   losBrightness: document.getElementById("losBrightness"),
+  losSource: document.getElementById("losSource"),
   resetExplored: document.getElementById("resetExplored"),
   tokenColor: document.getElementById("tokenColor"),
   tokenCells: document.getElementById("tokenCells"),
