@@ -30,7 +30,7 @@ import {
   drawDraftObstacle, drawDraftRoom, drawObstacleOutlines, drawRoomNames, drawRoomOutlines,
 } from "./rooms-obstacles.js";
 import {
-  drawAoeTemplate, drawCalibrationDraft, drawMeasureLabel, drawMeasureLine,
+  drawAoeTemplate, drawAoes, drawAoeLabels, drawCalibrationDraft, drawMeasureLabel, drawMeasureLine,
 } from "./aoe-measure.js";
 
 function drawStairs() {
@@ -166,6 +166,7 @@ function render() {
   drawTokens();
   compositeFog();
   if (isPlayer && state.los.enabled) compositeLoS();
+  drawAoes(); // committed zones, above fog so the table reliably shows where a spell landed
   drawAoeTemplate(); // hover template sits above fog; visible to both GM and player
   if (!isPlayer) drawRoomOutlines();
   if (!isPlayer) drawObstacleOutlines();
@@ -187,6 +188,7 @@ function render() {
 
   // Screen-space overlays
   drawPings();
+  drawAoeLabels(); // committed-zone names, screen-space so they stay legible at any zoom
   if (tools.measureLine) drawMeasureLabel();
   if (tools.dragMeasureLine) drawMeasureLabel(tools.dragMeasureLine);
   if (!isPlayer) drawRoomNames();

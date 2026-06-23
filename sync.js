@@ -126,6 +126,7 @@ function sanitizedState() {
   clone.stairs = active.stairs || [];
   clone.obstacles = active.obstacles || [];
   clone.lights = active.lights || [];
+  clone.aoes = active.aoes || [];
   clone.images = active.images || [];
   clone.view = active.view ? { ...active.view } : clone.view;
   // Names-only "rest of party" summary: every OTHER floor (vs the active/table floor) that holds

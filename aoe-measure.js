@@ -6,7 +6,7 @@
  */
 
 import {
-  ctx, FEET_PER_CELL, MEASURE_UNITS, controls, state, tools, cur,
+  ctx, FEET_PER_CELL, MEASURE_UNITS, controls, state, tools, cur, sel,
 } from "./state.js";
 import {
   nativeToScreen,
@@ -45,30 +45,37 @@ function drawCalibrationDraft() {
   ctx.restore();
 }
 
-// Draw the live AoE hover template at the current cursor position (native coords).
-// Visible on both GM and player screens via the view broadcast.
-function drawAoeTemplate() {
-  if (!tools.aoe.template.visible) return;
-  const x = tools.aoe.template.x;
-  const y = tools.aoe.template.y;
-  const pxPerFt = measureCellWorld() / FEET_PER_CELL / (state.map.scale || 1);
-  const size = tools.aoe.sizeFt * pxPerFt; // size in native px (radius, half-side, or cone length)
-
-  ctx.save();
+// Build the AoE outline path (no fill/stroke) at a native position. Shared by the live hover
+// template and the committed zones so a dropped shape is pixel-identical to its preview.
+function aoePath(x, y, size, shape, angle) {
   ctx.beginPath();
-  if (tools.aoe.shape === "circle") {
+  if (shape === "circle") {
     ctx.arc(x, y, size, 0, Math.PI * 2);
-  } else if (tools.aoe.shape === "square") {
+  } else if (shape === "square") {
     ctx.rect(x - size / 2, y - size / 2, size, size);
-  } else if (tools.aoe.shape === "cone") {
-    // A real triangle: apex at the cursor, two straight edges to a flat far side.
-    const a1 = tools.aoe.angle - AOE_CONE_HALF_ANGLE;
-    const a2 = tools.aoe.angle + AOE_CONE_HALF_ANGLE;
+  } else if (shape === "cone") {
+    // A real triangle: apex at the origin, two straight edges to a flat far side.
+    const a1 = angle - AOE_CONE_HALF_ANGLE;
+    const a2 = angle + AOE_CONE_HALF_ANGLE;
     ctx.moveTo(x, y);
     ctx.lineTo(x + Math.cos(a1) * size, y + Math.sin(a1) * size);
     ctx.lineTo(x + Math.cos(a2) * size, y + Math.sin(a2) * size);
     ctx.closePath();
   }
+}
+
+// An AoE's on-map size in native px (radius, half-side, or cone length) for a given foot measure.
+function aoeSizePx(sizeFt) {
+  const pxPerFt = measureCellWorld() / FEET_PER_CELL / (state.map.scale || 1);
+  return sizeFt * pxPerFt;
+}
+
+// Draw the live AoE hover template at the current cursor position (native coords).
+// Visible on both GM and player screens via the view broadcast.
+function drawAoeTemplate() {
+  if (!tools.aoe.template.visible) return;
+  aoePath(tools.aoe.template.x, tools.aoe.template.y, aoeSizePx(tools.aoe.sizeFt), tools.aoe.shape, tools.aoe.angle);
+  ctx.save();
   ctx.globalAlpha = 0.28;
   ctx.fillStyle = tools.aoe.color;
   ctx.fill();
@@ -77,6 +84,80 @@ function drawAoeTemplate() {
   ctx.strokeStyle = tools.aoe.color;
   ctx.stroke();
   ctx.restore();
+}
+
+// Committed AoE zones for the active floor — persistent, labeled, and synced to the player. Drawn
+// above the fog (like the hover template and stairs) so the table reliably shows where a spell
+// landed; the low fill alpha keeps any tokens inside the zone fully visible through the tint. The
+// selected zone gets a brighter, thicker outline. Each record carries a reserved `effect` field
+// (null today) for a future animated spell visual — an animated-token type will bind there without
+// changing this record's shape, so AoEs never become a fourth token kind.
+function drawAoes() {
+  (state.aoes || []).forEach((a) => {
+    aoePath(a.x, a.y, aoeSizePx(a.sizeFt), a.shape, a.angle);
+    ctx.save();
+    ctx.globalAlpha = 0.25;
+    ctx.fillStyle = a.color;
+    ctx.fill();
+    const selected = a === sel.aoe;
+    ctx.globalAlpha = selected ? 1 : 0.85;
+    ctx.lineWidth = (selected ? 3 : 2) / (cur.k * cur.ms);
+    ctx.strokeStyle = a.color;
+    ctx.stroke();
+    ctx.restore();
+  });
+}
+
+// Screen-space labels for committed zones, so a name like "Fireball" stays legible at any zoom
+// (mirrors the measure label). Anchored at the zone's visual center; a cone labels along its axis.
+function drawAoeLabels() {
+  (state.aoes || []).forEach((a) => {
+    if (!a.label) return;
+    const size = aoeSizePx(a.sizeFt);
+    let ax = a.x, ay = a.y;
+    if (a.shape === "cone") { ax = a.x + Math.cos(a.angle) * size * 0.5; ay = a.y + Math.sin(a.angle) * size * 0.5; }
+    const p = nativeToScreen({ x: ax, y: ay });
+    ctx.save();
+    ctx.font = "600 13px Inter, sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    const width = ctx.measureText(a.label).width + 12;
+    ctx.fillStyle = "rgba(12,13,13,0.85)";
+    ctx.fillRect(p.x - width / 2, p.y - 10, width, 20);
+    ctx.fillStyle = "#f4e8c8";
+    ctx.fillText(a.label, p.x, p.y);
+    ctx.restore();
+  });
+}
+
+function pointInTriangle(p, a, b, c) {
+  const d1 = (p.x - b.x) * (a.y - b.y) - (a.x - b.x) * (p.y - b.y);
+  const d2 = (p.x - c.x) * (b.y - c.y) - (b.x - c.x) * (p.y - c.y);
+  const d3 = (p.x - a.x) * (c.y - a.y) - (c.x - a.x) * (p.y - a.y);
+  const neg = d1 < 0 || d2 < 0 || d3 < 0;
+  const pos = d1 > 0 || d2 > 0 || d3 > 0;
+  return !(neg && pos);
+}
+
+// Topmost committed AoE under a native point (last drawn = first hit), for select / delete.
+function hitAoe(native) {
+  const list = state.aoes || [];
+  for (let i = list.length - 1; i >= 0; i--) {
+    const a = list[i];
+    const size = aoeSizePx(a.sizeFt);
+    if (a.shape === "circle") {
+      if (Math.hypot(native.x - a.x, native.y - a.y) <= size) return a;
+    } else if (a.shape === "square") {
+      if (Math.abs(native.x - a.x) <= size / 2 && Math.abs(native.y - a.y) <= size / 2) return a;
+    } else if (a.shape === "cone") {
+      const a1 = a.angle - AOE_CONE_HALF_ANGLE, a2 = a.angle + AOE_CONE_HALF_ANGLE;
+      const apex = { x: a.x, y: a.y };
+      const c1 = { x: a.x + Math.cos(a1) * size, y: a.y + Math.sin(a1) * size };
+      const c2 = { x: a.x + Math.cos(a2) * size, y: a.y + Math.sin(a2) * size };
+      if (pointInTriangle(native, apex, c1, c2)) return a;
+    }
+  }
+  return null;
 }
 
 function drawMeasureLine(line = tools.measureLine) {
@@ -137,5 +218,5 @@ function drawMeasureLabel(line = tools.measureLine) {
 }
 
 export {
-  drawAoeTemplate, drawMeasureLine, drawMeasureLabel, drawCalibrationDraft, measureCellWorld, updateCalibrationUI, updateMeasureCalibrateRow,
+  drawAoeTemplate, drawAoes, drawAoeLabels, hitAoe, drawMeasureLine, drawMeasureLabel, drawCalibrationDraft, measureCellWorld, updateCalibrationUI, updateMeasureCalibrateRow,
 };
