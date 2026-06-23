@@ -107,8 +107,20 @@ function drawStairs() {
   ctx.restore();
 }
 
+// Drop cached visibility polygons that weren't touched last frame. The frame-key sets are populated
+// as each origin is cast; anything in the cache but not in that set belongs to a stale origin (a
+// token's previous position, a removed light) and would otherwise live forever — the caches are
+// only otherwise cleared by invalidateCast(), which now fires solely on real geometry changes. This
+// keeps each cache bounded to the live origins (player tokens + on-floor lights).
+function evictUnusedCast(cache, usedKeys) {
+  for (const key of cache.keys()) if (!usedKeys.has(key)) cache.delete(key);
+}
+
 function render() {
   const rect = canvas.getBoundingClientRect();
+  // Evict last frame's stale cast entries, then reset the tally for this frame.
+  evictUnusedCast(castCache, castFrameKeys);
+  evictUnusedCast(lightCache, lightFrameKeys);
   castFrameKeys.clear();
   lightFrameKeys.clear();
   ctx.clearRect(0, 0, rect.width, rect.height);
