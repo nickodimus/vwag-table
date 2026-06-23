@@ -1296,6 +1296,29 @@ async function backfillModuleCellGrids() {
 
 /* ----------------------------- snapshots / sync ----------------------------- */
 
+// The player rebuilds its line-of-sight/light cast from scratch whenever castVersion bumps. A token
+// nudge doesn't move walls or the dozens of static lights an imported module carries, yet the old
+// code invalidated the cast on EVERY incoming sync — so the player re-cast every light's shadow
+// polygon (O(segments²) each) on every frame the GM touched a token. This signature lets the player
+// invalidate only when the wall/light geometry actually changed. It hashes obstacle vertices, door
+// open-states (a door toggle changes sight without changing counts), and light positions/radii — a
+// few thousand int ops, ~1000x cheaper than a single cast, and it spares ~all of them on a move.
+let lastPlayerGeomSig = 0;
+function geometrySignature(obstacles, lights) {
+  let h = 2166136261; // FNV-1a-ish 32-bit rolling hash
+  const mix = (n) => { h = ((h ^ (n | 0)) >>> 0); h = ((h * 16777619) >>> 0); };
+  mix(obstacles.length);
+  mix(lights.length);
+  for (const o of obstacles) {
+    mix(o.open ? 1 : 2); // door open-state flips blocksSight without touching geometry
+    const pts = o.points || [];
+    mix(pts.length);
+    for (const p of pts) { mix(p[0]); mix(p[1]); }
+  }
+  for (const l of lights) { mix(l.x); mix(l.y); mix(l.radius); }
+  return h;
+}
+
 function loadSnapshot(snapshot) {
   // Shared / global settings.
   Object.assign(state.splash, snapshot.splash || { enabled: false, imageData: "", imageName: "" });
@@ -1335,7 +1358,13 @@ function loadSnapshot(snapshot) {
     // (cast against these walls), so without them its visibility would be the whole map.
     state.obstacles = Array.isArray(snapshot.obstacles) ? snapshot.obstacles : [];
     state.lights = Array.isArray(snapshot.lights) ? snapshot.lights : [];
-    invalidateCast();
+    // Only rebuild the (expensive) cast when walls/lights actually changed — not on the common case
+    // of a token nudge, which leaves every static light's cached shadow polygon valid.
+    const geomSig = geometrySignature(state.obstacles, state.lights);
+    if (geomSig !== lastPlayerGeomSig) {
+      invalidateCast();
+      lastPlayerGeomSig = geomSig;
+    }
     state.images = Array.isArray(snapshot.images) ? snapshot.images : [];
     state.notes = []; // notes are GM-only and never arrive on the player
     Object.assign(state.view, snapshot.view || {});
