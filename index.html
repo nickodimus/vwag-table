@@ -292,6 +292,17 @@
             <label class="pin-toggle"><input id="followInitiative" type="checkbox"> Follow initiative on table</label>
           </div>
           <p class="hint">Click any floor in the top-right list to jump to it. Pin the table to roam other floors without moving the players' screen, then Push to table when you're ready to show them. Follow initiative makes the table jump to the active combatant's floor each turn (pin and follow are mutually exclusive).</p>
+          <div id="stairSelPanel" class="hidden">
+            <label>
+              Staircase leads to
+              <select id="stairSelFloor"></select>
+            </label>
+            <label>
+              Label <span class="hint-inline">(optional, shown on map)</span>
+              <input id="stairSelLabel" type="text" maxlength="16" placeholder="e.g. To Sewers" autocomplete="off">
+            </label>
+            <button id="stairSelDelete" class="danger-button" type="button">Delete this staircase</button>
+          </div>
         </section>
 
         <section class="control-section">

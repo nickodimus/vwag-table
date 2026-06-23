@@ -696,6 +696,24 @@ function bindControls() {
       broadcastState();
     }
   });
+  controls.stairSelFloor?.addEventListener("change", () => {
+    if (!sel.stair) return;
+    sel.stair.targetFloorId = controls.stairSelFloor.value;
+    renderAndSync(); // target changed → the stair's up/down arrow may flip
+  });
+  controls.stairSelLabel?.addEventListener("input", () => {
+    if (!sel.stair) return;
+    sel.stair.label = controls.stairSelLabel.value.trim();
+    renderAndSync();
+  });
+  controls.stairSelDelete?.addEventListener("click", () => {
+    if (!sel.stair) return;
+    pushHistory();
+    state.stairs = state.stairs.filter((s) => s !== sel.stair);
+    sel.stair = null;
+    updateSelectionPanels();
+    renderAndSync();
+  });
   controls.pushToTable?.addEventListener("click", () => {
     // Point the players' table at the floor the GM is currently viewing, and broadcast it.
     state.activeFloorId = state.currentFloorId;
@@ -1423,7 +1441,7 @@ function updatePlayerSliderRanges() {
 
 // Promote a floor record into the active state fields.
 function applyFloor(floor) {
-  sel.token = sel.image = sel.note = null; // these arrays are about to be replaced
+  sel.token = sel.image = sel.note = sel.stair = null; // these arrays are about to be replaced
   state.currentFloorId = floor.id;
   state.imageId = floor.imageId || "";
   state.imageData = floor.imageData || "";
@@ -1508,6 +1526,7 @@ function goToFloor(index) {
   updatePlayerSliderRanges();
   syncControlsFromState();
   refreshFloorUI();
+  updateSelectionPanels(); // selections were cleared in applyFloor; hide any open Selected-X panel
   broadcastAssets();
   broadcastState();
 }
@@ -1624,21 +1643,28 @@ function renderFloorOverlay() {
 
 /* ----------------------------- stairs ----------------------------- */
 
-function promptStairPlacement(native) {
-  if (!controls.stairDialog) return;
+// Fill a <select> with the floors a stair could lead to — every floor except the current one.
+// Shared by the place-stair dialog and the Selected Stair panel so the two never drift. Pass the
+// stair's current target to pre-select it when editing.
+function populateFloorTargetSelect(select, selectedId) {
   const idx = currentFloorIndex();
-  const select = controls.stairFloorSelect;
-  if (!select) return;
-
-  // Populate the floor list (exclude the current floor).
   select.replaceChildren();
   state.floors.forEach((floor, i) => {
     if (i === idx) return;
     const opt = document.createElement("option");
     opt.value = floor.id;
     opt.textContent = floor.name || `Floor ${i + 1}`;
+    if (floor.id === selectedId) opt.selected = true;
     select.appendChild(opt);
   });
+}
+
+function promptStairPlacement(native) {
+  if (!controls.stairDialog) return;
+  const select = controls.stairFloorSelect;
+  if (!select) return;
+
+  populateFloorTargetSelect(select);
 
   if (!select.options.length) {
     window.alert("Add another floor first before placing stairs.");
@@ -1736,7 +1762,7 @@ function setMode(nextMode) {
   tools.drawingObstacle = [];
   fogBuf.stampDraft = null;
   sel.token = null;
-  sel.image = sel.note = null;
+  sel.image = sel.note = sel.stair = null;
   updateSelectionPanels();
   canvas.style.cursor = ""; // clear any frame-hover cursor
   controls.fogToggle?.classList.toggle("active", FOG_MODES.includes(nextMode));
@@ -1844,7 +1870,7 @@ function applyFogSnapshot(serialized) {
   state.stairs = data.stairs || [];
   state.images = data.images || [];
   state.notes = data.notes || [];
-  sel.image = sel.note = null;
+  sel.image = sel.note = sel.stair = null;
   fogBuf.dirty = true;
 }
 function undo() {
@@ -2789,7 +2815,7 @@ function addImageFromDataURL(rawSrc, nx, ny) {
       const pos = snapImage({ x: nx, y: ny });
       const im = { id: uuid(), x: pos.x, y: pos.y, w, h: w / aspect, rotation: 0, src, showPlayers: false };
       state.images.push(im);
-      sel.token = sel.note = null;
+      sel.token = sel.note = sel.stair = null;
       sel.image = im;
       updateSelectionPanels();
       renderAndSync();
@@ -2813,7 +2839,7 @@ function addNote() {
   pushHistory();
   const note = { id: uuid(), x: state.view.cx, y: state.view.cy, text: text || "Note", scale: 1 };
   state.notes.push(note);
-  sel.token = sel.image = null;
+  sel.token = sel.image = sel.stair = null;
   sel.note = note;
   updateSelectionPanels();
   render(); // notes are GM-only, no broadcast needed
@@ -2878,6 +2904,13 @@ function updateSelectionPanels() {
   if (controls.noteSelPanel) {
     controls.noteSelPanel.classList.toggle("hidden", !sel.note);
     if (sel.note && controls.noteSize) controls.noteSize.value = sel.note.scale || 1;
+  }
+  if (controls.stairSelPanel) {
+    controls.stairSelPanel.classList.toggle("hidden", !sel.stair);
+    if (sel.stair) {
+      if (controls.stairSelFloor) populateFloorTargetSelect(controls.stairSelFloor, sel.stair.targetFloorId);
+      if (controls.stairSelLabel) controls.stairSelLabel.value = sel.stair.label || "";
+    }
   }
 }
 
@@ -3224,7 +3257,7 @@ function onPointerDown(event) {
       // rename/recolor/resize a token without leaving Token mode. Empty space still drops a new one.
       pushHistory();
       sel.token = hit;
-      sel.image = sel.note = null;
+      sel.image = sel.note = sel.stair = null;
       draggingToken = hit;
       isDragging = true;
       capturePointer(event.pointerId);
@@ -3237,6 +3270,16 @@ function onPointerDown(event) {
   }
 
   if (ui.mode === "stair") {
+    // Click an existing stair to select it (edit target/label/delete in the panel); click empty
+    // ground to place a new one. Pan mode keeps its click-a-stair-to-jump shortcut, untouched.
+    const existing = hitStair(native);
+    if (existing) {
+      sel.stair = existing;
+      sel.token = sel.image = sel.note = null;
+      updateSelectionPanels();
+      render();
+      return;
+    }
     if (state.floors.length < 2) {
       window.alert("Add a second floor first.");
       return;
@@ -3254,7 +3297,7 @@ function onPointerDown(event) {
       // token like every other VTT; a plain click with no movement just selects + snaps in place.
       pushHistory();
       sel.token = token;
-      sel.image = sel.note = null;
+      sel.image = sel.note = sel.stair = null;
       draggingToken = token;
       isDragging = true;
       capturePointer(event.pointerId);
@@ -3266,7 +3309,7 @@ function onPointerDown(event) {
     if (note) {
       pushHistory();
       sel.note = note;
-      sel.token = sel.image = null;
+      sel.token = sel.image = sel.stair = null;
       draggingNote = note;
       dragGrab = { dx: note.x - native.x, dy: note.y - native.y };
       isDragging = true;
@@ -3279,7 +3322,7 @@ function onPointerDown(event) {
     if (image) {
       pushHistory();
       sel.image = image;
-      sel.token = sel.note = null;
+      sel.token = sel.note = sel.stair = null;
       draggingImage = image;
       dragGrab = { dx: image.x - native.x, dy: image.y - native.y };
       isDragging = true;
@@ -3310,8 +3353,8 @@ function onPointerDown(event) {
       startFrameDrag(native, event.pointerId);
       return;
     }
-    if (sel.token || sel.image || sel.note) {
-      sel.token = sel.image = sel.note = null;
+    if (sel.token || sel.image || sel.note || sel.stair) {
+      sel.token = sel.image = sel.note = sel.stair = null;
       updateSelectionPanels();
       render();
     }
