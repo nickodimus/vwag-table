@@ -6,10 +6,11 @@
   --line: #313838;
   --text: #eef1ef;
   --muted: #9ba6a4;
-  --accent: #b1c301;
-  --accent-2: #7fb6a6;
   --brand: #7c3aed;
   --brand-bright: #a78bfa;
+  --on-brand: #ffffff;
+  --accent: var(--brand-bright);
+  --accent-2: var(--brand-bright);
   --danger: #d66a5f;
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
@@ -89,10 +90,10 @@ button:hover {
 
 .start-enter {
   animation: start-rise 0.7s ease 0.55s both;
-  background: var(--accent);
+  background: var(--brand);
   border: 1px solid transparent;
   border-radius: 10px;
-  color: #1b1508;
+  color: var(--on-brand);
   font-size: 1.05rem;
   font-weight: 600;
   letter-spacing: 0.04em;
@@ -362,10 +363,10 @@ input[type="color"] {
 .primary-button,
 .library-button {
   align-items: center;
-  background: var(--accent);
+  background: var(--brand);
   border: 1px solid transparent;
   border-radius: 6px;
-  color: #1b1508;
+  color: var(--on-brand);
   cursor: pointer;
   display: flex;
   font-weight: 750;
@@ -390,10 +391,10 @@ input[type="color"] {
 
 .top-action {
   align-items: center;
-  background: var(--accent);
+  background: var(--brand);
   border: 1px solid transparent;
   border-radius: 8px;
-  color: #1b1508;
+  color: var(--on-brand);
   cursor: pointer;
   display: flex;
   justify-content: center;
@@ -1121,7 +1122,7 @@ input:disabled {
 
 .floor-ov-tv {
   align-items: center;
-  color: #6fcf8e;
+  color: var(--brand-bright);
   display: inline-flex;
   flex: none;
 }
@@ -1137,11 +1138,11 @@ input:disabled {
 }
 
 .floor-ov-list li.on-table {
-  box-shadow: inset 2px 0 0 #6fcf8e;
+  box-shadow: inset 2px 0 0 var(--brand-bright);
 }
 
 .floor-ov-list li.current.on-table {
-  box-shadow: inset 0 0 0 1px var(--accent), inset 2px 0 0 #6fcf8e;
+  box-shadow: inset 0 0 0 1px var(--accent), inset 2px 0 0 var(--brand-bright);
 }
 
 /* ---- Player floor badge ---- */
@@ -1368,9 +1369,9 @@ input:disabled {
 }
 
 .name-dialog-actions .save-btn {
-  background: var(--accent);
+  background: var(--brand);
   border-color: transparent;
-  color: #1b1508;
+  color: var(--on-brand);
   font-weight: 750;
 }
 
@@ -1669,7 +1670,7 @@ input:disabled {
 }
 
 .init-hp-bar span {
-  background: linear-gradient(90deg, #8bbf6a, #b1c301);
+  background: var(--brand-bright);
   display: block;
   height: 100%;
 }
@@ -1716,9 +1717,9 @@ input:disabled {
 }
 
 .init-add button[type="submit"] {
-  background: var(--accent);
+  background: var(--brand);
   border-color: transparent;
-  color: #1b1508;
+  color: var(--on-brand);
   font-weight: 700;
 }
 
