@@ -79,17 +79,18 @@ function drawAoeTemplate() {
   ctx.restore();
 }
 
-function drawMeasureLine() {
+function drawMeasureLine(line = tools.measureLine) {
+  if (!line) return;
   ctx.save();
   ctx.strokeStyle = "rgba(214,169,77,0.95)";
   ctx.lineWidth = 2 / (cur.k * cur.ms);
   ctx.setLineDash([8 / (cur.k * cur.ms), 6 / (cur.k * cur.ms)]);
   ctx.beginPath();
-  ctx.moveTo(tools.measureLine.start.x, tools.measureLine.start.y);
-  ctx.lineTo(tools.measureLine.end.x, tools.measureLine.end.y);
+  ctx.moveTo(line.start.x, line.start.y);
+  ctx.lineTo(line.end.x, line.end.y);
   ctx.stroke();
   ctx.setLineDash([]);
-  [tools.measureLine.start, tools.measureLine.end].forEach((p) => {
+  [line.start, line.end].forEach((p) => {
     ctx.beginPath();
     ctx.arc(p.x, p.y, 4 / (cur.k * cur.ms), 0, Math.PI * 2);
     ctx.fillStyle = "#d6a94d";
@@ -106,10 +107,11 @@ function measureCellWorld() {
   return state.grid.size > 0 ? state.grid.size : 0;
 }
 
-function drawMeasureLabel() {
+function drawMeasureLabel(line = tools.measureLine) {
+  if (!line) return;
   const ms = state.map.scale || 1;
-  const dx = (tools.measureLine.end.x - tools.measureLine.start.x) * ms;
-  const dy = (tools.measureLine.end.y - tools.measureLine.start.y) * ms;
+  const dx = (line.end.x - line.start.x) * ms;
+  const dy = (line.end.y - line.start.y) * ms;
   const worldDist = Math.hypot(dx, dy);
   const cellW = measureCellWorld();
   const cells = cellW > 0 ? worldDist / cellW : 0;
@@ -118,8 +120,8 @@ function drawMeasureLabel() {
   const distStr = state.measure.unit === "metric" ? dist.toFixed(1) : String(Math.round(dist));
   const label = `${cells.toFixed(1)} cells · ${distStr} ${unit.label}`;
   const mid = nativeToScreen({
-    x: (tools.measureLine.start.x + tools.measureLine.end.x) / 2,
-    y: (tools.measureLine.start.y + tools.measureLine.end.y) / 2,
+    x: (line.start.x + line.end.x) / 2,
+    y: (line.start.y + line.end.y) / 2,
   });
   ctx.save();
   ctx.font = "600 13px Inter, sans-serif";
