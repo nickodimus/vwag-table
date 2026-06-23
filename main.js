@@ -1068,12 +1068,6 @@ function blobToDataURL(blob) {
   });
 }
 
-// How aggressively imported polylines are thinned, in CELLS (resolution-independent). 0.2 = a
-// 1/5-cell deviation: invisible for line-of-sight, but it cuts a dense module like Caves of Chaos
-// from ~8,600 wall segments to ~1,900 (~20x cheaper cast). Tune here if a map needs more/less.
-
-
-
 // Named token colors seen in DTT exports map to vwag fill colors; anything unknown falls back to
 // the default token amber. (Samples only use "blue", but a small table keeps imports sane.)
 

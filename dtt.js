@@ -105,7 +105,12 @@ function parseDtt(entries) {
 // are internal dispatch. loadDttFile (app.js) drives readZip -> parseDtt -> importDtt -> installMap.
 // ---------------------------------------------------------------------------------------------
 
-const DTT_SIMPLIFY_TOLERANCE = 0.2;
+// How aggressively imported wall/obstacle polylines are thinned, in CELLS (resolution-independent),
+// via Douglas-Peucker. 0.4 = a ~2 ft deviation on a 5 ft grid: invisible for line-of-sight, but it
+// cuts a dense module like Caves of Chaos from ~8,600 raw wall points to ~1,200. The sight/light cast
+// is ~O(segments²) with no culling, so total segment count is the main perf lever — raise this for
+// denser maps that still chug; lower it if a tight cave curve visibly squares off against the art.
+const DTT_SIMPLIFY_TOLERANCE = 0.4;
 const DTT_TOKEN_COLORS = {
   red: "#e24a4a", blue: "#3b82f6", green: "#3aa655", yellow: "#d6a94d",
   orange: "#e08a3c", purple: "#8b5cf6", white: "#e8e8e8", black: "#222222",
