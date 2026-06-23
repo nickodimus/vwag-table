@@ -14,6 +14,9 @@ import {
 import {
   pxPerCellNative, screenToNative,
 } from "./geometry.js";
+import {
+  activeTurnTokenId,
+} from "./initiative.js";
 
 let castVersion = 0; // bumps when sight obstacles or the active floor change, invalidating the cast cache
 const LIGHT_BRIGHT_FRACTION = 0.5; // inner radius (fraction of outer) held at full brightness before falloff
@@ -119,7 +122,17 @@ function getVisibilityPolygon(origin) {
 function visionOriginTokens() {
   const players = state.tokens.filter((t) => t.type === "player");
   switch (state.los?.source) {
-    // Phase 2+ adds: case "active" (initiative's current combatant), case "selected" (sel.token).
+    case "active": {
+      // Vision follows the turn order: while it's a PLAYER character's turn, the table sees only
+      // what that character sees. Any other moment — a monster's turn, no combatants, initiative
+      // off, or the active combatant standing on a floor other than the table's — falls through to
+      // the party union below, so players never see through a monster's eyes and never lose all
+      // sight. (players.find resolves all of those at once: a non-player or off-floor id simply
+      // isn't in the player set, so tok is undefined and we return the party.)
+      const id = activeTurnTokenId();
+      const tok = id && players.find((t) => t.id === id);
+      return tok ? [tok] : players;
+    }
     case "party":
     default:
       return players;
