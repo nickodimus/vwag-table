@@ -112,11 +112,34 @@ function parseDtt(entries) {
 // cast (it rebuilds only on real geometry changes), NOT from crushing geometry — don't raise this to
 // chase speed; reach for cast-cache and viewport culling instead.
 const DTT_SIMPLIFY_TOLERANCE = 0.2;
+// Imported walls arrive as a few enormous single polylines (Caves of Chaos has one 1,000+ point run
+// spanning much of the map). Stored as one obstacle each, a single two-finger erase in Draw mode
+// nukes the whole run. Chunking a long wall into records of at most this many points — sharing the
+// boundary vertex between neighbours so the wall stays continuous — makes an erase delete one modest
+// section instead. This is purely an editing-granularity knob: the cast sees identical segments and
+// the render is unchanged, so it has no performance effect (don't reach for it to chase speed). Walls
+// only; doors/windows/objects stay whole (a door must remain one openable record).
+const DTT_OBSTACLE_MAX_POINTS = 16;
 const DTT_TOKEN_COLORS = {
   red: "#e24a4a", blue: "#3b82f6", green: "#3aa655", yellow: "#d6a94d",
   orange: "#e08a3c", purple: "#8b5cf6", white: "#e8e8e8", black: "#222222",
   cyan: "#3ec6c6", magenta: "#d4537e", gray: "#9aa0a6", grey: "#9aa0a6",
 };
+
+// Split a polyline into consecutive pieces of at most maxPts points each. Neighbouring pieces SHARE
+// their boundary vertex (piece i ends on the same point piece i+1 begins on), so the reassembled wall
+// has no gap and the cast produces exactly the same segments — only the obstacle-record grouping
+// changes. Every returned piece has >= 2 points (the loop stops before it could emit a lone tail
+// vertex). Short polylines (<= maxPts) pass through untouched as a single piece.
+function chunkPolyline(points, maxPts) {
+  if (points.length <= maxPts) return [points];
+  const pieces = [];
+  const step = maxPts - 1; // overlap one vertex so pieces stay joined
+  for (let i = 0; i < points.length - 1; i += step) {
+    pieces.push(points.slice(i, i + maxPts));
+  }
+  return pieces;
+}
 
 // Map a parsed DTT's six obstacle kinds into the obstacle store. DTT polylines are already open
 // polylines in cell coordinates — the exact shape state.obstacles holds — so geometry maps
@@ -137,18 +160,25 @@ function importObstacles(dtt) {
   for (const [src, kind] of KINDS) {
     for (const poly of dtt[src] || []) {
       if (!Array.isArray(poly) || poly.length < 2) continue;
-      obstacles.push({
-        id: uuid(),
-        kind,
-        // Simplify in cell space (tolerance is in cells), then bake to native px so geometry is
-        // locked to the image and independent of the display grid (decouple-walls-from-grid).
-        points: simplifyPolyline(poly, DTT_SIMPLIFY_TOLERANCE).map((p) => {
-          const n = cellsToNative({ x: p[0], y: p[1] });
-          return [n.x, n.y];
-        }),
-        ...obstacleDefaults(kind),
-        defaultOpen: false,
+      // Simplify in cell space (tolerance is in cells), then bake to native px so geometry is
+      // locked to the image and independent of the display grid (decouple-walls-from-grid).
+      const baked = simplifyPolyline(poly, DTT_SIMPLIFY_TOLERANCE).map((p) => {
+        const n = cellsToNative({ x: p[0], y: p[1] });
+        return [n.x, n.y];
       });
+      // Only walls fragment into smaller records (giant runs, granular erase matters). Doors stay
+      // whole so each remains a single openable unit; windows/objects/ethereals/invisibles stay
+      // whole too — they're discrete or short and chunking would buy nothing.
+      const pieces = kind === "wall" ? chunkPolyline(baked, DTT_OBSTACLE_MAX_POINTS) : [baked];
+      for (const points of pieces) {
+        obstacles.push({
+          id: uuid(),
+          kind,
+          points,
+          ...obstacleDefaults(kind),
+          defaultOpen: false,
+        });
+      }
     }
   }
   state.obstacles = obstacles;
