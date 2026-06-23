@@ -106,11 +106,12 @@ function parseDtt(entries) {
 // ---------------------------------------------------------------------------------------------
 
 // How aggressively imported wall/obstacle polylines are thinned, in CELLS (resolution-independent),
-// via Douglas-Peucker. 0.4 = a ~2 ft deviation on a 5 ft grid: invisible for line-of-sight, but it
-// cuts a dense module like Caves of Chaos from ~8,600 raw wall points to ~1,200. The sight/light cast
-// is ~O(segments²) with no culling, so total segment count is the main perf lever — raise this for
-// denser maps that still chug; lower it if a tight cave curve visibly squares off against the art.
-const DTT_SIMPLIFY_TOLERANCE = 0.4;
+// via Douglas-Peucker. Kept conservative at 0.2 (~1 ft on a 5 ft grid): higher values (0.4 = ~2 ft)
+// can bow a wall far enough to pinch a 1-cell tunnel shut and make it impassable to a token. This
+// still cuts Caves of Chaos from ~8,600 raw wall points to ~1,900. Performance comes from caching the
+// cast (it rebuilds only on real geometry changes), NOT from crushing geometry — don't raise this to
+// chase speed; reach for cast-cache and viewport culling instead.
+const DTT_SIMPLIFY_TOLERANCE = 0.2;
 const DTT_TOKEN_COLORS = {
   red: "#e24a4a", blue: "#3b82f6", green: "#3aa655", yellow: "#d6a94d",
   orange: "#e08a3c", purple: "#8b5cf6", white: "#e8e8e8", black: "#222222",
