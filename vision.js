@@ -111,10 +111,24 @@ function getVisibilityPolygon(origin) {
 }
 
 // LoS (5b): one visibility polygon per player-type token — the players' shared field of view.
+// The tokens whose sight is unioned into the player's visible area, chosen by state.los.source. This
+// is the single seam the per-token-vision feature grows from: "party" (default) is every player
+// token — the original behaviour — and later sources ("active" combatant, "selected" token for a GM
+// preview) add cases here. An unknown or missing source falls back to party, so the default and any
+// older save with no source field behave exactly as before.
+function visionOriginTokens() {
+  const players = state.tokens.filter((t) => t.type === "player");
+  switch (state.los?.source) {
+    // Phase 2+ adds: case "active" (initiative's current combatant), case "selected" (sel.token).
+    case "party":
+    default:
+      return players;
+  }
+}
+
 function playerVisionPolygons() {
   const polys = [];
-  state.tokens.forEach((t) => {
-    if (t.type !== "player") return;
+  visionOriginTokens().forEach((t) => {
     const poly = getVisibilityPolygon({ x: t.x, y: t.y });
     if (poly.length >= 3) polys.push(poly);
   });

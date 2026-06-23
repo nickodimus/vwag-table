@@ -362,7 +362,7 @@ const state = {
   imageHeight: 0,
   splash: { enabled: false, imageData: "", imageName: "" },
   blackout: false,
-  los: { enabled: false, brightness: 0.5, darkness: false }, // line of sight + explored dim level + lighting gate (darkness: only lit areas are seen)
+  los: { enabled: false, brightness: 0.5, darkness: false, source: "party" }, // line of sight + explored dim level + lighting gate (darkness: only lit areas are seen); source = whose sight is unioned into the visible area (party = every player token; later: active combatant / selected token)
   grid: { enabled: true, snap: true, snapImages: false, size: 70, offsetX: 0, offsetY: 0, color: "#000000", opacity: 0.45 },
   map: { scale: 1 },
   fog: {
