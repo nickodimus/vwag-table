@@ -214,6 +214,7 @@ let viewStart = { cx: 0, cy: 0 };
 let draggingToken = null;
 let draggingImage = null;
 let draggingNote = null;
+let draggingStair = null;
 let draggingFrame = false; // GM is dragging the player-view frame to pan the player display
 let dragGrab = { dx: 0, dy: 0 }; // offset from cursor to object center while dragging images/notes/frame
 let groupDragOffsets = null; // [{token,dx,dy}] formation captured at grab, for a player group-drag
@@ -3274,8 +3275,13 @@ function onPointerDown(event) {
     // ground to place a new one. Pan mode keeps its click-a-stair-to-jump shortcut, untouched.
     const existing = hitStair(native);
     if (existing) {
+      pushHistory();
       sel.stair = existing;
       sel.token = sel.image = sel.note = null;
+      draggingStair = existing;
+      dragGrab = { dx: existing.x - native.x, dy: existing.y - native.y };
+      isDragging = true;
+      capturePointer(event.pointerId);
       updateSelectionPanels();
       render();
       return;
@@ -3497,6 +3503,14 @@ function onPointerMove(event) {
     return;
   }
 
+  if (draggingStair) {
+    const native = toNativePoint(event);
+    draggingStair.x = native.x + dragGrab.dx;
+    draggingStair.y = native.y + dragGrab.dy;
+    render(); // local only; stairs are GM-only
+    return;
+  }
+
   if (tools.measureLine) {
     tools.measureLine.end = toNativePoint(event);
     render();
@@ -3589,6 +3603,11 @@ function onPointerUp(event) {
   if (draggingNote) {
     draggingNote = null;
     render(); // notes are GM-only
+  }
+
+  if (draggingStair) {
+    draggingStair = null;
+    renderAndSync(); // GM-only, but matches the place/delete commit path
   }
 
   if (draggingFrame) {
