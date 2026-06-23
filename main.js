@@ -1082,6 +1082,22 @@ function blobToDataURL(blob) {
 
 
 
+// A DTT module import starts a CLEAN board: a single empty floor with nothing carried over from the
+// previous map — no extra floors, no leftover obstacles/images/notes, and an empty initiative
+// tracker. applyFloor loads the empty floor into live state, clearing every per-floor field in one
+// place (so we can't miss one, the way a hand-written reset missed state.images). installMap then
+// lays the imported map and geometry onto this fresh floor.
+function resetBoardForImport() {
+  const floor = makeFloor();
+  state.floors = [floor];
+  state.activeFloorId = floor.id;
+  applyFloor(floor); // sets currentFloorId and clears all live per-floor state to empty
+  state.initiative.combatants = [];
+  state.initiative.turn = 0;
+  state.initiative.round = 1;
+  updateInitiativeUI(); // reflect the now-empty tracker (docked panel + player overlay)
+}
+
 // Import a DTT module (.zip): read it offline, derive the grid from the DTT key
 // (pxPerCell = imageWidth / size.x), install the map at the right scale, and — via installMap's
 // onReady seam — import the geometry, lights, tokens, and room notes (6b–6d). Only fog (6e) is
@@ -1097,6 +1113,7 @@ async function loadDttFile(event) {
     if (!cellsX || !cellsY) throw new Error("module has no grid size");
     const name = file.name.replace(/\.[^.]+$/, ""); // drop the .zip extension for a clean name
     const dataURL = await blobToDataURL(new Blob([dtt.mapBytes], { type: "image/webp" }));
+    resetBoardForImport(); // wipe the old board so the module loads onto one fresh floor
     installMap(dataURL, name, { cellsX, cellsY }, () => importDtt(dtt));
   } catch (err) {
     window.alert(`Could not import that DTT module: ${err.message}`);
