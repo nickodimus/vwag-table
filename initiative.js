@@ -28,6 +28,17 @@ function activeTurnTokenId() {
   return c ? c.tokenId || null : null;
 }
 
+// HP of the combatant linked to a token, for the token's HP bar — or null when there's no linked
+// combatant or its HP isn't fully tracked. Derived: HP is owned by the initiative tracker (with its
+// damage/heal steppers), so the bar updates live as combatants take damage. Bars therefore appear
+// only for tokens that are in the tracker with HP set — i.e. exactly during combat.
+function tokenHp(tokenId) {
+  if (!tokenId) return null;
+  const c = state.initiative.combatants.find((x) => x.tokenId === tokenId);
+  if (!c || c.hp == null || c.maxHp == null || c.maxHp <= 0) return null;
+  return { hp: c.hp, maxHp: c.maxHp };
+}
+
 function clampInitiativeTurn() {
   const n = state.initiative.combatants.length;
   state.initiative.turn = n ? Math.min(Math.max(0, state.initiative.turn), n - 1) : 0;
@@ -104,5 +115,5 @@ function renderInitiativeOverlay() {
 }
 
 export {
-  sortedCombatants, activeTurnTokenId, clampInitiativeTurn, renderInitiativePanel, renderInitiativeOverlay, updateInitiativeUI,
+  sortedCombatants, activeTurnTokenId, tokenHp, clampInitiativeTurn, renderInitiativePanel, renderInitiativeOverlay, updateInitiativeUI,
 };
