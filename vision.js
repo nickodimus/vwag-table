@@ -12,7 +12,7 @@ import {
   state, tintCanvas, tintCtx,
 } from "./state.js";
 import {
-  pxPerCellNative,
+  pxPerCellNative, screenToNative,
 } from "./geometry.js";
 
 let castVersion = 0; // bumps when sight obstacles or the active floor change, invalidating the cast cache
@@ -154,12 +154,45 @@ function lightSegments() {
 // until geometry or the light set changes (lightCache is cleared by invalidateCast).
 // Every light source on the floor as { pos (native), radius (native px) }: placed lights
 // (5d-1, native px) and token-carried torches (5d-2, at the token's position).
+// Axis-aligned native-space bounds of what's currently on screen — the four canvas corners mapped
+// back through the view (rotation handled; the AABB is a safe over-estimate). Used to cull lights
+// whose glow can't reach the view.
+function visibleNativeBounds() {
+  const rect = canvas.getBoundingClientRect();
+  const pts = [
+    screenToNative({ x: 0, y: 0 }),
+    screenToNative({ x: rect.width, y: 0 }),
+    screenToNative({ x: 0, y: rect.height }),
+    screenToNative({ x: rect.width, y: rect.height }),
+  ];
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const p of pts) {
+    if (p.x < minX) minX = p.x;
+    if (p.x > maxX) maxX = p.x;
+    if (p.y < minY) minY = p.y;
+    if (p.y > maxY) maxY = p.y;
+  }
+  return { minX, minY, maxX, maxY };
+}
+
+// Every light source whose reach can touch the current view: placed lights (5d-1, native px) and
+// token-carried torches (5d-2, at the token's position). Off-screen lights are culled — a torch
+// three caverns away neither casts nor paints, which is what keeps a light-dense module (87 lights
+// in Caves of Chaos) cheap when zoomed to the party. A light counts as in-view when its [pos ±
+// radius] box overlaps the viewport box, so glow spilling in from a just-off-screen source survives.
 function lightSources() {
   const ppc = pxPerCellNative();
+  const b = visibleNativeBounds();
+  const reaches = (x, y, r) => x + r >= b.minX && x - r <= b.maxX && y + r >= b.minY && y - r <= b.maxY;
   const sources = [];
-  state.lights.forEach((l) => sources.push({ pos: { x: l.x, y: l.y }, radius: l.radius || 0, color: l.color || LIGHT_DEFAULT_COLOR }));
+  state.lights.forEach((l) => {
+    const r = l.radius || 0;
+    if (reaches(l.x, l.y, r)) sources.push({ pos: { x: l.x, y: l.y }, radius: r, color: l.color || LIGHT_DEFAULT_COLOR });
+  });
   state.tokens.forEach((t) => {
-    if ((t.light || 0) > 0) sources.push({ pos: { x: t.x, y: t.y }, radius: t.light * ppc, color: t.lightColor || LIGHT_DEFAULT_COLOR });
+    if ((t.light || 0) <= 0) return;
+    const r = t.light * ppc;
+    if (reaches(t.x, t.y, r)) sources.push({ pos: { x: t.x, y: t.y }, radius: r, color: t.lightColor || LIGHT_DEFAULT_COLOR });
   });
   return sources;
 }
