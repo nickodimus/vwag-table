@@ -1352,7 +1352,23 @@ function loadSnapshot(snapshot) {
     Object.assign(state.map, snapshot.map || { scale: 1 });
     state.fog.rooms = snapshot.fog?.rooms || [];
     state.fog.strokes = snapshot.fog?.strokes || [];
+    // While the player is mid-glide, a stale in-flight snapshot would otherwise snap the walking
+    // token back to its pre-move square (the rubber-band bounce) and orphan sel.playerTokens onto the
+    // old objects. So during an active glide, hold each gliding token's live local position and
+    // re-point the selection at the fresh objects — the player keeps authoritative control of what
+    // it's walking until the glide ends, when the drop echo settles the final position normally.
+    const gliding = glideKey && sel.playerTokens.length;
+    const heldGlide = gliding ? new Map(sel.playerTokens.map((t) => [t.id, { x: t.x, y: t.y }])) : null;
     state.tokens = Array.isArray(snapshot.tokens) ? snapshot.tokens : [];
+    if (gliding) {
+      sel.playerTokens = sel.playerTokens
+        .map((old) => {
+          const fresh = state.tokens.find((t) => t.id === old.id);
+          if (fresh) { const h = heldGlide.get(old.id); if (h) { fresh.x = h.x; fresh.y = h.y; } }
+          return fresh;
+        })
+        .filter(Boolean);
+    }
     state.stairs = Array.isArray(snapshot.stairs) ? snapshot.stairs : [];
     // Obstacles now ride to the player too: the player computes its own line-of-sight locally
     // (cast against these walls), so without them its visibility would be the whole map.
