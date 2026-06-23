@@ -140,18 +140,6 @@ button:hover {
   }
 }
 
-@keyframes start-glow {
-  0%,
-  100% {
-    filter: drop-shadow(0 0 2px rgba(177, 195, 1, 0.35));
-  }
-  50% {
-    filter: drop-shadow(0 0 14px rgba(210, 230, 60, 1))
-      drop-shadow(0 0 30px rgba(197, 215, 40, 0.85))
-      drop-shadow(0 0 48px rgba(177, 195, 1, 0.55));
-  }
-}
-
 .app-shell {
   display: grid;
   /* Three columns always: left controls, stage, initiative. The initiative track is 0
@@ -1058,7 +1046,7 @@ input:disabled {
 }
 
 .floor-ov-list li.current {
-  background: rgba(177, 195, 1, 0.18);
+  background: color-mix(in srgb, var(--brand-bright) 18%, transparent);
   box-shadow: inset 0 0 0 1px var(--accent);
 }
 
@@ -1815,7 +1803,7 @@ input:disabled {
 }
 
 .initiative-overlay li.current {
-  background: rgba(177, 195, 1, 0.18);
+  background: color-mix(in srgb, var(--brand-bright) 18%, transparent);
   box-shadow: inset 0 0 0 1px var(--accent);
 }
 
