@@ -34,7 +34,7 @@ import {
   screenToNative, nativeToScreen, followView, cellWorldPx,
 } from "./geometry.js";
 import {
-  drawAoeTemplate, drawMeasureLine, drawMeasureLabel, drawCalibrationDraft, updateCalibrationUI, updateMeasureCalibrateRow,
+  drawAoeTemplate, drawMeasureLine, drawMeasureLabel, drawCalibrationDraft, updateCalibrationUI, updateMeasureCalibrateRow, hitAoe,
 } from "./aoe-measure.js";
 import {
   drawNotes, hitNote, drawImages, hitImage, snapImage, getTokenImage, addPing, drawPings,
@@ -717,6 +717,24 @@ function bindControls() {
     updateSelectionPanels();
     renderAndSync();
   });
+  controls.aoeSelLabel?.addEventListener("input", () => {
+    if (!sel.aoe) return;
+    sel.aoe.label = controls.aoeSelLabel.value.trim();
+    renderAndSync();
+  });
+  controls.aoeSelColor?.addEventListener("input", () => {
+    if (!sel.aoe) return;
+    sel.aoe.color = controls.aoeSelColor.value;
+    renderAndSync();
+  });
+  controls.aoeSelDelete?.addEventListener("click", () => {
+    if (!sel.aoe) return;
+    pushHistory();
+    state.aoes = state.aoes.filter((a) => a !== sel.aoe);
+    sel.aoe = null;
+    updateSelectionPanels();
+    renderAndSync();
+  });
   controls.pushToTable?.addEventListener("click", () => {
     // Point the players' table at the floor the GM is currently viewing, and broadcast it.
     state.activeFloorId = state.currentFloorId;
@@ -1376,6 +1394,7 @@ function loadSnapshot(snapshot) {
     // (cast against these walls), so without them its visibility would be the whole map.
     state.obstacles = Array.isArray(snapshot.obstacles) ? snapshot.obstacles : [];
     state.lights = Array.isArray(snapshot.lights) ? snapshot.lights : [];
+    state.aoes = Array.isArray(snapshot.aoes) ? snapshot.aoes : [];
     // Only rebuild the (expensive) cast when walls/lights actually changed — not on the common case
     // of a token nudge, which leaves every static light's cached shadow polygon valid.
     const geomSig = geometrySignature(state.obstacles, state.lights);
@@ -1501,7 +1520,7 @@ function updatePlayerSliderRanges() {
 
 // Promote a floor record into the active state fields.
 function applyFloor(floor) {
-  sel.token = sel.image = sel.note = sel.stair = null; // these arrays are about to be replaced
+  sel.token = sel.image = sel.note = sel.stair = sel.aoe = null; // these arrays are about to be replaced
   state.currentFloorId = floor.id;
   state.imageId = floor.imageId || "";
   state.imageData = floor.imageData || "";
@@ -1515,6 +1534,7 @@ function applyFloor(floor) {
   state.stairs = JSON.parse(JSON.stringify(floor.stairs || []));
   state.obstacles = JSON.parse(JSON.stringify(floor.obstacles || []));
   state.lights = JSON.parse(JSON.stringify(floor.lights || []));
+  state.aoes = JSON.parse(JSON.stringify(floor.aoes || []));
   invalidateCast();
   state.images = JSON.parse(JSON.stringify(floor.images || []));
   state.notes = JSON.parse(JSON.stringify(floor.notes || []));
@@ -1822,7 +1842,7 @@ function setMode(nextMode) {
   tools.drawingObstacle = [];
   fogBuf.stampDraft = null;
   sel.token = null;
-  sel.image = sel.note = sel.stair = null;
+  sel.image = sel.note = sel.stair = sel.aoe = null;
   updateSelectionPanels();
   canvas.style.cursor = ""; // clear any frame-hover cursor
   controls.fogToggle?.classList.toggle("active", FOG_MODES.includes(nextMode));
@@ -1838,7 +1858,7 @@ function setMode(nextMode) {
     eraser: "Drag over fog to erase brush/bucket fog. Right-click a polygon to clear its area.",
     stamp: "Drag to draw a fog shape. Right-click an area to remove it.",
     token: "Click to drop a token, drag to move it, right-click to remove it.",
-    aoe: "Hover over the map to preview the area of effect. Mouse wheel rotates the cone.",
+    aoe: "Hover to preview. Click to drop a zone; click a zone to rename or delete it. Wheel rotates the cone.",
     measure: "Drag to measure distance across the grid.",
     stair: "Click to place a staircase. Right-click a stair to remove it.",
     draw: "Click corners to draw a wall/obstacle; Enter or double-click to place. Right-click an obstacle to delete. Set a grid first so points land on cells.",
@@ -2972,6 +2992,13 @@ function updateSelectionPanels() {
       if (controls.stairSelLabel) controls.stairSelLabel.value = sel.stair.label || "";
     }
   }
+  if (controls.aoeSelPanel) {
+    controls.aoeSelPanel.classList.toggle("hidden", !sel.aoe);
+    if (sel.aoe) {
+      if (controls.aoeSelLabel) controls.aoeSelLabel.value = sel.aoe.label || "";
+      if (controls.aoeSelColor) controls.aoeSelColor.value = sel.aoe.color || "#e2603a";
+    }
+  }
 }
 
 function deleteTokenOrRoom(native) {
@@ -3291,7 +3318,31 @@ function onPointerDown(event) {
   }
 
   if (ui.mode === "aoe") {
-    return; // hover-only: no click/drag action
+    // Click an existing zone to select it (Selected AoE panel); click empty map to commit the
+    // current hover template as a persistent, labeled zone and select it for naming.
+    const hit = hitAoe(native);
+    if (hit) {
+      sel.aoe = hit;
+    } else {
+      pushHistory();
+      const a = {
+        id: uuid(),
+        shape: tools.aoe.shape,
+        x: native.x,
+        y: native.y,
+        sizeFt: tools.aoe.sizeFt,
+        angle: tools.aoe.angle,
+        color: tools.aoe.color,
+        label: "",
+        effect: null, // reserved: a future animated spell visual binds here (animated-token type)
+      };
+      state.aoes.push(a);
+      sel.aoe = a;
+    }
+    sel.token = sel.image = sel.note = sel.stair = null;
+    updateSelectionPanels();
+    renderAndSync();
+    return;
   }
 
   if (ui.mode === "polygon" || ui.mode === "namedPolygon") {
@@ -3778,6 +3829,16 @@ function onContextMenu(event) {
       pushHistory();
       state.lights = state.lights.filter((l) => l !== lt);
       invalidateCast();
+      renderAndSync();
+    }
+    return;
+  }
+  if (ui.mode === "aoe") {
+    const a = hitAoe(toNativePoint(event));
+    if (a) {
+      pushHistory();
+      if (a === sel.aoe) { sel.aoe = null; updateSelectionPanels(); }
+      state.aoes = state.aoes.filter((x) => x !== a);
       renderAndSync();
     }
     return;

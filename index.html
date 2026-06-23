@@ -516,7 +516,18 @@
               Color
               <input id="aoeColor" type="color" value="#e2603a">
             </label>
-            <p class="hint">Hover over the map to preview. Mouse wheel rotates the cone.</p>
+            <p class="hint">Hover to preview, click to drop a zone. Mouse wheel rotates the cone.</p>
+            <div id="aoeSelPanel" class="hidden">
+              <label>
+                Zone label <span class="hint-inline">(optional, shown on map)</span>
+                <input id="aoeSelLabel" type="text" maxlength="24" placeholder="e.g. Fireball" autocomplete="off">
+              </label>
+              <label>
+                Zone color
+                <input id="aoeSelColor" type="color" value="#e2603a">
+              </label>
+              <button id="aoeSelDelete" class="danger-button" type="button">Delete this zone</button>
+            </div>
           </div>
 
           <div class="tool-popover hidden" id="measureOptions">

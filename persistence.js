@@ -248,6 +248,7 @@ function captureCurrentFloor() {
   floor.stairs = JSON.parse(JSON.stringify(state.stairs));
   floor.obstacles = JSON.parse(JSON.stringify(state.obstacles));
   floor.lights = JSON.parse(JSON.stringify(state.lights));
+  floor.aoes = JSON.parse(JSON.stringify(state.aoes || []));
   floor.images = JSON.parse(JSON.stringify(state.images));
   floor.notes = JSON.parse(JSON.stringify(state.notes));
   floor.view = { ...state.view };

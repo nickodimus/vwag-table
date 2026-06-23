@@ -166,6 +166,10 @@ const controls = {
   aoeSquare: document.getElementById("aoeSquare"),
   aoeCone: document.getElementById("aoeCone"),
   aoeColor: document.getElementById("aoeColor"),
+  aoeSelPanel: document.getElementById("aoeSelPanel"),
+  aoeSelLabel: document.getElementById("aoeSelLabel"),
+  aoeSelColor: document.getElementById("aoeSelColor"),
+  aoeSelDelete: document.getElementById("aoeSelDelete"),
   aoePresetsRow: document.getElementById("aoePresetsRow"),
   aoeCustomSize: document.getElementById("aoeCustomSize"),
   aoeAngleSlider: document.getElementById("aoeAngleSlider"),
@@ -313,7 +317,7 @@ const hooks = { render: () => {}, renderAndSync: () => {}, relay: () => {} };
 
 // GM Move-mode selection of non-token objects, read by the annotation draws (to ring the selected
 // item) and written by the Move-mode handlers. Ephemeral; not part of the saved `state` document.
-const sel = { image: null, note: null, token: null, stair: null, playerTokens: [], marquee: null };
+const sel = { image: null, note: null, token: null, stair: null, aoe: null, playerTokens: [], marquee: null };
 // Handle to the popped-out player window (GM side); the player side reaches the GM via window.opener.
 // Mutated when the popup opens or a message identifies its source. Never rebound across modules.
 const peerWindow = { ref: null };
@@ -350,6 +354,7 @@ function makeFloor(id) {
     stairs: [],
     obstacles: [],
     lights: [],
+    aoes: [],
     images: [],
     notes: [],
     view: { scale: 1, cx: 0, cy: 0, rotation: 0 },
