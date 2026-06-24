@@ -225,6 +225,7 @@ let draggingToken = null;
 let draggingImage = null;
 let draggingNote = null;
 let draggingStair = null;
+let draggingMapLink = null;
 let mapLinkIconChoice = MAP_LINK_DEFAULT_ICON; // current pick in the place-map-link dialog
 let draggingFrame = false; // GM is dragging the player-view frame to pan the player display
 let dragGrab = { dx: 0, dy: 0 }; // offset from cursor to object center while dragging images/notes/frame
@@ -731,6 +732,24 @@ function bindControls() {
     updateSelectionPanels();
     renderAndSync();
   });
+  controls.mapLinkSelTarget?.addEventListener("change", () => {
+    if (!sel.mapLink) return;
+    sel.mapLink.targetMapId = controls.mapLinkSelTarget.value;
+    renderAndSync();
+  });
+  controls.mapLinkSelLabel?.addEventListener("input", () => {
+    if (!sel.mapLink) return;
+    sel.mapLink.label = controls.mapLinkSelLabel.value.trim();
+    renderAndSync();
+  });
+  controls.mapLinkSelDelete?.addEventListener("click", () => {
+    if (!sel.mapLink) return;
+    pushHistory();
+    state.mapLinks = state.mapLinks.filter((m) => m !== sel.mapLink);
+    sel.mapLink = null;
+    updateSelectionPanels();
+    renderAndSync();
+  });
   controls.aoeSelLabel?.addEventListener("input", () => {
     if (!sel.aoe) return;
     sel.aoe.label = controls.aoeSelLabel.value.trim();
@@ -981,7 +1000,13 @@ function bindControls() {
     renderAndSync();
   });
   buildConditionGrid();
-  buildMapLinkIconGrid();
+  buildMapLinkIconGrid(controls.mapLinkIconGrid, (id) => { mapLinkIconChoice = id; });
+  buildMapLinkIconGrid(controls.mapLinkSelIconGrid, (id) => {
+    if (!sel.mapLink) return;
+    pushHistory();
+    sel.mapLink.icon = id;
+    renderAndSync();
+  });
   controls.tokenSelConditions?.addEventListener("click", (event) => {
     const btn = event.target.closest("[data-cond]");
     if (!btn || !sel.token) return;
@@ -1585,7 +1610,7 @@ function updatePlayerSliderRanges() {
 
 // Promote a floor record into the active state fields.
 function applyFloor(floor) {
-  sel.token = sel.image = sel.note = sel.stair = sel.aoe = null; // these arrays are about to be replaced
+  sel.token = sel.image = sel.note = sel.stair = sel.mapLink = sel.aoe = null; // these arrays are about to be replaced
   state.currentFloorId = floor.id;
   state.imageId = floor.imageId || "";
   state.imageData = floor.imageData || "";
@@ -1880,10 +1905,10 @@ async function populateMapTargetSelect(select, selectedId) {
     });
 }
 
-// Build the icon picker (single-select) in the place-map-link dialog from MAP_LINK_ICONS — each
-// button carries the same 24x24 glyph the canvas markers use and sets mapLinkIconChoice.
-function buildMapLinkIconGrid() {
-  const grid = controls.mapLinkIconGrid;
+// Build a map-link icon picker into `grid`; clicking a glyph calls onPick(iconId) and marks it
+// active. Shared by the placement dialog and the Selected Map-Link panel so adding an icon touches
+// one spot. Each button carries the same 24x24 glyph the canvas markers use.
+function buildMapLinkIconGrid(grid, onPick) {
   if (!grid || grid.childElementCount) return;
   grid.innerHTML = MAP_LINK_ICONS.map((i) =>
     `<button type="button" class="maplink-icon-btn" data-icon="${i.id}" title="${i.label}" aria-label="${i.label}">`
@@ -1892,16 +1917,15 @@ function buildMapLinkIconGrid() {
   grid.addEventListener("click", (e) => {
     const btn = e.target.closest("[data-icon]");
     if (!btn) return;
-    mapLinkIconChoice = btn.dataset.icon;
-    grid.querySelectorAll("[data-icon]").forEach((b) => b.classList.toggle("active", b === btn));
+    onPick(btn.dataset.icon);
+    setActiveIcon(grid, btn.dataset.icon);
   });
 }
 
-// Highlight the chosen icon button (called when the dialog opens).
-function syncMapLinkIconGrid() {
-  const grid = controls.mapLinkIconGrid;
+// Highlight the matching icon button in a grid (on dialog open / link select).
+function setActiveIcon(grid, iconId) {
   if (!grid) return;
-  grid.querySelectorAll("[data-icon]").forEach((b) => b.classList.toggle("active", b.dataset.icon === mapLinkIconChoice));
+  grid.querySelectorAll("[data-icon]").forEach((b) => b.classList.toggle("active", b.dataset.icon === iconId));
 }
 
 async function promptMapLinkPlacement(native) {
@@ -1916,7 +1940,7 @@ async function promptMapLinkPlacement(native) {
   }
 
   mapLinkIconChoice = MAP_LINK_DEFAULT_ICON;
-  syncMapLinkIconGrid();
+  setActiveIcon(controls.mapLinkIconGrid, mapLinkIconChoice);
   if (controls.mapLinkLabelInput) controls.mapLinkLabelInput.value = "";
   controls.mapLinkDialog.returnValue = "";
   controls.mapLinkDialog.addEventListener(
@@ -2008,7 +2032,7 @@ function setMode(nextMode) {
   tools.drawingObstacle = [];
   fogBuf.stampDraft = null;
   sel.token = null;
-  sel.image = sel.note = sel.stair = sel.aoe = null;
+  sel.image = sel.note = sel.stair = sel.mapLink = sel.aoe = null;
   updateSelectionPanels();
   canvas.style.cursor = ""; // clear any frame-hover cursor
   controls.fogToggle?.classList.toggle("active", FOG_MODES.includes(nextMode));
@@ -3159,6 +3183,14 @@ function updateSelectionPanels() {
       if (controls.stairSelLabel) controls.stairSelLabel.value = sel.stair.label || "";
     }
   }
+  if (controls.mapLinkSelPanel) {
+    controls.mapLinkSelPanel.classList.toggle("hidden", !sel.mapLink);
+    if (sel.mapLink) {
+      if (controls.mapLinkSelTarget) populateMapTargetSelect(controls.mapLinkSelTarget, sel.mapLink.targetMapId);
+      if (controls.mapLinkSelLabel) controls.mapLinkSelLabel.value = sel.mapLink.label || "";
+      setActiveIcon(controls.mapLinkSelIconGrid, sel.mapLink.icon || MAP_LINK_DEFAULT_ICON);
+    }
+  }
   if (controls.aoeSelPanel) {
     controls.aoeSelPanel.classList.toggle("hidden", !sel.aoe);
     if (sel.aoe) {
@@ -3694,9 +3726,21 @@ function onPointerDown(event) {
   }
 
   if (ui.mode === "mapLink") {
-    // 2a: click empty ground to place a link to another saved map. Clicking an existing link does
-    // nothing yet — select/drag/edit arrives in 2b. Travel happens by clicking a link in Move/pan mode.
-    if (hitMapLink(native)) return;
+    // Click an existing link to select it (retarget / change icon / rename / delete in the panel,
+    // drag to move); click empty ground to place a new one. Travel is a click in Move/pan mode.
+    const existing = hitMapLink(native);
+    if (existing) {
+      pushHistory();
+      sel.mapLink = existing;
+      sel.token = sel.image = sel.note = sel.stair = null;
+      draggingMapLink = existing;
+      dragGrab = { dx: existing.x - native.x, dy: existing.y - native.y };
+      isDragging = true;
+      capturePointer(event.pointerId);
+      updateSelectionPanels();
+      render();
+      return;
+    }
     promptMapLinkPlacement(native);
     return;
   }
@@ -3926,6 +3970,14 @@ function onPointerMove(event) {
     return;
   }
 
+  if (draggingMapLink) {
+    const native = toNativePoint(event);
+    draggingMapLink.x = native.x + dragGrab.dx;
+    draggingMapLink.y = native.y + dragGrab.dy;
+    render(); // local only; map-links are GM-only
+    return;
+  }
+
   if (tools.measureLine) {
     tools.measureLine.end = toNativePoint(event);
     render();
@@ -4027,6 +4079,11 @@ function onPointerUp(event) {
   if (draggingStair) {
     draggingStair = null;
     renderAndSync(); // GM-only, but matches the place/delete commit path
+  }
+
+  if (draggingMapLink) {
+    draggingMapLink = null;
+    renderAndSync(); // GM-only, matches the place/delete commit path
   }
 
   if (draggingFrame) {
