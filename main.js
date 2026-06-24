@@ -64,7 +64,7 @@ import {
 } from "./persistence.js";
 import {
   resolveSession, resolveModule, resolveImage,
-  trailActiveId, trailDepth, trailPush, trailPop,
+  trailActiveId, trailDepth, trailPush, trailPop, trailReset,
   cacheHas, cacheGet, cacheSet,
 } from "./content.js";
 import {
