@@ -59,7 +59,13 @@ import {
 } from "./view.js";
 import {
   hydrateFloorImages, mergeModuleSession, migrateMapsToModulesAndSessions, captureCurrentFloor, splitState, makeMapId, deriveCellGrid,
+  snapshotFromLiveState,
 } from "./persistence.js";
+import {
+  resolveSession, resolveModule, resolveImage,
+  trailActiveId, trailDepth, trailPush, trailPop,
+  cacheHas, cacheGet, cacheSet,
+} from "./content.js";
 import {
   reportPlayerViewport, relay, applyRemoteView, applyIncomingPlayerView, syncPlayerViewControls, snapPlayerViewToGM, broadcastAssets, broadcastState,
   broadcastView, renderAndSync, renderAndSyncView,
@@ -564,6 +570,8 @@ function bindControls() {
     renderAndSync();
   });
   controls.loadLibrary.addEventListener("click", openLibrary);
+  if (controls.mapUp) controls.mapUp.addEventListener("click", ascend);
+  updateMapNavUI();
   controls.saveSession.addEventListener("click", saveSession);
   controls.exportLibrary?.addEventListener("click", exportLibrary);
   controls.importLibrary?.addEventListener("change", importLibrary);
@@ -1217,23 +1225,68 @@ function renderLibraryList(records) {
     });
 }
 
+// ─── Map navigation: the containment trail ──────────────────────────────────────
+// A "map" here is a module+session pair — one place at one scale (world / settlement / battle).
+// descend() pushes onto a breadcrumb trail and keeps the maps you came through warm in memory
+// (content.js's snapshot cache), so ascend() pops back instantly with fog/tokens/view exactly as
+// you left them. All content enters through content.js's resolver (memory -> IndexedDB ->
+// [remote/fallon, chunk 4]), so the online tier slots in later without touching this code.
+
+// Cold load: pull the records through the resolver, merge + hydrate, cache the snapshot, apply.
+async function loadMapById(id) {
+  const session = await resolveSession(id);
+  if (!session) throw new Error("saved game not found");
+  const module = await resolveModule(session.moduleId || id);
+  if (!module) throw new Error("the map module for this saved game is missing");
+  const snapshot = mergeModuleSession(module, session);
+  await hydrateFloorImages(snapshot, resolveImage); // floors carry only imageId; pull bytes via the resolver
+  cacheSet(id, snapshot);
+  applyLoadedSnapshot(snapshot);
+}
+
+// Push a merged + hydrated snapshot into live state — shared by the cold load and the warm pop-back.
+function applyLoadedSnapshot(snapshot) {
+  tools.drawingRoom = [];
+  fogBuf.activeStroke = null;
+  undoStack.length = 0;
+  redoStack.length = 0;
+  updateUndoButtons();
+  loadSnapshot(snapshot);
+  syncControlsFromState();
+  broadcastAssets();
+  renderAndSync();
+}
+
+// Go to a map, keeping the one we leave warm. Cold maps load through the resolver; maps already
+// visited this session restore from the snapshot cache (instant). Chunk 1's only driver is the
+// library picker, so each pick pushes a level — chunk 2's map-links drive descend() from anchors
+// on the map itself, and chunk 3 adds sideways jumps.
+async function descend(id) {
+  if (trailActiveId() === id) return; // already here
+  if (trailActiveId()) cacheSet(trailActiveId(), snapshotFromLiveState()); // freeze the map we're leaving
+  if (cacheHas(id)) applyLoadedSnapshot(cacheGet(id)); // warm
+  else await loadMapById(id); // cold
+  trailPush(id);
+  updateMapNavUI();
+}
+
+// Pop back up to the parent map. Ancestors are never evicted, so the parent is always warm.
+function ascend() {
+  if (trailDepth() <= 1) return; // at the root — nowhere up to go
+  cacheSet(trailActiveId(), snapshotFromLiveState()); // freeze before leaving
+  trailPop();
+  applyLoadedSnapshot(cacheGet(trailActiveId()));
+  updateMapNavUI();
+}
+
+// Enable the Up control only when there is a parent to return to.
+function updateMapNavUI() {
+  if (controls.mapUp) controls.mapUp.disabled = trailDepth() <= 1;
+}
+
 async function loadLibraryMap(id) {
   try {
-    const session = await getSessionRecord(id);
-    if (!session) throw new Error("saved game not found");
-    const module = await getModuleRecord(session.moduleId || id);
-    if (!module) throw new Error("the map module for this saved game is missing");
-    const snapshot = mergeModuleSession(module, session);
-    await hydrateFloorImages(snapshot); // floors carry only imageId; pull the bytes back in
-    tools.drawingRoom = [];
-    fogBuf.activeStroke = null;
-    undoStack.length = 0;
-    redoStack.length = 0;
-    updateUndoButtons();
-    loadSnapshot(snapshot);
-    syncControlsFromState();
-    broadcastAssets();
-    renderAndSync();
+    await descend(id);
     controls.libraryDialog.close();
   } catch (error) {
     window.alert(`Could not load this map: ${error.message}`);
@@ -1352,6 +1405,9 @@ function loadSnapshot(snapshot) {
   if (state.grid.snap === undefined) state.grid.snap = true;
   if (snapshot.stairColor) state.stairColor = snapshot.stairColor;
   if (snapshot.measure) Object.assign(state.measure, snapshot.measure);
+  if (snapshot.mapKind) state.mapKind = snapshot.mapKind;
+  state.parentId = snapshot.parentId ?? null;
+  if (snapshot.source) state.source = snapshot.source;
   if (snapshot.initiative) {
     state.initiative = { active: false, showPlayers: false, showOverlay: true, round: 1, turn: 0, combatants: [], ...snapshot.initiative };
   }
