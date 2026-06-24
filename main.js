@@ -16,6 +16,7 @@ import {
   DB_NAME, DB_VERSION, MAP_STORE, IMAGE_STORE, MODULE_STORE, SESSION_STORE, TOKEN_STORE, FOG_MAX_EDGE,
   HISTORY_LIMIT, STAIRS_ICON_NEUTRAL, STAIRS_ICON_UP, STAIRS_ICON_DOWN, FEET_PER_CELL, MEASURE_UNITS, PING_DURATION, controls,
   CONDITIONS,
+  MAP_LINK_ICONS, MAP_LINK_DEFAULT_ICON,
   isPlayer, DEFAULT_GM_FOG_OPACITY, INITIAL_FLOOR_ID, makeFloor, state, normalizeInput, uuid, escapeHtml,
   playerCam, tools, cur, hooks, sel, fogBuf, peerWindow,
   castCache, castFrameKeys, lightFrameKeys,
@@ -224,6 +225,7 @@ let draggingToken = null;
 let draggingImage = null;
 let draggingNote = null;
 let draggingStair = null;
+let mapLinkIconChoice = MAP_LINK_DEFAULT_ICON; // current pick in the place-map-link dialog
 let draggingFrame = false; // GM is dragging the player-view frame to pan the player display
 let dragGrab = { dx: 0, dy: 0 }; // offset from cursor to object center while dragging images/notes/frame
 let groupDragOffsets = null; // [{token,dx,dy}] formation captured at grab, for a player group-drag
@@ -662,6 +664,7 @@ function bindControls() {
   controls.aoeMode?.addEventListener("click", () => setMode("aoe"));
   controls.measureMode.addEventListener("click", () => setMode("measure"));
   controls.stairMode?.addEventListener("click", () => setMode("stair"));
+  controls.mapLinkMode?.addEventListener("click", () => setMode("mapLink"));
   controls.drawMode?.addEventListener("click", () => setMode("draw"));
   controls.lightMode?.addEventListener("click", () => setMode("light"));
   controls.obstacleKind?.addEventListener("change", () => { tools.obstacleKind = controls.obstacleKind.value; });
@@ -978,6 +981,7 @@ function bindControls() {
     renderAndSync();
   });
   buildConditionGrid();
+  buildMapLinkIconGrid();
   controls.tokenSelConditions?.addEventListener("click", (event) => {
     const btn = event.target.closest("[data-cond]");
     if (!btn || !sel.token) return;
@@ -1044,6 +1048,7 @@ function installMap(dataURL, name, gridOpts, onReady) {
   state.fog.strokes = [];
   state.tokens = [];
   state.stairs = [];
+  state.mapLinks = [];
   tools.drawingRoom = [];
   undoStack.length = 0;
   redoStack.length = 0;
@@ -1592,6 +1597,7 @@ function applyFloor(floor) {
   state.fog.strokes = JSON.parse(JSON.stringify(floor.strokes || []));
   state.tokens = JSON.parse(JSON.stringify(floor.tokens || []));
   state.stairs = JSON.parse(JSON.stringify(floor.stairs || []));
+  state.mapLinks = JSON.parse(JSON.stringify(floor.mapLinks || []));
   state.obstacles = JSON.parse(JSON.stringify(floor.obstacles || []));
   state.lights = JSON.parse(JSON.stringify(floor.lights || []));
   state.aoes = JSON.parse(JSON.stringify(floor.aoes || []));
@@ -1847,6 +1853,106 @@ function hitStair(native) {
   return null;
 }
 
+// ----------------------------- map-links (chunk 2) -----------------------------
+// A map-link descends into another saved map. Mirrors the stair authoring loop, but the target is a
+// MAP (a saved session's record id) rather than a floor, and clicking one in pan mode descends.
+
+// Fill a <select> with every saved map except the one currently open (no self-links). The library is
+// keyed by session record; the stored target is that id verbatim — descend() resolves it.
+async function populateMapTargetSelect(select, selectedId) {
+  select.replaceChildren();
+  let records = [];
+  try {
+    records = await listSessionRecords();
+  } catch {
+    records = [];
+  }
+  const here = trailActiveId();
+  records
+    .filter((r) => r.id !== here)
+    .sort((a, b) => (a.name || "").localeCompare(b.name || ""))
+    .forEach((r) => {
+      const opt = document.createElement("option");
+      opt.value = r.id;
+      opt.textContent = r.name || r.id;
+      if (r.id === selectedId) opt.selected = true;
+      select.appendChild(opt);
+    });
+}
+
+// Build the icon picker (single-select) in the place-map-link dialog from MAP_LINK_ICONS — each
+// button carries the same 24x24 glyph the canvas markers use and sets mapLinkIconChoice.
+function buildMapLinkIconGrid() {
+  const grid = controls.mapLinkIconGrid;
+  if (!grid || grid.childElementCount) return;
+  grid.innerHTML = MAP_LINK_ICONS.map((i) =>
+    `<button type="button" class="maplink-icon-btn" data-icon="${i.id}" title="${i.label}" aria-label="${i.label}">`
+    + `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="${i.d}"/></svg></button>`,
+  ).join("");
+  grid.addEventListener("click", (e) => {
+    const btn = e.target.closest("[data-icon]");
+    if (!btn) return;
+    mapLinkIconChoice = btn.dataset.icon;
+    grid.querySelectorAll("[data-icon]").forEach((b) => b.classList.toggle("active", b === btn));
+  });
+}
+
+// Highlight the chosen icon button (called when the dialog opens).
+function syncMapLinkIconGrid() {
+  const grid = controls.mapLinkIconGrid;
+  if (!grid) return;
+  grid.querySelectorAll("[data-icon]").forEach((b) => b.classList.toggle("active", b.dataset.icon === mapLinkIconChoice));
+}
+
+async function promptMapLinkPlacement(native) {
+  if (!controls.mapLinkDialog) return;
+  const select = controls.mapLinkTargetSelect;
+  if (!select) return;
+
+  await populateMapTargetSelect(select);
+  if (!select.options.length) {
+    window.alert("Save another map first — a map-link needs a destination map in your library.");
+    return;
+  }
+
+  mapLinkIconChoice = MAP_LINK_DEFAULT_ICON;
+  syncMapLinkIconGrid();
+  if (controls.mapLinkLabelInput) controls.mapLinkLabelInput.value = "";
+  controls.mapLinkDialog.returnValue = "";
+  controls.mapLinkDialog.addEventListener(
+    "close",
+    () => {
+      if (controls.mapLinkDialog.returnValue !== "place") return;
+      const targetMapId = select.value;
+      const label = controls.mapLinkLabelInput?.value?.trim() || "";
+      pushHistory();
+      state.mapLinks.push({
+        id: uuid(),
+        x: native.x,
+        y: native.y,
+        targetMapId,
+        icon: mapLinkIconChoice,
+        label,
+      });
+      renderAndSync();
+    },
+    { once: true },
+  );
+  controls.mapLinkDialog.showModal();
+}
+
+// Square hit detection — the marker occupies exactly one grid cell, like a stair.
+function hitMapLink(native) {
+  const half = gridCellNative() / 2;
+  for (let i = state.mapLinks.length - 1; i >= 0; i--) {
+    const m = state.mapLinks[i];
+    if (Math.abs(native.x - m.x) <= half && Math.abs(native.y - m.y) <= half) {
+      return state.mapLinks[i];
+    }
+  }
+  return null;
+}
+
 
 
 
@@ -1906,7 +2012,7 @@ function setMode(nextMode) {
   updateSelectionPanels();
   canvas.style.cursor = ""; // clear any frame-hover cursor
   controls.fogToggle?.classList.toggle("active", FOG_MODES.includes(nextMode));
-  [controls.panMode, controls.polygonMode, controls.namedPolygonMode, controls.brushMode, controls.eraserMode, controls.stampMode, controls.tokenMode, controls.aoeMode, controls.measureMode, controls.stairMode, controls.drawMode, controls.lightMode].forEach(
+  [controls.panMode, controls.polygonMode, controls.namedPolygonMode, controls.brushMode, controls.eraserMode, controls.stampMode, controls.tokenMode, controls.aoeMode, controls.measureMode, controls.stairMode, controls.mapLinkMode, controls.drawMode, controls.lightMode].forEach(
     (button) => button?.classList.remove("active"),
   );
   controls[`${nextMode}Mode`]?.classList.add("active");
@@ -1921,6 +2027,7 @@ function setMode(nextMode) {
     aoe: "Hover to preview. Click to drop a zone; click a zone to rename or delete it. Wheel rotates the cone.",
     measure: "Drag to measure distance across the grid.",
     stair: "Click to place a staircase. Right-click a stair to remove it.",
+    mapLink: "Click to place a map-link to another saved map. Click a link in Move/pan mode to travel there. Right-click a link to remove it.",
     draw: "Click corners to draw a wall/obstacle; Enter or double-click to place. Right-click an obstacle to delete. Set a grid first so points land on cells.",
     light: "Click to place a light, right-click a light to remove it. Set its size with the radius slider. Turn on Darkness (under Line of sight) to see lights gate what players can see.",
   }[nextMode] ?? "";
@@ -3062,6 +3169,13 @@ function updateSelectionPanels() {
 }
 
 function deleteTokenOrRoom(native) {
+  const link = hitMapLink(native);
+  if (link) {
+    pushHistory();
+    state.mapLinks = state.mapLinks.filter((m) => m !== link);
+    renderAndSync();
+    return true;
+  }
   const stair = hitStair(native);
   if (stair) {
     pushHistory();
@@ -3579,6 +3693,14 @@ function onPointerDown(event) {
     return;
   }
 
+  if (ui.mode === "mapLink") {
+    // 2a: click empty ground to place a link to another saved map. Clicking an existing link does
+    // nothing yet — select/drag/edit arrives in 2b. Travel happens by clicking a link in Move/pan mode.
+    if (hitMapLink(native)) return;
+    promptMapLinkPlacement(native);
+    return;
+  }
+
   // In Move mode: click a token to select it (for arrow-key nudging), a note or image to
   // select+drag it, or a stair to jump floors. Clicking empty space clears selection and pans.
   if (ui.mode === "pan") {
@@ -3627,6 +3749,11 @@ function onPointerDown(event) {
     if (stair) {
       const idx = state.floors.findIndex((f) => f.id === stair.targetFloorId);
       if (idx !== -1) goToFloor(idx);
+      return;
+    }
+    const link = hitMapLink(native);
+    if (link && link.targetMapId) {
+      descend(link.targetMapId); // push the trail and load the child map (chunk 1 machinery)
       return;
     }
     // Click a door to toggle it open/closed (GM only). Open doors pass sight, light, and
@@ -4163,7 +4290,7 @@ function onKeyDown(event) {
     return;
   }
 
-  const shortcuts = { v: "pan", h: "pan", p: "polygon", n: "namedPolygon", b: "brush", e: "eraser", t: "token", a: "aoe", m: "measure", s: "stair", d: "draw", l: "light" };
+  const shortcuts = { v: "pan", h: "pan", p: "polygon", n: "namedPolygon", b: "brush", e: "eraser", t: "token", a: "aoe", m: "measure", s: "stair", g: "mapLink", d: "draw", l: "light" };
   const key = event.key.toLowerCase();
   if (shortcuts[key]) {
     setMode(shortcuts[key]);

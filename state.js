@@ -62,6 +62,26 @@ const STAIRS_ICON_NEUTRAL = new Path2D("M22 5h-5v5h-5v5h-5v5h-5");
 const STAIRS_ICON_UP = new Path2D("M22 6h-5v5h-5v5h-5v5h-5 M6 10v-7 M3 6l3 -3l3 3");
 const STAIRS_ICON_DOWN = new Path2D("M22 21h-5v-5h-5v-5h-5v-5h-5 M18 3v7 M15 7l3 3l3 -3");
 
+// Lucide map-link marker icons (24×24, stroke-only). A map-link is a marker placed on a world/town
+// map that descends into a child map (chunk 2). Like CONDITIONS, each `d` feeds BOTH the canvas
+// Path2D markers (built here) and the placement icon-picker buttons (built in main.js). Lucide
+// <circle> elements are written as arc subpaths so a single Path2D draws the whole glyph. A placed
+// link stores the destination map's record id verbatim (survives the fallon cutover); icon defaults
+// to "map-pin". Source: lucide.dev, ISC license (see CREDITS.md).
+const MAP_LINK_ICONS = [
+  { id: "landmark", label: "Town", d: "M10 18v-7 M11.119 2.205a2 2 0 0 1 1.762 0l7.84 3.846A.5 .5 0 0 1 20.5 7h-17a.5 .5 0 0 1-.22-.949z M14 18v-7 M18 18v-7 M3 22h18 M6 18v-7" },
+  { id: "house", label: "Building", d: "M15 21v-8a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v8 M3 10a2 2 0 0 1 .709-1.528l7-6a2 2 0 0 1 2.582 0l7 6A2 2 0 0 1 21 10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" },
+  { id: "castle", label: "Keep", d: "M10 5V3 M14 5V3 M15 21v-3a3 3 0 0 0-6 0v3 M18 3v8 M18 5H6 M22 11H2 M22 9v10a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V9 M6 3v8" },
+  { id: "skull", label: "Dungeon", d: "m12.5 17-.5-1-.5 1h1z M15 22a1 1 0 0 0 1-1v-1a2 2 0 0 0 1.56-3.25 8 8 0 1 0-11.12 0A2 2 0 0 0 8 20v1a1 1 0 0 0 1 1z M14 12a1 1 0 1 0 2 0a1 1 0 1 0-2 0 M8 12a1 1 0 1 0 2 0a1 1 0 1 0-2 0" },
+  { id: "tent", label: "Camp", d: "M3.5 21 14 3 M20.5 21 10 3 M15.5 21 12 15l-3.5 6 M2 21h20" },
+  { id: "door-open", label: "Entrance", d: "M11 20H2 M11 4.562v16.157a1 1 0 0 0 1.242 .97L19 20V5.562a2 2 0 0 0-1.515-1.94l-4-1A2 2 0 0 0 11 4.561z M11 4H8a2 2 0 0 0-2 2v14 M14 12h.01 M22 20h-3" },
+  { id: "signpost", label: "Road", d: "M12 13v8 M12 3v3 M2.354 10.354a1.207 1.207 0 0 1 0-1.708l2.06-2.06A2 2 0 0 1 5.828 6h12.344a2 2 0 0 1 1.414 .586l2.06 2.06a1.207 1.207 0 0 1 0 1.708l-2.06 2.06a2 2 0 0 1-1.414 .586H5.828a2 2 0 0 1-1.414-.586z" },
+  { id: "map-pin", label: "Default", d: "M20 10c0 4.993-5.539 10.193-7.399 11.799a1 1 0 0 1-1.202 0C9.539 20.193 4 14.993 4 10a8 8 0 0 1 16 0 M9 10a3 3 0 1 0 6 0a3 3 0 1 0-6 0" },
+];
+const MAP_LINK_DEFAULT_ICON = "map-pin";
+// Prebuilt canvas markers, keyed by icon id (mirrors STAIRS_ICON_*).
+const MAP_LINK_ICON_PATHS = Object.fromEntries(MAP_LINK_ICONS.map((i) => [i.id, new Path2D(i.d)]));
+
 // 5e status conditions (token.conditions holds the active ids). Each glyph is an SVG path in a
 // 24x24 box, stroked like the stair icons; `d` is shared by the canvas markers (tokens.js builds a
 // Path2D) and the authoring grid (index.html buttons, built in main.js from this list). The order
@@ -250,6 +270,11 @@ const controls = {
   stairSelFloor: document.getElementById("stairSelFloor"),
   stairSelLabel: document.getElementById("stairSelLabel"),
   stairSelDelete: document.getElementById("stairSelDelete"),
+  mapLinkMode: document.getElementById("mapLinkMode"),
+  mapLinkDialog: document.getElementById("mapLinkDialog"),
+  mapLinkTargetSelect: document.getElementById("mapLinkTargetSelect"),
+  mapLinkIconGrid: document.getElementById("mapLinkIconGrid"),
+  mapLinkLabelInput: document.getElementById("mapLinkLabelInput"),
   floorOverlay: document.getElementById("floorOverlay"),
   floorName: document.getElementById("floorName"),
   addFloorUp: document.getElementById("addFloorUp"),
@@ -319,7 +344,7 @@ const hooks = { render: () => {}, renderAndSync: () => {}, relay: () => {} };
 
 // GM Move-mode selection of non-token objects, read by the annotation draws (to ring the selected
 // item) and written by the Move-mode handlers. Ephemeral; not part of the saved `state` document.
-const sel = { image: null, note: null, token: null, stair: null, aoe: null, playerTokens: [], marquee: null };
+const sel = { image: null, note: null, token: null, stair: null, mapLink: null, aoe: null, playerTokens: [], marquee: null };
 // Handle to the popped-out player window (GM side); the player side reaches the GM via window.opener.
 // Mutated when the popup opens or a message identifies its source. Never rebound across modules.
 const peerWindow = { ref: null };
@@ -354,6 +379,7 @@ function makeFloor(id) {
     strokes: [],
     tokens: [],
     stairs: [],
+    mapLinks: [],
     obstacles: [],
     lights: [],
     aoes: [],
@@ -385,6 +411,9 @@ const state = {
   },
   tokens: [],
   stairs: [],
+  // Map-links for the current floor — authored markers that descend into a child map (chunk 2).
+  // Mirrors the floor record like stairs; GM-only (never synced to the player display).
+  mapLinks: [],
   // Obstacle geometry (walls/doors/windows…) for the current floor — authored, mirrors the
   // floor record like tokens/stairs. Points are stored in cell units.
   obstacles: [],
@@ -439,6 +468,7 @@ export {
   exploredMasks, lightCache, shell, emptyState, channel, APP_NAME, LEGACY_APP_NAME, SAVE_FILE_VERSION,
   DB_NAME, DB_VERSION, MAP_STORE, IMAGE_STORE, MODULE_STORE, SESSION_STORE, TOKEN_STORE, FOG_MAX_EDGE,
   HISTORY_LIMIT, STAIRS_ICON_NEUTRAL, STAIRS_ICON_UP, STAIRS_ICON_DOWN, FEET_PER_CELL, MEASURE_UNITS, PING_DURATION, controls,
+  MAP_LINK_ICONS, MAP_LINK_ICON_PATHS, MAP_LINK_DEFAULT_ICON,
   CONDITIONS, EXHAUSTION_ICON,
   isPlayer, DEFAULT_GM_FOG_OPACITY, INITIAL_FLOOR_ID, makeFloor, state, normalizeInput, uuid, escapeHtml,
   playerCam,
