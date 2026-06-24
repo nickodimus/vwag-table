@@ -2004,6 +2004,51 @@ input:disabled {
 .condition-btn.active svg path {
   opacity: 1;
 }
+.maplink-field {
+  display: grid;
+  gap: 6px;
+}
+.maplink-field-label {
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+.maplink-icon-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+}
+.maplink-icon-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  aspect-ratio: 1 / 1;
+  padding: 0;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  cursor: pointer;
+}
+.maplink-icon-btn svg {
+  width: 70%;
+  height: 70%;
+}
+.maplink-icon-btn svg path {
+  fill: none;
+  stroke: var(--muted);
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.maplink-icon-btn:hover {
+  border-color: var(--muted);
+}
+.maplink-icon-btn.active {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 20%, var(--panel-2));
+}
+.maplink-icon-btn.active svg path {
+  stroke: var(--accent);
+}
 .condition-extras {
   display: flex;
   align-items: center;

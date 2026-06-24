@@ -98,6 +98,7 @@ function splitState(stateObj) {
     imageHeight: f.imageHeight || 0,
     mapScale: f.mapScale || 1,
     stairs: JSON.parse(JSON.stringify(f.stairs || [])),
+    mapLinks: JSON.parse(JSON.stringify(f.mapLinks || [])),
     obstacles: JSON.parse(JSON.stringify(f.obstacles || [])),
     lights: JSON.parse(JSON.stringify(f.lights || [])),
   }));
@@ -168,6 +169,7 @@ function mergeModuleSession(module, session) {
       imageHeight: mf.imageHeight || 0,
       mapScale: mf.mapScale || 1,
       stairs: JSON.parse(JSON.stringify(mf.stairs || [])),
+      mapLinks: JSON.parse(JSON.stringify(mf.mapLinks || [])),
       obstacles: JSON.parse(JSON.stringify(mf.obstacles || [])),
       lights: JSON.parse(JSON.stringify(mf.lights || [])),
       rooms: JSON.parse(JSON.stringify(sf.rooms || [])),
@@ -257,6 +259,7 @@ function captureCurrentFloor() {
   floor.strokes = JSON.parse(JSON.stringify(state.fog.strokes));
   floor.tokens = JSON.parse(JSON.stringify(state.tokens));
   floor.stairs = JSON.parse(JSON.stringify(state.stairs));
+  floor.mapLinks = JSON.parse(JSON.stringify(state.mapLinks || []));
   floor.obstacles = JSON.parse(JSON.stringify(state.obstacles));
   floor.lights = JSON.parse(JSON.stringify(state.lights));
   floor.aoes = JSON.parse(JSON.stringify(state.aoes || []));

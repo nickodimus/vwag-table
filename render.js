@@ -6,7 +6,7 @@
  */
 
 import {
-  STAIRS_ICON_DOWN, STAIRS_ICON_NEUTRAL, STAIRS_ICON_UP, canvas, castCache, castFrameKeys, ctx, cur,
+  STAIRS_ICON_DOWN, STAIRS_ICON_NEUTRAL, STAIRS_ICON_UP, MAP_LINK_ICON_PATHS, MAP_LINK_DEFAULT_ICON, canvas, castCache, castFrameKeys, ctx, cur,
   emptyState, fogBuf, isPlayer, lightCache, lightFrameKeys, sel, state, tools,
   ui,
   scene,
@@ -107,6 +107,66 @@ function drawStairs() {
   ctx.restore();
 }
 
+// Map-link markers (chunk 2): GM-only anchors placed on a world/town map that descend into a child
+// map. Mirrors drawStairs but with no up/down direction and a fixed brand-lavender color so links
+// read distinctly from the (white, tunable) stairs. Players never see these — the player display
+// just follows when the GM descends.
+function drawMapLinks() {
+  if (isPlayer || !state.mapLinks || !state.mapLinks.length) return;
+
+  const cell = gridCellNative();
+  const half = cell / 2;
+  const sw = 2 / (cur.k * cur.ms);
+
+  ctx.save();
+  const rot = currentViewRotation();
+
+  state.mapLinks.forEach((link) => {
+    const { x, y } = link;
+    ctx.save();
+    keepUpright(x, y, rot);
+
+    const iconFill = cell * 0.90;
+    const iconScale = iconFill / 24;
+    const iconPad = (cell - iconFill) / 2;
+
+    ctx.save();
+    ctx.translate(x - half + iconPad, y - half + iconPad);
+    ctx.scale(iconScale, iconScale);
+    ctx.strokeStyle = "#b3a5f0"; // brand lavender — distinct from the tunable white stair color
+    ctx.lineWidth = 2.4 / (cur.k * cur.ms * iconScale);
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    const icon = MAP_LINK_ICON_PATHS[link.icon] || MAP_LINK_ICON_PATHS[MAP_LINK_DEFAULT_ICON];
+    if (icon) ctx.stroke(icon);
+    ctx.restore();
+
+    if (link.label) {
+      ctx.save();
+      ctx.font = `600 ${Math.round(half * 0.65)}px Inter, sans-serif`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "top";
+      ctx.fillStyle = "#f4e8c8";
+      ctx.fillText(link.label, x, y + half + sw * 2);
+      ctx.restore();
+    }
+
+    if (ui.mode === "mapLink") {
+      const gap = sw * 3;
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(x - half - gap, y - half - gap, cell + gap * 2, cell + gap * 2);
+      ctx.strokeStyle = "rgba(177,195,1,0.50)";
+      ctx.lineWidth = sw * 1.5;
+      ctx.stroke();
+      ctx.restore();
+    }
+    ctx.restore();
+  });
+
+  ctx.restore();
+}
+
 // Drop cached visibility polygons that weren't touched last frame. The frame-key sets are populated
 // as each origin is cast; anything in the cache but not in that set belongs to a stale origin (a
 // token's previous position, a removed light) and would otherwise live forever — the caches are
@@ -173,6 +233,7 @@ function render() {
   if (!isPlayer) drawLights();
   if (!isPlayer) drawCastDebug();
   drawStairs(); // GM and player alike, above fog — players need to see a stair to stand on it (show-all for now; FoW-gating is a later refinement)
+  drawMapLinks(); // GM-only; descends into a child map on click (pan mode)
   if (!isPlayer) drawDraftRoom();
   if (!isPlayer) drawDraftObstacle();
   if (!isPlayer) drawStampDraft();
