@@ -1743,6 +1743,36 @@ function deleteCurrentFloor() {
   goToFloor(Math.min(idx, state.floors.length - 1));
 }
 
+// Player-side party roster (chunk: party roster). On non-battle maps (no initiative) it lists the
+// game's player characters with name + HP in the top-right corner — where the floor-summary pill
+// sits on battlemaps — so the table can spot a near-dead character and route to the Hearth to heal.
+// Source: the player-type combatants willow imports into initiative (already synced via state.initiative).
+function refreshPartyRoster() {
+  const box = controls.playerPartyRoster;
+  if (!box) return;
+  const caps = MAP_KIND_CAPS[state.mapKind] || MAP_KIND_CAPS.battle;
+  const players = state.initiative && Array.isArray(state.initiative.combatants)
+    ? state.initiative.combatants.filter((c) => c.type === "player")
+    : [];
+  // Battlemaps use the initiative tracker; show the roster only on maps without it, and only when a
+  // party has actually been imported.
+  if (caps.initiative || !players.length) {
+    box.hidden = true;
+    box.innerHTML = "";
+    return;
+  }
+  const rows = players.map((c) => {
+    const hasHp = c.hp != null && c.maxHp != null && c.maxHp > 0;
+    const pct = hasHp ? Math.max(0, Math.min(100, (c.hp / c.maxHp) * 100)) : 0;
+    const color = pct <= 25 ? "#d66a5f" : pct <= 50 ? "#e0a93a" : "#5fbf86"; // red / amber / green
+    const hp = c.hp != null ? `<span class="ppr-hp">${c.hp}${c.maxHp != null ? `/${c.maxHp}` : ""}</span>` : `<span class="ppr-hp">–</span>`;
+    const bar = hasHp ? `<div class="ppr-bar"><span style="width:${pct}%;background:${color}"></span></div>` : "";
+    return `<li><span class="init-dot player"></span><span class="ppr-name">${escapeHtml(c.name)}</span>${hp}${bar}</li>`;
+  }).join("");
+  box.innerHTML = `<div class="ppr-head">Party</div><ul>${rows}</ul>`;
+  box.hidden = false;
+}
+
 function refreshFloorUI() {
   if (isPlayer) {
     // The player never sees its own floor level (GM-only), but a names-only "rest of party" line
@@ -1759,6 +1789,7 @@ function refreshFloorUI() {
         badge.textContent = "";
       }
     }
+    refreshPartyRoster();
     return;
   }
   const idx = currentFloorIndex();

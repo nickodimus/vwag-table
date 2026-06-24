@@ -131,11 +131,14 @@ function sanitizedState() {
   clone.view = active.view ? { ...active.view } : clone.view;
   // Names-only "rest of party" summary: every OTHER floor (vs the active/table floor) that holds
   // player tokens. No total, no table-floor name, no position — the player learns WHERE split-off
-  // teammates are without learning how deep the dungeon runs.
-  clone.floorSummary = floors
-    .map((f, i) => ({ i, name: f.name, players: (f.tokens || []).filter((t) => t.type === "player").length }))
-    .filter((f) => f.i !== activeIdx && f.players > 0)
-    .map((f) => ({ name: f.name && f.name.trim() ? f.name : "another floor", players: f.players }));
+  // teammates are without learning how deep the dungeon runs. Battlemaps only — world/town maps have
+  // no floors, and the player shows a party roster there instead (refreshPartyRoster).
+  clone.floorSummary = state.mapKind === "battle"
+    ? floors
+      .map((f, i) => ({ i, name: f.name, players: (f.tokens || []).filter((t) => t.type === "player").length }))
+      .filter((f) => f.i !== activeIdx && f.players > 0)
+      .map((f) => ({ name: f.name && f.name.trim() ? f.name : "another floor", players: f.players }))
+    : [];
   return clone;
 }
 

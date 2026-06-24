@@ -301,6 +301,7 @@ const controls = {
   pinTable: document.getElementById("pinTable"),
   followInitiative: document.getElementById("followInitiative"),
   playerFloorBadge: document.getElementById("playerFloorBadge"),
+  playerPartyRoster: document.getElementById("playerPartyRoster"),
   fitMapBtn: document.getElementById("fitMapBtn"),
   initToggle: document.getElementById("initToggle"),
   initiativePanel: document.getElementById("initiativePanel"),
