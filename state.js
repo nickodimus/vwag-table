@@ -283,6 +283,7 @@ const controls = {
   stairSelDelete: document.getElementById("stairSelDelete"),
   mapLinkMode: document.getElementById("mapLinkMode"),
   mapKindSelect: document.getElementById("mapKindSelect"),
+  mapJump: document.getElementById("mapJump"),
   mapLinkDialog: document.getElementById("mapLinkDialog"),
   mapLinkTargetSelect: document.getElementById("mapLinkTargetSelect"),
   mapLinkIconGrid: document.getElementById("mapLinkIconGrid"),
@@ -368,7 +369,7 @@ const sel = { image: null, note: null, token: null, stair: null, mapLink: null, 
 const peerWindow = { ref: null };
 // GM-side interaction + overlay state. mode = active tool; lastPointer = last cursor pos (for previews);
 // castDebug = draw the LOS cast polygon; playerFrame* = the dashed rect on the GM screen showing the player viewport.
-const ui = { mode: "pan", lastPointer: { clientX: 0, clientY: 0 }, castDebug: false, playerFrameColor: "#e24a4a", playerFrameOpacity: 0.9, playerViewport: null, showPlayerFrame: true, pinTable: false, followInitiative: false };
+const ui = { mode: "pan", lastPointer: { clientX: 0, clientY: 0 }, castDebug: false, playerFrameColor: "#e24a4a", playerFrameOpacity: 0.9, playerViewport: null, showPlayerFrame: true, pinTable: false, followInitiative: false, roaming: false, tableMapId: null };
 // The two background <img> sources: the active map and the splash image.
 const scene = { map: new Image(), splash: new Image() };
 // Cast/light visibility caches (promoted from app.js): the cast-polygon cache keyed by version+origin,

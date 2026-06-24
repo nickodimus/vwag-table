@@ -574,6 +574,13 @@ function bindControls() {
   });
   controls.loadLibrary.addEventListener("click", openLibrary);
   if (controls.mapUp) controls.mapUp.addEventListener("click", ascend);
+  if (controls.mapJump) {
+    controls.mapJump.addEventListener("focus", populateMapJump); // refresh in case maps were added/renamed
+    controls.mapJump.addEventListener("change", () => {
+      const id = controls.mapJump.value;
+      if (id) jumpToMap(id).catch((e) => window.alert(`Could not jump to that map: ${e.message}`));
+    });
+  }
   updateMapNavUI();
   controls.saveSession.addEventListener("click", saveSession);
   controls.exportLibrary?.addEventListener("click", exportLibrary);
@@ -1296,11 +1303,13 @@ function applyLoadedSnapshot(snapshot) {
 // library picker, so each pick pushes a level — chunk 2's map-links drive descend() from anchors
 // on the map itself, and chunk 3 adds sideways jumps.
 async function descend(id) {
-  if (trailActiveId() === id) return; // already here
+  if (trailActiveId() === id && !ui.roaming) return; // already here and in sync
   if (trailActiveId()) cacheSet(trailActiveId(), snapshotFromLiveState()); // freeze the map we're leaving
+  ui.roaming = false; // descend is diegetic — the players come along
   if (cacheHas(id)) applyLoadedSnapshot(cacheGet(id)); // warm
   else await loadMapById(id); // cold
   trailPush(id);
+  ui.tableMapId = id; // the table now shows this map
   updateMapNavUI();
 }
 
@@ -1309,13 +1318,61 @@ function ascend() {
   if (trailDepth() <= 1) return; // at the root — nowhere up to go
   cacheSet(trailActiveId(), snapshotFromLiveState()); // freeze before leaving
   trailPop();
+  ui.roaming = false; // ascend brings the players up too
   applyLoadedSnapshot(cacheGet(trailActiveId()));
+  ui.tableMapId = trailActiveId();
+  updateMapNavUI();
+}
+
+// GM-only flat fast-switch (no diegesis): jump to ANY saved map to prep or orient, WITHOUT moving the
+// players' table. Off the table's map it sets ui.roaming, which suppresses every player broadcast, so
+// the table stays frozen on its current map and GM prep can't leak. A flat jump isn't a descent, so
+// the trail resets to just this map — leaving a stale trail would make the Up button lie. Selecting
+// the on-table map again lands roaming=false and re-syncs. Travel between maps is diegetic and lives
+// elsewhere; this is a GM convenience only.
+async function jumpToMap(id) {
+  if (!id || (trailActiveId() === id && !ui.roaming)) return;
+  if (trailActiveId()) cacheSet(trailActiveId(), snapshotFromLiveState()); // freeze the map we're leaving
+  ui.roaming = id !== ui.tableMapId; // off the table's map → keep the table frozen
+  if (cacheHas(id)) applyLoadedSnapshot(cacheGet(id)); // warm
+  else await loadMapById(id); // cold
+  trailReset(id); // flat jump: fresh trail, no parent to walk up to
   updateMapNavUI();
 }
 
 // Enable the Up control only when there is a parent to return to.
 function updateMapNavUI() {
   if (controls.mapUp) controls.mapUp.disabled = trailDepth() <= 1;
+  populateMapJump();
+}
+
+// Fill the GM fast-switch dropdown with every saved map (alphabetical). The map on the players' table
+// is marked, and a roaming jump shows a leading "(roaming)" so the GM always knows the table isn't
+// following. The current map is the selected value.
+async function populateMapJump() {
+  const select = controls.mapJump;
+  if (!select || isPlayer) return;
+  let records = [];
+  try {
+    records = await listSessionRecords();
+  } catch {
+    records = [];
+  }
+  const here = trailActiveId();
+  const onTable = ui.tableMapId;
+  select.replaceChildren();
+  records
+    .sort((a, b) => (a.name || "").localeCompare(b.name || ""))
+    .forEach((r) => {
+      const opt = document.createElement("option");
+      opt.value = r.id;
+      const name = r.name || r.id;
+      opt.textContent = r.id === onTable ? `${name} ● on table` : name;
+      if (r.id === here) opt.selected = true;
+      select.appendChild(opt);
+    });
+  // A roaming jump means the GM is off the table's map — surface it on the control itself.
+  select.classList.toggle("roaming", !!ui.roaming);
 }
 
 async function loadLibraryMap(id) {
