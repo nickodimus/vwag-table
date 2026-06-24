@@ -6,7 +6,7 @@
  */
 
 import {
-  canvas, channel, controls, hooks, isPlayer, state, tools, uuid,
+  canvas, channel, controls, hooks, isPlayer, state, tools, ui, uuid,
   peerWindow,
 } from "./state.js";
 import {
@@ -85,7 +85,7 @@ function snapPlayerViewToGM(sync) {
 }
 
 function broadcastAssets() {
-  if (isPlayer) return;
+  if (isPlayer || ui.roaming) return;
   // The table shows the active floor. When it's pinned to a floor the GM isn't viewing, send that
   // floor's image — records carry their bytes at runtime (hydrateFloorImages). When the table
   // follows the GM (the common case), the live current-floor image is freshest, so use it.
@@ -143,13 +143,13 @@ function sanitizedState() {
 }
 
 function broadcastState() {
-  if (isPlayer) return;
+  if (isPlayer || ui.roaming) return; // while the GM roams to another map for prep, the table stays put
   relay({ type: "sync", state: sanitizedState() });
 }
 
 // Lightweight view-only message, coalesced to one per frame for smooth pan/zoom.
 function broadcastView() {
-  if (isPlayer) return;
+  if (isPlayer || ui.roaming) return;
   if (viewSyncQueued) return;
   viewSyncQueued = true;
   requestAnimationFrame(() => {

@@ -1219,6 +1219,12 @@ input:disabled {
   height: 100%;
 }
 
+/* GM fast-switch: accent the control while roaming so it's obvious the table isn't following. */
+#mapJump.roaming {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
 /* ---- Floor panel controls in sidebar ---- */
 .floor-add-row {
   display: grid;
