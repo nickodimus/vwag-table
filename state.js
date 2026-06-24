@@ -102,6 +102,7 @@ const controls = {
   losEnabled: document.getElementById("losEnabled"),
   losOptions: document.getElementById("losOptions"),
   loadLibrary: document.getElementById("loadLibrary"),
+  mapUp: document.getElementById("mapUp"),
   saveSession: document.getElementById("saveSession"),
   openPlayer: document.getElementById("openPlayer"),
   exportLibrary: document.getElementById("exportLibrary"),
@@ -405,6 +406,12 @@ const state = {
   // drives view.rotation; the player can be rotated independently via playerView.rotation.
   view: { scale: 1, cx: 0, cy: 0, rotation: 0 },
   playerView: { matchDM: true, scale: 1, cx: 0, cy: 0, rotation: 0 },
+  // Containment-trail metadata mirrored from the active map's module record. mapKind gates which
+  // subsystems run (chunk 3); parentId positions this map in the breadcrumb; source marks local vs
+  // fallon-served (chunk 4). Round-trip through splitState/mergeModuleSession/loadSnapshot.
+  mapKind: "battle",
+  parentId: null,
+  source: "local",
   currentFloorId: INITIAL_FLOOR_ID,
   activeFloorId: INITIAL_FLOOR_ID, // the floor the players' table is showing; == currentFloorId unless the table is pinned
   floors: [makeFloor(INITIAL_FLOOR_ID)],

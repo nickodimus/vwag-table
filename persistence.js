@@ -68,11 +68,13 @@ function migrateState(snapshot, version) {
 }
 
 // Fill each floor's imageData back in from the image store (records carry only imageId).
-async function hydrateFloorImages(snapshot) {
+// getImg is injectable so the map-navigation path can route image fetches through content.js's
+// resolver (memory -> IndexedDB -> fallon); it defaults to the local store for every other caller.
+async function hydrateFloorImages(snapshot, getImg = getImage) {
   const floors = Array.isArray(snapshot.floors) ? snapshot.floors : [];
   for (const floor of floors) {
     if (!floor.imageData && floor.imageId) {
-      floor.imageData = await getImage(floor.imageId);
+      floor.imageData = await getImg(floor.imageId);
     }
   }
   const current = floors.find((f) => f.id === (snapshot.currentFloorId || (floors[0] && floors[0].id)));
@@ -116,6 +118,12 @@ function splitState(stateObj) {
     measure: JSON.parse(JSON.stringify(stateObj.measure || {})),
     stairColor: stateObj.stairColor || "#ffffff",
     floors: moduleFloors,
+    // Containment-trail metadata (chunk 1). mapKind gates which subsystems run (chunk 3);
+    // parentId positions this map under another for the breadcrumb; source distinguishes a
+    // locally-authored map from one served by fallon (chunk 4). Defaults keep old saves valid.
+    mapKind: stateObj.mapKind || "battle",
+    parentId: stateObj.parentId ?? null,
+    source: stateObj.source || "local",
     // Forward-empty — filled by later steps (room pins, VWAG linkage). Obstacle geometry and
     // placed lights are per-floor (module.floors[].obstacles / .lights), authored on the map.
     pins: [],
@@ -174,6 +182,9 @@ function mergeModuleSession(module, session) {
     grid: JSON.parse(JSON.stringify(module.grid || {})),
     measure: JSON.parse(JSON.stringify(module.measure || {})),
     stairColor: module.stairColor || "#ffffff",
+    mapKind: module.mapKind || "battle",
+    parentId: module.parentId ?? null,
+    source: module.source || "local",
     blackout: Boolean(session.blackout),
     los: JSON.parse(JSON.stringify(session.los || { enabled: false })),
     splash: JSON.parse(JSON.stringify(session.splash || { enabled: false, imageData: "", imageName: "" })),
@@ -273,7 +284,43 @@ function deriveCellGrid(gridObj, measureObj, floor) {
   };
 }
 
+// Freeze the current live state into a loadSnapshot-shaped object for the warm map cache (the
+// inverse of loadSnapshot, mirroring mergeModuleSession's output). captureCurrentFloor() flushes
+// the active floor's live edits into its record first; floors are returned BY REFERENCE so the
+// hydrated image bytes survive in the cache and pop-back stays instant. The cached snapshot keeps
+// pointing at this floors array even after the next map reassigns state.floors.
+function snapshotFromLiveState() {
+  captureCurrentFloor();
+  return {
+    grid: JSON.parse(JSON.stringify(state.grid)),
+    measure: JSON.parse(JSON.stringify(state.measure || {})),
+    stairColor: state.stairColor || "#ffffff",
+    mapKind: state.mapKind || "battle",
+    parentId: state.parentId ?? null,
+    source: state.source || "local",
+    blackout: Boolean(state.blackout),
+    los: JSON.parse(JSON.stringify(state.los || { enabled: false })),
+    splash: JSON.parse(JSON.stringify(state.splash || { enabled: false, imageData: "", imageName: "" })),
+    initiative: JSON.parse(JSON.stringify(state.initiative || {})),
+    playerView: JSON.parse(JSON.stringify(state.playerView || {})),
+    fog: {
+      rooms: [],
+      strokes: [],
+      gmColor: state.fog?.gmColor || "#080909",
+      gmOpacity: state.fog?.gmOpacity ?? DEFAULT_GM_FOG_OPACITY,
+      toolSize: state.fog?.toolSize ?? 70,
+      toolShape: state.fog?.toolShape ?? "round",
+      stampShape: state.fog?.stampShape ?? "rectangle",
+    },
+    currentFloorId: state.currentFloorId,
+    activeFloorId: state.activeFloorId || state.currentFloorId,
+    floorPosition: state.floorPosition || 1,
+    floorCount: state.floorCount || (Array.isArray(state.floors) ? state.floors.length : 1),
+    floors: state.floors,
+  };
+}
+
 export {
   validateSessionData, migrateState, hydrateFloorImages, mergeModuleSession, migrateMapsToModulesAndSessions, captureCurrentFloor, splitState, makeMapId,
-  deriveCellGrid,
+  deriveCellGrid, snapshotFromLiveState,
 };
