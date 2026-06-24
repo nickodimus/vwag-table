@@ -16,7 +16,7 @@ import {
   DB_NAME, DB_VERSION, MAP_STORE, IMAGE_STORE, MODULE_STORE, SESSION_STORE, TOKEN_STORE, FOG_MAX_EDGE,
   HISTORY_LIMIT, STAIRS_ICON_NEUTRAL, STAIRS_ICON_UP, STAIRS_ICON_DOWN, FEET_PER_CELL, MEASURE_UNITS, PING_DURATION, controls,
   CONDITIONS,
-  MAP_LINK_ICONS, MAP_LINK_DEFAULT_ICON,
+  MAP_LINK_ICONS, MAP_LINK_DEFAULT_ICON, MAP_KIND_CAPS,
   isPlayer, DEFAULT_GM_FOG_OPACITY, INITIAL_FLOOR_ID, makeFloor, state, normalizeInput, uuid, escapeHtml,
   playerCam, tools, cur, hooks, sel, fogBuf, peerWindow,
   castCache, castFrameKeys, lightFrameKeys,
@@ -666,6 +666,10 @@ function bindControls() {
   controls.measureMode.addEventListener("click", () => setMode("measure"));
   controls.stairMode?.addEventListener("click", () => setMode("stair"));
   controls.mapLinkMode?.addEventListener("click", () => setMode("mapLink"));
+  controls.mapKindSelect?.addEventListener("change", () => {
+    state.mapKind = controls.mapKindSelect.value;
+    applyMapKindCaps(state.mapKind); // live; persists on next save like any other map edit
+  });
   controls.drawMode?.addEventListener("click", () => setMode("draw"));
   controls.lightMode?.addEventListener("click", () => setMode("light"));
   controls.obstacleKind?.addEventListener("change", () => { tools.obstacleKind = controls.obstacleKind.value; });
@@ -1560,6 +1564,17 @@ function applyAssets(message) {
 
 
 
+// Toggle floors/initiative chrome to match the active map's kind (chunk 3). The hiding itself is CSS
+// (.cap-no-floors / .cap-no-initiative); this just flips the body classes, so it overrides the live
+// show/hide logic without touching it. Called on every map load (via syncControlsFromState) and when
+// the Map type selector changes.
+function applyMapKindCaps(kind) {
+  const caps = MAP_KIND_CAPS[kind] || MAP_KIND_CAPS.battle;
+  document.body.classList.toggle("cap-no-floors", !caps.floors);
+  document.body.classList.toggle("cap-no-initiative", !caps.initiative);
+  if (!caps.floors && ui.mode === "stair") setMode("pan"); // stairs only link floors — meaningless here
+}
+
 function syncControlsFromState() {
   if (isPlayer) return;
   controls.gridEnabled.checked = state.grid.enabled;
@@ -1569,6 +1584,8 @@ function syncControlsFromState() {
   controls.gridOffsetX.value = state.grid.offsetX;
   controls.gridOffsetY.value = state.grid.offsetY;
   controls.gridColor.value = state.grid.color;
+  if (controls.mapKindSelect) controls.mapKindSelect.value = state.mapKind || "battle";
+  applyMapKindCaps(state.mapKind || "battle");
   controls.gridOpacity.value = state.grid.opacity;
   controls.splashEnabled.checked = state.splash.enabled;
   controls.blackoutEnabled.checked = state.blackout;
