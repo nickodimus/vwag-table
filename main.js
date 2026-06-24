@@ -67,6 +67,9 @@ import {
 import {
   render, playerFrameCorners,
 } from "./render.js";
+import {
+  apiFetch, isLoggedIn,
+} from "./api.js";
 async function saveSession() {
   captureCurrentFloor();
   if (!state.floors.some((floor) => floor.imageData)) {
@@ -850,6 +853,7 @@ function bindControls() {
     addCombatant();
   });
   controls.initAddTokens?.addEventListener("click", addTokensToInitiative);
+  controls.initImportChars?.addEventListener("click", importMyCharacters);
   controls.initList?.addEventListener("click", (event) => {
     const row = event.target.closest("[data-id]");
     if (!row) return;
@@ -3123,6 +3127,119 @@ function addTokensToInitiative() {
   } else {
     updateInitiativeUI();
     broadcastState();
+  }
+}
+
+// Pull the active game's characters from VWAG (the Willow bridge) and drop each as a player
+// token on the open floor, linked into the initiative tracker with real HP. Mirrors the
+// addTokensToInitiative link pattern (combatant.tokenId -> token.id) but seeds HP from the
+// character sheet and initiative from the Dex modifier. Deduped by name, so a second run only
+// pulls characters not already in the tracker.
+//
+// Path A: GET /api/session/gm-context already assembles the active game's party (Bearer-authed),
+// so no new VWAG endpoint is needed — we read .party and ignore the rest of the payload. The
+// party is the active game's roster (identity auth only — per-character ownership is deferred in
+// VWAG), which for a solo GM is exactly "my characters."
+async function importMyCharacters() {
+  if (isPlayer) return;                       // GM view only
+  const btn = controls.initImportChars;
+  const original = btn ? btn.textContent : "";
+  if (!isLoggedIn()) {
+    flashImportStatus(btn, "Log in to Victen Worhl first", original);
+    return;
+  }
+  if (btn) { btn.disabled = true; btn.textContent = "Importing…"; }
+
+  let party;
+  try {
+    const ctx = await apiFetch("/api/session/gm-context");
+    party = Array.isArray(ctx?.party) ? ctx.party : [];
+  } catch (err) {
+    const msg = err.status === 401
+      ? "Session expired — log in again"
+      : "Can't reach Victen Worhl. Is fallon online?";
+    flashImportStatus(btn, msg, original);
+    return;
+  }
+
+  // Dedupe against names already in the tracker (case-insensitive).
+  const have = new Set(
+    state.initiative.combatants.map((c) => (c.name || "").trim().toLowerCase()),
+  );
+  const fresh = party.filter((ch) => {
+    const name = (ch.character_name || "").trim();
+    return name && !have.has(name.toLowerCase());
+  });
+  if (!fresh.length) {
+    const msg = party.length ? "All characters already imported" : "No active game / characters";
+    flashImportStatus(btn, msg, original);
+    return;
+  }
+
+  // Fan the new tokens around the viewport center so they don't stack on one cell.
+  pushHistory();
+  const spacing = pxPerCellNative() * 1.5;
+  const cx = state.view.cx;
+  const cy = state.view.cy;
+  fresh.forEach((ch, i) => {
+    const name = ch.character_name.trim();
+    const pos = snapNative({
+      x: cx + (i - (fresh.length - 1) / 2) * spacing,
+      y: cy,
+    });
+    const tokenId = uuid();
+    state.tokens.push({
+      id: tokenId,
+      x: pos.x,
+      y: pos.y,
+      cells: 1,
+      color: "#3fb950",          // player green, matches the type ring
+      label: name,
+      type: "player",
+      light: 0,
+      image: "",
+      conditions: [],
+      exhaustion: 0,
+      down: false,
+    });
+    const dex = Number(ch.dex_score);
+    const initMod = Number.isFinite(dex) ? Math.floor((dex - 10) / 2) : 0;
+    const hp = ch.current_hp == null ? null : Number(ch.current_hp);
+    const maxHp = ch.max_hp == null ? null : Number(ch.max_hp);
+    state.initiative.combatants.push({
+      id: uuid(),
+      name,
+      type: "player",
+      init: initMod,             // Dex-mod default; players overwrite with their real rolls
+      hp,
+      maxHp,
+      tokenId,
+    });
+  });
+
+  if (!state.initiative.active) {
+    setInitiativeActive(true);   // opens the panel, re-measures layout, updates UI, broadcasts
+  } else {
+    updateInitiativeUI();
+    broadcastState();
+  }
+  renderAndSync();               // paint the new tokens + push one state snapshot to the player
+
+  flashImportStatus(
+    btn,
+    `Imported ${fresh.length} character${fresh.length === 1 ? "" : "s"}`,
+    original,
+  );
+}
+
+// Briefly show a status message on the import button, then restore its label and re-enable it.
+// Keeps the feedback self-contained (no new DOM).
+function flashImportStatus(btn, msg, restore) {
+  if (!btn) return;
+  btn.disabled = false;
+  btn.textContent = msg;
+  if (restore !== undefined) {
+    setTimeout(() => { btn.textContent = restore; }, 2200);
   }
 }
 
