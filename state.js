@@ -272,6 +272,7 @@ const controls = {
   initList: document.getElementById("initList"),
   initAddForm: document.getElementById("initAddForm"),
   initAddTokens: document.getElementById("initAddTokens"),
+  initImportChars: document.getElementById("initImportChars"),
   initName: document.getElementById("initName"),
   initRoll: document.getElementById("initRoll"),
   initHp: document.getElementById("initHp"),
