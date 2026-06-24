@@ -21,6 +21,13 @@
 // Base URL is a single constant. Today it points at the LAN (plain HTTP, fine
 // on the off-grid wire). When the vwag.worhl.net TLS vhost lands, this one line
 // changes to https://vwag.worhl.net — no other edit.
+//
+// Chunk 4 (online tier): this module also registers a remote content source into
+// content.js's resolver (fetchModule / fetchImage). Any map or image not found
+// locally is then pulled from fallon and cached down into IndexedDB — fallon is
+// the source of truth, but once a map has been opened it plays fully off-grid.
+
+import { registerRemoteSource } from "./content.js";
 
 const FALLON_BASE = "http://10.10.0.10:8002";
 
@@ -143,6 +150,58 @@ export async function apiFetch(path, opts = {}) {
   }
   return resp.status === 204 ? null : resp.json();
 }
+
+
+// ── remote content source (the resolver's fallon tier) ───────────────────────
+// content.js's resolver calls these when a module/image isn't found locally and
+// caches any hit down into IndexedDB, so the next resolve — and all off-grid
+// play — is local. A thrown error (404 / network) is the resolver's signal to
+// fall through to local-only, so these don't swallow failures themselves.
+
+function _blobToDataURL(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(blob);
+  });
+}
+
+const remoteSource = {
+  // GET /api/vtt/modules/{id} -> { ..., data: <browser module record> }. The
+  // resolver wants the record itself, which fallon stores in the `data` column.
+  async fetchModule(id) {
+    const row = await apiFetch(`/api/vtt/modules/${encodeURIComponent(id)}`);
+    return row && row.data ? row.data : null;
+  },
+  // GET /api/vtt/images/{id} -> { ..., url }. Bytes live at FALLON_BASE+url
+  // (/static/vtt/...). Pull them and hand back a dataURL — the form the image
+  // store and renderer use.
+  async fetchImage(imageId) {
+    const meta = await apiFetch(`/api/vtt/images/${encodeURIComponent(imageId)}`);
+    if (!meta || !meta.url) return "";
+    const resp = await fetch(`${FALLON_BASE}${meta.url}`);
+    if (!resp.ok) return "";
+    return _blobToDataURL(await resp.blob());
+  },
+};
+
+// The map catalog for the "From fallon" picker — lightweight rows (no data blob):
+//   [{ id, name, map_kind, parent_id, updated_at }]. Returns [] on any failure
+// (off-grid / fallon down) so the picker shows empty instead of throwing.
+export async function listRemoteModules() {
+  try {
+    const rows = await apiFetch("/api/vtt/modules");
+    return Array.isArray(rows) ? rows : [];
+  } catch {
+    return [];
+  }
+}
+
+// Light up the resolver's fallon tier. The player view (?view=player) receives
+// its state over BroadcastChannel and never resolves content itself, so it stays
+// network-silent — only the GM side registers.
+if (!IS_PLAYER) registerRemoteSource(remoteSource);
 
 
 // ── injected styles ──────────────────────────────────────────────────────────
