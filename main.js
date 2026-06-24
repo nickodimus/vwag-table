@@ -75,7 +75,7 @@ import {
   render, playerFrameCorners,
 } from "./render.js";
 import {
-  apiFetch, isLoggedIn,
+  apiFetch, isLoggedIn, listRemoteModules,
 } from "./api.js";
 async function saveSession() {
   captureCurrentFloor();
@@ -580,6 +580,15 @@ function bindControls() {
       const id = controls.mapJump.value;
       if (id) jumpToMap(id).catch((e) => window.alert(`Could not jump to that map: ${e.message}`));
     });
+  }
+  if (controls.fallonJump) {
+    controls.fallonJump.addEventListener("focus", populateFallonJump); // refresh fallon's catalog on open
+    controls.fallonJump.addEventListener("change", () => {
+      const id = controls.fallonJump.value;
+      // Reset to the placeholder either way, so the same map can be re-pulled.
+      if (id) openRemoteMap(id).finally(() => { controls.fallonJump.value = ""; });
+    });
+    populateFallonJump(); // seed it once at startup (empty/disabled if fallon is unreachable)
   }
   updateMapNavUI();
   controls.saveSession.addEventListener("click", saveSession);
@@ -1373,6 +1382,77 @@ async function populateMapJump() {
     });
   // A roaming jump means the GM is off the table's map — surface it on the control itself.
   select.classList.toggle("roaming", !!ui.roaming);
+}
+
+// Open a map served by fallon. The local fast-switch (jumpToMap) only knows maps
+// that already have a local session; a fallon map has none until it's opened
+// here. resolveModule pulls the module from fallon and content.js caches it (and
+// its images, via hydrateFloorImages below) down into IndexedDB on the way
+// through. We synthesise a local session bound to the module if one doesn't
+// exist, then hand off to the normal local load path. After this first open the
+// map is fully local — off-grid safe — and appears in the regular library and
+// fast-switch like any other map.
+async function openRemoteMap(id) {
+  if (!id || isPlayer) return;
+  let module;
+  try {
+    module = await resolveModule(id); // memory -> IndexedDB -> fallon (cache-down)
+  } catch {
+    module = null;
+  }
+  if (!module) {
+    window.alert("Couldn't load that map from Victen Worhl. Is fallon online?");
+    return;
+  }
+  if (!(await getSessionRecord(id))) {
+    const now = new Date().toISOString();
+    await saveSessionRecord({
+      id,
+      moduleId: id,
+      app: APP_NAME,
+      version: SAVE_FILE_VERSION,
+      kind: "session",
+      name: module.name || id,
+      savedAt: now,
+      blackout: false,
+      floors: [], // empty play-state; mergeModuleSession fills per-floor defaults
+    });
+  }
+  try {
+    if (trailActiveId()) cacheSet(trailActiveId(), snapshotFromLiveState()); // freeze the map we're leaving
+    ui.roaming = id !== ui.tableMapId; // a pulled-down prep map keeps the table frozen
+    await loadMapById(id); // resolves the local session now; hydrates images via the resolver
+    trailReset(id); // flat open: fresh trail
+    updateMapNavUI();
+  } catch (error) {
+    window.alert(`Could not open this map: ${error.message}`);
+  }
+}
+
+// Fill the "From fallon" picker with the catalog fallon is serving. Kept separate
+// from the local fast-switch (populateMapJump) on purpose: this is the REMOTE
+// catalog, and picking one pulls it down into the local library. Empty + disabled
+// when fallon is unreachable, so off-grid the picker simply shows nothing.
+async function populateFallonJump() {
+  const select = controls.fallonJump;
+  if (!select || isPlayer) return;
+  const rows = await listRemoteModules();
+  select.replaceChildren();
+  const placeholder = document.createElement("option");
+  placeholder.value = "";
+  placeholder.textContent = rows.length ? "Pull a map from fallon…" : "fallon unreachable";
+  placeholder.disabled = true;
+  placeholder.selected = true;
+  select.appendChild(placeholder);
+  rows
+    .sort((a, b) => (a.name || a.id || "").localeCompare(b.name || b.id || ""))
+    .forEach((r) => {
+      const opt = document.createElement("option");
+      opt.value = r.id;
+      opt.textContent = r.name || r.id;
+      select.appendChild(opt);
+    });
+  select.disabled = rows.length === 0;
 }
 
 async function loadLibraryMap(id) {
