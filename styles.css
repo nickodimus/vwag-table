@@ -2049,6 +2049,18 @@ input:disabled {
 .maplink-icon-btn.active svg path {
   stroke: var(--accent);
 }
+/* Map-kind capability gates (chunk 3): a world/town map hides floors + initiative chrome.
+   display:none !important overrides the live show/hide logic without touching it. */
+body.cap-no-floors #floorsSection,
+body.cap-no-floors #floorOverlay,
+body.cap-no-floors #stairMode {
+  display: none !important;
+}
+body.cap-no-initiative #initiativePanel,
+body.cap-no-initiative #initiativeOverlay,
+body.cap-no-initiative #initToggle {
+  display: none !important;
+}
 .condition-extras {
   display: flex;
   align-items: center;

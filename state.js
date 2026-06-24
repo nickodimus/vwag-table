@@ -82,6 +82,17 @@ const MAP_LINK_DEFAULT_ICON = "map-pin";
 // Prebuilt canvas markers, keyed by icon id (mirrors STAIRS_ICON_*).
 const MAP_LINK_ICON_PATHS = Object.fromEntries(MAP_LINK_ICONS.map((i) => [i.id, new Path2D(i.d)]));
 
+// Which subsystems each map kind exposes (chunk 3). A world/region map and a town have no floors and
+// no tactical initiative; only a battlemap does. Driven off the map's mapKind (set from the module
+// record on load, chosen via the Map type selector). Toggled into body classes by applyMapKindCaps;
+// the actual hiding is CSS (.cap-no-floors / .cap-no-initiative) so it overrides the live show/hide
+// logic without touching it. Fog/LOS stay available everywhere — hiding regions is useful on any map.
+const MAP_KIND_CAPS = {
+  world: { floors: false, initiative: false },
+  settlement: { floors: false, initiative: false },
+  battle: { floors: true, initiative: true },
+};
+
 // 5e status conditions (token.conditions holds the active ids). Each glyph is an SVG path in a
 // 24x24 box, stroked like the stair icons; `d` is shared by the canvas markers (tokens.js builds a
 // Path2D) and the authoring grid (index.html buttons, built in main.js from this list). The order
@@ -271,6 +282,7 @@ const controls = {
   stairSelLabel: document.getElementById("stairSelLabel"),
   stairSelDelete: document.getElementById("stairSelDelete"),
   mapLinkMode: document.getElementById("mapLinkMode"),
+  mapKindSelect: document.getElementById("mapKindSelect"),
   mapLinkDialog: document.getElementById("mapLinkDialog"),
   mapLinkTargetSelect: document.getElementById("mapLinkTargetSelect"),
   mapLinkIconGrid: document.getElementById("mapLinkIconGrid"),
@@ -473,7 +485,7 @@ export {
   exploredMasks, lightCache, shell, emptyState, channel, APP_NAME, LEGACY_APP_NAME, SAVE_FILE_VERSION,
   DB_NAME, DB_VERSION, MAP_STORE, IMAGE_STORE, MODULE_STORE, SESSION_STORE, TOKEN_STORE, FOG_MAX_EDGE,
   HISTORY_LIMIT, STAIRS_ICON_NEUTRAL, STAIRS_ICON_UP, STAIRS_ICON_DOWN, FEET_PER_CELL, MEASURE_UNITS, PING_DURATION, controls,
-  MAP_LINK_ICONS, MAP_LINK_ICON_PATHS, MAP_LINK_DEFAULT_ICON,
+  MAP_LINK_ICONS, MAP_LINK_ICON_PATHS, MAP_LINK_DEFAULT_ICON, MAP_KIND_CAPS,
   CONDITIONS, EXHAUSTION_ICON,
   isPlayer, DEFAULT_GM_FOG_OPACITY, INITIAL_FLOOR_ID, makeFloor, state, normalizeInput, uuid, escapeHtml,
   playerCam,
