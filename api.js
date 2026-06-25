@@ -235,6 +235,34 @@ export async function putRemoteImage(imageId, dataURL, width, height) {
   });
 }
 
+// PUT /api/vtt/sessions/{id}. The play-state checkpoint — the session record's
+// full JSON in `data`, with module_id (the FK) + name as columns. fallon 400s if
+// the module isn't published yet; the checkpoint flow publishes it first.
+export async function publishSession(record) {
+  return apiFetch(`/api/vtt/sessions/${encodeURIComponent(record.id)}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      module_id: record.moduleId || record.id,
+      name: record.name ?? null,
+      data: record,
+    }),
+  });
+}
+
+// True if a module already lives on fallon — drives the overwrite confirm. A 404
+// means "new, no confirm needed"; any other error propagates so the caller can
+// treat it as fallon-unreachable.
+export async function remoteModuleExists(id) {
+  try {
+    await apiFetch(`/api/vtt/modules/${encodeURIComponent(id)}`);
+    return true;
+  } catch (err) {
+    if (err.status === 404) return false;
+    throw err;
+  }
+}
+
 // Light up the resolver's fallon tier. The player view (?view=player) receives
 // its state over BroadcastChannel and never resolves content itself, so it stays
 // network-silent — only the GM side registers.
