@@ -1434,9 +1434,10 @@ async function openRemoteMap(id) {
   }
   try {
     if (trailActiveId()) cacheSet(trailActiveId(), snapshotFromLiveState()); // freeze the map we're leaving
-    ui.roaming = id !== ui.tableMapId; // a pulled-down prep map keeps the table frozen
+    ui.roaming = false; // a map pulled from fallon becomes the live table — the players come along
     await loadMapById(id); // resolves the local session now; hydrates images via the resolver
     trailReset(id); // flat open: fresh trail
+    ui.tableMapId = id; // the table now shows this map, so broadcastState reaches the player
     updateMapNavUI();
   } catch (error) {
     window.alert(`Could not open this map: ${error.message}`);
