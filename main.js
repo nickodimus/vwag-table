@@ -593,6 +593,13 @@ function bindControls() {
   if (controls.publishFallon) {
     controls.publishFallon.addEventListener("click", publishToFallon);
   }
+  // Flush autosave on the moments most likely to drop the last few changes: the
+  // tab going hidden (screen sleep, tab switch — fires more reliably than unload)
+  // and the page unloading. autosaveNow() self-guards player view + scratch maps.
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "hidden") flushAutosave();
+  });
+  window.addEventListener("beforeunload", flushAutosave);
   updateMapNavUI();
   controls.saveSession.addEventListener("click", saveSession);
   controls.exportLibrary?.addEventListener("click", exportLibrary);
@@ -2360,11 +2367,67 @@ function fillAllFog() {
 function snapshotFog() {
   return JSON.stringify({ rooms: state.fog.rooms, strokes: state.fog.strokes, tokens: state.tokens, stairs: state.stairs, images: state.images, notes: state.notes });
 }
+// ── Layer 1: local session autosave ───────────────────────────────────────────
+// Play-state (tokens, fog, initiative, positions) was durable only on a manual
+// Save — a foot-gun mid-game, since a tab close or power blip lost everything
+// since the last Save. Every mutation already funnels through pushHistory(), so
+// that's the single hook: it now schedules a debounced write of the SESSION half
+// to IndexedDB under the live map's id. Local-only, off-grid safe. It never
+// rewrites the authored module (floors/stairs/lights — those still need a manual
+// Save), and only fires for a map already in the library (one with a trail id +
+// an existing session record). GM-only; player view is write-silent.
+const AUTOSAVE_DELAY_MS = 1500;
+let autosaveTimer = null;
+let autosaveInFlight = false;
+
+function scheduleAutosave() {
+  if (isPlayer) return;
+  if (autosaveTimer) clearTimeout(autosaveTimer);
+  autosaveTimer = setTimeout(autosaveNow, AUTOSAVE_DELAY_MS);
+}
+
+async function autosaveNow() {
+  autosaveTimer = null;
+  if (isPlayer || autosaveInFlight) return;
+  const id = trailActiveId();
+  if (!id) return; // nothing loaded, or an unsaved scratch map — manual Save first
+
+  autosaveInFlight = true;
+  try {
+    const prev = await getSessionRecord(id);
+    if (!prev) return; // not in the library yet — a manual Save creates the record
+    captureCurrentFloor(); // flush live tokens/fog into the current floor record
+    const { session } = splitState(state);
+    Object.assign(session, {
+      id,
+      moduleId: prev.moduleId || id,
+      app: APP_NAME,
+      version: SAVE_FILE_VERSION,
+      kind: "session",
+      name: prev.name || id,
+      savedAt: new Date().toISOString(),
+    });
+    await saveSessionRecord(session);
+  } catch (err) {
+    console.debug("autosave skipped:", err); // never interrupt play with a save error
+  } finally {
+    autosaveInFlight = false;
+  }
+}
+
+// Cancel the pending debounce and write immediately — used when the tab is
+// hidden or unloading, the moments most likely to drop the last few changes.
+function flushAutosave() {
+  if (autosaveTimer) { clearTimeout(autosaveTimer); autosaveTimer = null; }
+  autosaveNow();
+}
+
 function pushHistory() {
   undoStack.push(snapshotFog());
   if (undoStack.length > HISTORY_LIMIT) undoStack.shift();
   redoStack.length = 0;
   updateUndoButtons();
+  scheduleAutosave(); // persist play-state shortly after this change settles
 }
 function applyFogSnapshot(serialized) {
   const data = JSON.parse(serialized);
