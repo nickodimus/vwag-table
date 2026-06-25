@@ -75,7 +75,7 @@ import {
   render, playerFrameCorners,
 } from "./render.js";
 import {
-  apiFetch, isLoggedIn, listRemoteModules, publishModule, putRemoteImage,
+  apiFetch, isLoggedIn, listRemoteModules, publishModule, putRemoteImage, publishSession, remoteModuleExists,
 } from "./api.js";
 async function saveSession() {
   captureCurrentFloor();
@@ -1490,8 +1490,21 @@ async function publishToFallon() {
     return;
   }
 
-  if (btn) { btn.disabled = true; btn.textContent = "Publishing…"; }
+  // Overwrite confirm — only when this map already lives on fallon. A first-time
+  // checkpoint just goes; re-checkpointing replaces fallon's map AND its saved
+  // session, so the GM confirms. A network error here means fallon's unreachable —
+  // skip the confirm and let the publish below surface it.
+  let exists = false;
+  try { exists = await remoteModuleExists(id); } catch { exists = false; }
+  if (exists && !window.confirm(
+    `"${module.name || id}" is already on fallon. Overwrite it and its saved session with this table's current map and game state?`
+  )) {
+    return;
+  }
+
+  if (btn) { btn.disabled = true; btn.textContent = "Checkpointing…"; }
   try {
+    // 1 — image bytes first, so the module's floor references resolve on the far side.
     const floors = Array.isArray(module.floors) ? module.floors : [];
     for (const floor of floors) {
       if (!floor.imageId) continue;
@@ -1499,7 +1512,13 @@ async function publishToFallon() {
       if (!dataURL) continue; // image already gone from the store — skip, not fatal
       await putRemoteImage(floor.imageId, dataURL, floor.imageWidth, floor.imageHeight);
     }
+    // 2 — the authored module.
     await publishModule(module);
+    // 3 — the play-state session (Fork 2/B: checkpoint bundles it). Autosave keeps
+    //     the local session record fresh, so this pushes the current game up. The
+    //     module above satisfies the FK, so the session PUT lands cleanly.
+    const session = await getSessionRecord(id);
+    if (session) await publishSession(session);
   } catch (err) {
     const msg = err.status === 401
       ? "Session expired — log in again"
@@ -1507,7 +1526,7 @@ async function publishToFallon() {
     flashImportStatus(btn, msg, original);
     return;
   }
-  flashImportStatus(btn, `Published "${module.name || id}"`, original);
+  flashImportStatus(btn, `Checkpointed "${module.name || id}"`, original);
 }
 
 async function loadLibraryMap(id) {
