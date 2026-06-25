@@ -3813,6 +3813,27 @@ async function importMyCharacters() {
       updateInitiativeUI();
     }
   } else {
+    // World/settlement: ensure a single blue "Party" token marks the group's
+    // position. Tagged party:true so a re-import finds its own token and never
+    // litters duplicates; any hand-placed tokens are left untouched.
+    if (!state.tokens.some((t) => t.party)) {
+      const pos = snapNative({ x: cx, y: cy });
+      state.tokens.push({
+        id: uuid(),
+        x: pos.x,
+        y: pos.y,
+        cells: 1,
+        color: "#3b82f6",         // party blue
+        label: "Party",
+        type: "player",
+        party: true,              // the single auto-dropped party-position marker
+        light: 0,
+        image: "",
+        conditions: [],
+        exhaustion: 0,
+        down: false,
+      });
+    }
     refreshPartyRoster();          // GM-side parity; the player renders the roster from the synced combatants
   }
   renderAndSync();               // paint + push one state snapshot to the player
