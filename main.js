@@ -917,6 +917,7 @@ function bindControls() {
   });
   controls.initAddTokens?.addEventListener("click", addTokensToInitiative);
   controls.initImportChars?.addEventListener("click", importMyCharacters);
+  controls.importPartyWorld?.addEventListener("click", importMyCharacters);
   controls.initList?.addEventListener("click", (event) => {
     const row = event.target.closest("[data-id]");
     if (!row) return;
@@ -3719,7 +3720,11 @@ function addTokensToInitiative() {
 // VWAG), which for a solo GM is exactly "my characters."
 async function importMyCharacters() {
   if (isPlayer) return;                       // GM view only
-  const btn = controls.initImportChars;
+  const caps = MAP_KIND_CAPS[state.mapKind] || MAP_KIND_CAPS.battle;
+  // Two entry buttons: the initiative panel's "Import my characters" on battle maps,
+  // and the Map-section "Import party" on world/settlement maps (where the initiative
+  // panel — and its button — are hidden). Flash status on whichever one is showing.
+  const btn = caps.initiative ? controls.initImportChars : controls.importPartyWorld;
   const original = btn ? btn.textContent : "";
   if (!isLoggedIn()) {
     flashImportStatus(btn, "Log in to Victen Worhl first", original);
@@ -3739,7 +3744,7 @@ async function importMyCharacters() {
     return;
   }
 
-  // Dedupe against names already in the tracker (case-insensitive).
+  // Dedupe against names already in the party list (case-insensitive).
   const have = new Set(
     state.initiative.combatants.map((c) => (c.name || "").trim().toLowerCase()),
   );
@@ -3753,36 +3758,42 @@ async function importMyCharacters() {
     return;
   }
 
-  // Fan the new tokens around the viewport center so they don't stack on one cell.
   pushHistory();
+  // Battle maps: each character also drops a board token (fanned around the viewport
+  // center) wired to its combatant. World/settlement maps: roster entries ONLY — no
+  // tokens, ever — so the single party token the GM placed stays the only marker, and
+  // the player screen reads these combatants to render the Party roster panel.
   const spacing = pxPerCellNative() * 1.5;
   const cx = state.view.cx;
   const cy = state.view.cy;
   fresh.forEach((ch, i) => {
     const name = ch.character_name.trim();
-    const pos = snapNative({
-      x: cx + (i - (fresh.length - 1) / 2) * spacing,
-      y: cy,
-    });
-    const tokenId = uuid();
-    state.tokens.push({
-      id: tokenId,
-      x: pos.x,
-      y: pos.y,
-      cells: 1,
-      color: "#3fb950",          // player green, matches the type ring
-      label: name,
-      type: "player",
-      light: 0,
-      image: "",
-      conditions: [],
-      exhaustion: 0,
-      down: false,
-    });
     const dex = Number(ch.dex_score);
     const initMod = Number.isFinite(dex) ? Math.floor((dex - 10) / 2) : 0;
     const hp = ch.current_hp == null ? null : Number(ch.current_hp);
     const maxHp = ch.max_hp == null ? null : Number(ch.max_hp);
+    let tokenId = null;
+    if (caps.initiative) {
+      tokenId = uuid();
+      const pos = snapNative({
+        x: cx + (i - (fresh.length - 1) / 2) * spacing,
+        y: cy,
+      });
+      state.tokens.push({
+        id: tokenId,
+        x: pos.x,
+        y: pos.y,
+        cells: 1,
+        color: "#3fb950",          // player green, matches the type ring
+        label: name,
+        type: "player",
+        light: 0,
+        image: "",
+        conditions: [],
+        exhaustion: 0,
+        down: false,
+      });
+    }
     state.initiative.combatants.push({
       id: uuid(),
       name,
@@ -3790,17 +3801,20 @@ async function importMyCharacters() {
       init: initMod,             // Dex-mod default; players overwrite with their real rolls
       hp,
       maxHp,
-      tokenId,
+      tokenId,                   // null on world/settlement maps — a roster entry with no token
     });
   });
 
-  if (!state.initiative.active) {
-    setInitiativeActive(true);   // opens the panel, re-measures layout, updates UI, broadcasts
+  if (caps.initiative) {
+    if (!state.initiative.active) {
+      setInitiativeActive(true);   // opens the panel, re-measures layout, updates UI, broadcasts
+    } else {
+      updateInitiativeUI();
+    }
   } else {
-    updateInitiativeUI();
-    broadcastState();
+    refreshPartyRoster();          // GM-side parity; the player renders the roster from the synced combatants
   }
-  renderAndSync();               // paint the new tokens + push one state snapshot to the player
+  renderAndSync();               // paint + push one state snapshot to the player
 
   flashImportStatus(
     btn,
