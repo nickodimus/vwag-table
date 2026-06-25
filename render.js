@@ -133,19 +133,30 @@ function drawMapLinks() {
     ctx.save();
     ctx.translate(x - half + iconPad, y - half + iconPad);
     ctx.scale(iconScale, iconScale);
-    ctx.strokeStyle = "#b3a5f0"; // brand lavender — distinct from the tunable white stair color
-    ctx.lineWidth = 2.4 / (cur.k * cur.ms * iconScale);
     ctx.lineCap = "round";
     ctx.lineJoin = "round";
     const icon = MAP_LINK_ICON_PATHS[link.icon] || MAP_LINK_ICON_PATHS[MAP_LINK_DEFAULT_ICON];
-    if (icon) ctx.stroke(icon);
+    if (icon) {
+      const baseW = 2.4 / (cur.k * cur.ms * iconScale);
+      ctx.strokeStyle = "rgba(0,0,0,0.85)"; // dark halo underneath — pops on bright world terrain
+      ctx.lineWidth = baseW + 2.6 / (cur.k * cur.ms * iconScale);
+      ctx.stroke(icon);
+      ctx.strokeStyle = "#b3a5f0"; // brand lavender on top — pops on dark dungeon floors
+      ctx.lineWidth = baseW;
+      ctx.stroke(icon);
+    }
     ctx.restore();
 
     if (link.label) {
       ctx.save();
-      ctx.font = `600 ${Math.round(half * 0.65)}px Inter, sans-serif`;
+      const fontPx = Math.round(half * 0.65);
+      ctx.font = `600 ${fontPx}px Inter, sans-serif`;
       ctx.textAlign = "center";
       ctx.textBaseline = "top";
+      ctx.lineJoin = "round";
+      ctx.strokeStyle = "rgba(0,0,0,0.85)"; // dark outline so the cream label reads on light terrain
+      ctx.lineWidth = fontPx * 0.18;
+      ctx.strokeText(link.label, x, y + half + sw * 2);
       ctx.fillStyle = "#f4e8c8";
       ctx.fillText(link.label, x, y + half + sw * 2);
       ctx.restore();
