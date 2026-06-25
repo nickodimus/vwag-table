@@ -1752,6 +1752,9 @@ function loadSnapshot(snapshot) {
         .filter(Boolean);
     }
     state.stairs = Array.isArray(snapshot.stairs) ? snapshot.stairs : [];
+    // Map links ride to the player too, so travel markers show on the player screen
+    // (markers only; click-to-descend stays GM-only).
+    state.mapLinks = Array.isArray(snapshot.mapLinks) ? snapshot.mapLinks : [];
     // Obstacles now ride to the player too: the player computes its own line-of-sight locally
     // (cast against these walls), so without them its visibility would be the whole map.
     state.obstacles = Array.isArray(snapshot.obstacles) ? snapshot.obstacles : [];

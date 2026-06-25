@@ -112,7 +112,7 @@ function drawStairs() {
 // read distinctly from the (white, tunable) stairs. Players never see these — the player display
 // just follows when the GM descends.
 function drawMapLinks() {
-  if (isPlayer || !state.mapLinks || !state.mapLinks.length) return;
+  if (!state.mapLinks || !state.mapLinks.length) return;
 
   const cell = gridCellNative();
   const half = cell / 2;
@@ -233,7 +233,7 @@ function render() {
   if (!isPlayer) drawLights();
   if (!isPlayer) drawCastDebug();
   drawStairs(); // GM and player alike, above fog — players need to see a stair to stand on it (show-all for now; FoW-gating is a later refinement)
-  drawMapLinks(); // GM-only; descends into a child map on click (pan mode)
+  drawMapLinks(); // markers show for GM + players; click-to-descend stays GM-only (pan mode)
   if (!isPlayer) drawDraftRoom();
   if (!isPlayer) drawDraftObstacle();
   if (!isPlayer) drawStampDraft();
