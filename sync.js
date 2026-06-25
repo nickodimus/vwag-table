@@ -128,6 +128,7 @@ function sanitizedState() {
   clone.lights = active.lights || [];
   clone.aoes = active.aoes || [];
   clone.images = active.images || [];
+  clone.mapLinks = active.mapLinks || []; // travel points — players see the markers to navigate; descend stays GM-only
   clone.view = active.view ? { ...active.view } : clone.view;
   // Names-only "rest of party" summary: every OTHER floor (vs the active/table floor) that holds
   // player tokens. No total, no table-floor name, no position — the player learns WHERE split-off
