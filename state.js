@@ -287,6 +287,7 @@ const controls = {
   fallonJump: document.getElementById("fallonJump"),
   publishFallon: document.getElementById("publishFallon"),
   pullFallon: document.getElementById("pullFallon"),
+  importPartyWorld: document.getElementById("importPartyWorld"),
   mapLinkDialog: document.getElementById("mapLinkDialog"),
   mapLinkTargetSelect: document.getElementById("mapLinkTargetSelect"),
   mapLinkIconGrid: document.getElementById("mapLinkIconGrid"),

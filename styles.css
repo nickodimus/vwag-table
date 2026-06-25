@@ -2124,6 +2124,12 @@ body.cap-no-initiative #initiativeOverlay,
 body.cap-no-initiative #initToggle {
   display: none !important;
 }
+.world-only {
+  display: none;
+}
+body.cap-no-initiative .world-only {
+  display: block;
+}
 .condition-extras {
   display: flex;
   align-items: center;
