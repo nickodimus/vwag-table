@@ -198,6 +198,43 @@ export async function listRemoteModules() {
   }
 }
 
+
+// ── publish (write path: browser → fallon) ───────────────────────────────────
+// The mirror of the remote source above: these push a locally authored map UP to
+// fallon. Guarded server-side (require_player), so apiFetch must carry a Bearer —
+// callers gate on isLoggedIn() first. apiFetch throws on non-2xx with .status set,
+// so a 401 (token went stale) is distinguishable from fallon being unreachable.
+
+// PUT /api/vtt/modules/{id}. Body mirrors the columns fallon extracts; `data` is
+// the whole browser module record, stored verbatim so a later pull round-trips.
+export async function publishModule(record) {
+  return apiFetch(`/api/vtt/modules/${encodeURIComponent(record.id)}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      name: record.name ?? null,
+      map_kind: record.mapKind || "battle",
+      parent_id: record.parentId ?? null,
+      data: record,
+    }),
+  });
+}
+
+// PUT /api/vtt/images/{id}. The browser holds image bytes as dataURLs already, so
+// we ship the dataURL as-is; fallon decodes it to disk. Named putRemoteImage to
+// avoid colliding with db.js's local putImage (both are imported into main.js).
+export async function putRemoteImage(imageId, dataURL, width, height) {
+  return apiFetch(`/api/vtt/images/${encodeURIComponent(imageId)}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      data_url: dataURL,
+      width: width ?? null,
+      height: height ?? null,
+    }),
+  });
+}
+
 // Light up the resolver's fallon tier. The player view (?view=player) receives
 // its state over BroadcastChannel and never resolves content itself, so it stays
 // network-silent — only the GM side registers.

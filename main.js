@@ -75,7 +75,7 @@ import {
   render, playerFrameCorners,
 } from "./render.js";
 import {
-  apiFetch, isLoggedIn, listRemoteModules,
+  apiFetch, isLoggedIn, listRemoteModules, publishModule, putRemoteImage,
 } from "./api.js";
 async function saveSession() {
   captureCurrentFloor();
@@ -589,6 +589,9 @@ function bindControls() {
       if (id) openRemoteMap(id).finally(() => { controls.fallonJump.value = ""; });
     });
     populateFallonJump(); // seed it once at startup (empty/disabled if fallon is unreachable)
+  }
+  if (controls.publishFallon) {
+    controls.publishFallon.addEventListener("click", publishToFallon);
   }
   updateMapNavUI();
   controls.saveSession.addEventListener("click", saveSession);
@@ -1453,6 +1456,51 @@ async function populateFallonJump() {
       select.appendChild(opt);
     });
   select.disabled = rows.length === 0;
+}
+
+// Publish the in-view map UP to fallon so other tables can pull it (the inverse
+// of openRemoteMap). Mirrors importMyCharacters: GM-only, login-gated with a
+// button-text flash, no modal. Publishes the SAVED record from IndexedDB (not
+// live state) so `data` round-trips byte-identical with what the resolver hands
+// back — author edits go up only after a Save. Images first (so the module's
+// references resolve on the far side), then the module.
+async function publishToFallon() {
+  if (isPlayer) return;
+  const btn = controls.publishFallon;
+  const original = btn ? btn.textContent : "";
+  if (!isLoggedIn()) {
+    flashImportStatus(btn, "Log in to Victen Worhl first", original);
+    return;
+  }
+  const id = trailActiveId() || ui.tableMapId;
+  if (!id) {
+    flashImportStatus(btn, "No map open to publish", original);
+    return;
+  }
+  const module = await getModuleRecord(id);
+  if (!module) {
+    flashImportStatus(btn, "Save this map first", original);
+    return;
+  }
+
+  if (btn) { btn.disabled = true; btn.textContent = "Publishing…"; }
+  try {
+    const floors = Array.isArray(module.floors) ? module.floors : [];
+    for (const floor of floors) {
+      if (!floor.imageId) continue;
+      const dataURL = await getImage(floor.imageId);
+      if (!dataURL) continue; // image already gone from the store — skip, not fatal
+      await putRemoteImage(floor.imageId, dataURL, floor.imageWidth, floor.imageHeight);
+    }
+    await publishModule(module);
+  } catch (err) {
+    const msg = err.status === 401
+      ? "Session expired — log in again"
+      : "Can't reach Victen Worhl. Is fallon online?";
+    flashImportStatus(btn, msg, original);
+    return;
+  }
+  flashImportStatus(btn, `Published "${module.name || id}"`, original);
 }
 
 async function loadLibraryMap(id) {
