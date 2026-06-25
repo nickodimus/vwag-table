@@ -286,6 +286,7 @@ const controls = {
   mapJump: document.getElementById("mapJump"),
   fallonJump: document.getElementById("fallonJump"),
   publishFallon: document.getElementById("publishFallon"),
+  pullFallon: document.getElementById("pullFallon"),
   mapLinkDialog: document.getElementById("mapLinkDialog"),
   mapLinkTargetSelect: document.getElementById("mapLinkTargetSelect"),
   mapLinkIconGrid: document.getElementById("mapLinkIconGrid"),
