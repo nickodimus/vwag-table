@@ -263,6 +263,14 @@ export async function remoteModuleExists(id) {
   }
 }
 
+// GET /api/vtt/sessions/{id} → the checkpointed session record (the browser's
+// session JSON in `data`), or throws .status 404 if fallon has no saved session
+// for this map. Open endpoint (read), so it works without a Bearer.
+export async function fetchRemoteSession(id) {
+  const meta = await apiFetch(`/api/vtt/sessions/${encodeURIComponent(id)}`);
+  return meta ? meta.data : null;
+}
+
 // Light up the resolver's fallon tier. The player view (?view=player) receives
 // its state over BroadcastChannel and never resolves content itself, so it stays
 // network-silent — only the GM side registers.

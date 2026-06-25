@@ -75,7 +75,7 @@ import {
   render, playerFrameCorners,
 } from "./render.js";
 import {
-  apiFetch, isLoggedIn, listRemoteModules, publishModule, putRemoteImage, publishSession, remoteModuleExists,
+  apiFetch, isLoggedIn, listRemoteModules, publishModule, putRemoteImage, publishSession, remoteModuleExists, fetchRemoteSession,
 } from "./api.js";
 async function saveSession() {
   captureCurrentFloor();
@@ -592,6 +592,9 @@ function bindControls() {
   }
   if (controls.publishFallon) {
     controls.publishFallon.addEventListener("click", publishToFallon);
+  }
+  if (controls.pullFallon) {
+    controls.pullFallon.addEventListener("click", pullSessionFromFallon);
   }
   // Flush autosave on the moments most likely to drop the last few changes: the
   // tab going hidden (screen sleep, tab switch — fires more reliably than unload)
@@ -1527,6 +1530,60 @@ async function publishToFallon() {
     return;
   }
   flashImportStatus(btn, `Checkpointed "${module.name || id}"`, original);
+}
+
+// 2b — the mirror of checkpoint: pull a saved session DOWN from fallon onto this
+// table and resume it. Reads are open, so no login needed; GM-only though. The
+// map must already be in view (pull it via "From fallon" first if it's new here).
+// Fork 3-A: openRemoteMap's fresh-start is untouched — this is a separate, explicit,
+// confirmed overwrite of the local session, then a reload into live state.
+async function pullSessionFromFallon() {
+  if (isPlayer) return;
+  const btn = controls.pullFallon;
+  const original = btn ? btn.textContent : "";
+  const id = trailActiveId() || ui.tableMapId;
+  if (!id) {
+    flashImportStatus(btn, "Open a map first", original);
+    return;
+  }
+
+  // Kill any pending local autosave so its debounce can't fire mid-pull and
+  // re-save the about-to-be-replaced state over what we just pulled.
+  if (autosaveTimer) { clearTimeout(autosaveTimer); autosaveTimer = null; }
+
+  let remote;
+  try {
+    remote = await fetchRemoteSession(id);
+  } catch (err) {
+    const msg = err.status === 404
+      ? "No saved session on fallon for this map"
+      : "Can't reach Victen Worhl. Is fallon online?";
+    flashImportStatus(btn, msg, original);
+    return;
+  }
+  if (!remote) {
+    flashImportStatus(btn, "No saved session on fallon for this map", original);
+    return;
+  }
+
+  if (!window.confirm(
+    "Replace this table's current game state (tokens, fog, initiative) with the saved session from fallon? This can't be undone."
+  )) return;
+
+  if (btn) { btn.disabled = true; btn.textContent = "Resuming…"; }
+  try {
+    // Overwrite the local session record under this id (keeping it addressable by
+    // the same map id + module), then reload so live state reflects it. loadMapById
+    // re-resolves the session from IndexedDB, so the overwrite is what it picks up.
+    const local = { ...remote, id, moduleId: remote.moduleId || id, kind: "session" };
+    await saveSessionRecord(local);
+    await loadMapById(id);
+    updateMapNavUI();
+  } catch (err) {
+    flashImportStatus(btn, `Couldn't apply the session: ${err.message}`, original);
+    return;
+  }
+  flashImportStatus(btn, "Resumed from fallon", original);
 }
 
 async function loadLibraryMap(id) {
