@@ -75,7 +75,7 @@ import {
   render, playerFrameCorners,
 } from "./render.js";
 import {
-  apiFetch, isLoggedIn, getUsername, isAdmin, listRemoteModules, publishModule, putRemoteImage, publishSession, remoteModuleExists, fetchRemoteSession, deleteRemoteModule, refreshWhoami,
+  apiFetch, isLoggedIn, getUsername, isAdmin, listRemoteModules, publishModule, putRemoteImage, publishSession, remoteModuleExists, fetchRemoteSession, deleteRemoteModule, refreshWhoami, adoptStoredGuest,
 } from "./api.js";
 async function saveSession() {
   captureCurrentFloor();
@@ -472,6 +472,7 @@ function setup() {
   setupStartScreen();
   if (isPlayer) {
     document.title = "Player Battlemap";
+    adoptStoredGuest();   // seat the guest identity if redirected in from the join gate (no-op otherwise)
     relay({ type: "player-ready" });
   } else {
     bindControls();
