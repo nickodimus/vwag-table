@@ -75,7 +75,7 @@ import {
   render, playerFrameCorners,
 } from "./render.js";
 import {
-  apiFetch, isLoggedIn, listRemoteModules, publishModule, putRemoteImage, publishSession, remoteModuleExists, fetchRemoteSession,
+  apiFetch, isLoggedIn, getUsername, isAdmin, listRemoteModules, publishModule, putRemoteImage, publishSession, remoteModuleExists, fetchRemoteSession, deleteRemoteModule, refreshWhoami,
 } from "./api.js";
 async function saveSession() {
   captureCurrentFloor();
@@ -1501,8 +1501,13 @@ function renderFallonGrid(rows) {
     return;
   }
 
+  const loggedIn = isLoggedIn();
   const sorted = [...rows].sort((a, b) => (a.name || a.id || "").localeCompare(b.name || b.id || ""));
   for (const row of sorted) {
+    // The × shows only when you may actually delete: your own map, or any map if
+    // you're admin. Logged out → never (a null owner must not match a null user).
+    const mine = loggedIn && row.owner && row.owner === getUsername();
+    const canDelete = mine || (loggedIn && isAdmin());
     const card = buildMapCard({
       name: row.name || row.id,
       metaText: row.updated_at ? new Date(row.updated_at).toLocaleString() : "",
@@ -1511,14 +1516,36 @@ function renderFallonGrid(rows) {
         controls.fallonDialog.close();
         openRemoteMap(row.id);
       },
+      onDelete: canDelete ? () => deleteFallonMap(row.id, row.name || row.id) : undefined,
     });
     controls.fallonMapList.appendChild(card);
   }
 }
 
+// Delete a map from fallon for everyone, then refresh the grid in place. Guarded
+// server-side too — this only gates the UI. The confirm spells out the blast radius.
+async function deleteFallonMap(id, name) {
+  if (!window.confirm(
+    `Delete "${name}" from fallon for everyone? This removes the map, its images, and any saved game on the server. This can't be undone.`
+  )) return;
+  try {
+    await deleteRemoteModule(id);
+  } catch (err) {
+    const msg = err.status === 403 ? "That isn't your map to delete."
+      : err.status === 401 ? "Your session expired — log in again."
+      : err.status === 404 ? "That map is already gone from fallon."
+      : "Couldn't reach fallon to delete that map.";
+    window.alert(msg);
+    return;
+  }
+  const rows = await listRemoteModules(); // re-pull and re-render the catalog
+  renderFallonGrid(rows);
+}
+
 async function openFallonDialog() {
   if (isPlayer) return;
   try {
+    await refreshWhoami(); // make sure owner/admin state is current before we decide which × to show
     const rows = await listRemoteModules(); // [] when fallon is unreachable
     if (controls.fallonMapList) controls.fallonMapList.style.setProperty("--map-thumb", mapThumbPx + "px");
     renderFallonGrid(rows);
