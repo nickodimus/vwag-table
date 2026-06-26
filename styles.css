@@ -1442,14 +1442,15 @@ input:disabled {
 
 /* Map picker: a thumbnail grid. Cards carry a downscaled cover image (see ensureThumb
    in main.js — full map PNGs are never painted here). Double-click loads; the corner ×
-   appears on hover and deletes. Content-sized with a 60vh cap, then scrolls — align-content
-   keeps rows at their natural height so cards never get stretched/compressed. */
+   appears on hover and deletes. Height capped to show 6 cards (2 rows of 3); a 7th map
+   pushes row 3 into a peek and the scrollbar appears. align-content:start keeps rows at
+   their natural height so cards are never stretched or compressed. */
 .saved-map-list {
   align-content: start;
   display: grid;
   gap: 12px;
   grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-  max-height: 60vh;
+  max-height: 470px;
   overflow-y: auto;
   padding: 2px;
   scrollbar-gutter: stable;
@@ -1497,7 +1498,6 @@ input:disabled {
   aspect-ratio: 4 / 3;
   background: var(--panel);
   display: flex;
-  flex: 0 0 auto;
   justify-content: center;
   overflow: hidden;
   width: 100%;
@@ -1517,7 +1517,6 @@ input:disabled {
 
 .map-card-name {
   display: block;
-  flex: 0 0 auto;
   font-size: 0.9rem;
   line-height: 1.2;
   overflow: hidden;
@@ -1529,7 +1528,6 @@ input:disabled {
 .map-card-meta {
   color: var(--muted);
   display: block;
-  flex: 0 0 auto;
   font-size: 0.72rem;
   padding: 2px 10px 10px;
 }
