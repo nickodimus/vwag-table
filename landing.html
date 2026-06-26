@@ -1,0 +1,217 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Join the Table — Victen Worhl</title>
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <!--
+    Online tier, Chunk 1 — the guest-join front door (Option 1: a separate page,
+    NOT an auth overlay inside index.html). Apache serves this as the table's
+    DirectoryIndex; it is fully standalone (no module imports), so the gate's
+    concern (who are you / which table) stays separate from the app's concern
+    (render the table).
+
+    Flow: name + 4-digit code -> POST /api/join/redeem (RELATIVE, same-origin:
+    Apache fronts both this page and the API, so no host is hardcoded and it
+    works on LAN and over TLS unchanged). On success, stash the LOCKED redeem
+    contract and hand off to the player view:
+
+        sessionStorage["vwag.guest"] = { token, gameId, name }
+        -> redirect to index.html?view=player
+
+    api.js's adoptStoredGuest() reads that exact key on player-view boot. The
+    stash is sessionStorage (ephemeral, dies with the tab) and deliberately does
+    NOT touch the persistent localStorage["vwag.unique_key"] the GM login uses.
+
+    On any failure the form retries IN PLACE with a friendly line — a wrong code
+    bounces back to the field, never a stack trace.
+  -->
+  <style>
+    :root {
+      --bg: #111313;
+      --panel: #191c1d;
+      --line: #313838;
+      --text: #eef1ef;
+      --muted: #9ba6a4;
+      --brand: #7c3aed;
+      --brand-bright: #a78bfa;
+      --on-brand: #ffffff;
+      --danger: #d66a5f;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      display: grid;
+      place-items: center;
+      padding: 24px;
+    }
+    .card {
+      width: min(92vw, 400px);
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 28px;
+    }
+    .brand { display: block; width: 100%; max-width: 300px; margin: 0 auto 4px; }
+    .tagline {
+      text-align: center;
+      color: var(--muted);
+      font-size: 0.9rem;
+      font-style: italic;
+      margin: 0 0 22px;
+    }
+    form { display: grid; gap: 16px; margin: 0; }
+    .field { display: grid; gap: 6px; }
+    label { font-size: 0.8rem; color: var(--muted); }
+    input {
+      background: var(--bg);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      color: var(--text);
+      min-height: 44px;
+      padding: 0 14px;
+      font-size: 1rem;
+      width: 100%;
+    }
+    input:focus { outline: none; border-color: var(--brand-bright); }
+    #code {
+      letter-spacing: 0.4em;
+      text-align: center;
+      font-size: 1.4rem;
+      font-variant-numeric: tabular-nums;
+    }
+    .status {
+      min-height: 1.2em;
+      font-size: 0.85rem;
+      text-align: center;
+      color: var(--muted);
+    }
+    .status.error { color: var(--danger); }
+    button {
+      background: var(--brand);
+      border: none;
+      border-radius: 10px;
+      color: var(--on-brand);
+      font-weight: 700;
+      min-height: 48px;
+      font-size: 1rem;
+      cursor: pointer;
+    }
+    button:disabled { opacity: 0.6; cursor: default; }
+  </style>
+</head>
+<body>
+  <main class="card">
+    <svg class="brand" viewBox="0 0 640 180" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Victen Worhl Table">
+      <text x="320" y="88" text-anchor="middle" font-family="'EB Garamond', Garamond, 'Adobe Garamond Pro', Georgia, 'Times New Roman', serif" font-weight="700" font-size="78" letter-spacing="2" fill="var(--brand-bright)">VICTEN WORHL</text>
+      <text x="320" y="148" text-anchor="middle" font-family="'EB Garamond', Garamond, 'Adobe Garamond Pro', Georgia, 'Times New Roman', serif" font-weight="700" font-size="32" letter-spacing="16" fill="var(--brand)">TABLE</text>
+    </svg>
+    <p class="tagline">Enter your name and table code to join the game.</p>
+
+    <form id="joinForm" novalidate>
+      <div class="field">
+        <label for="name">Your name</label>
+        <input id="name" name="name" type="text" autocomplete="name"
+               autocapitalize="words" maxlength="100" required>
+      </div>
+      <div class="field">
+        <label for="code">Table code</label>
+        <input id="code" name="code" type="text" inputmode="numeric"
+               pattern="[0-9]*" maxlength="4" autocomplete="off"
+               aria-describedby="status" required>
+      </div>
+      <p class="status" id="status" role="status" aria-live="polite"></p>
+      <button id="submit" type="submit">Join Table</button>
+    </form>
+  </main>
+
+  <script>
+    const form     = document.getElementById("joinForm");
+    const nameEl   = document.getElementById("name");
+    const codeEl   = document.getElementById("code");
+    const statusEl = document.getElementById("status");
+    const submitEl = document.getElementById("submit");
+
+    function setStatus(msg, isError) {
+      statusEl.textContent = msg || "";
+      statusEl.className = "status" + (isError ? " error" : "");
+    }
+
+    // Keep the code field strictly numeric, max 4 digits, as the user types.
+    codeEl.addEventListener("input", () => {
+      codeEl.value = codeEl.value.replace(/\D/g, "").slice(0, 4);
+    });
+
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+
+      const name = nameEl.value.trim();
+      const code = codeEl.value.trim();
+      if (!name) { setStatus("Enter your name.", true); nameEl.focus(); return; }
+      if (!code) { setStatus("Enter your table code.", true); codeEl.focus(); return; }
+
+      submitEl.disabled = true;
+      setStatus("Joining\u2026", false);
+
+      let resp;
+      try {
+        // RELATIVE + same-origin: Apache serves this page and proxies /api to
+        // the FastAPI on fallon, so no host is baked in.
+        resp = await fetch("/api/join/redeem", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name, code }),
+        });
+      } catch {
+        submitEl.disabled = false;
+        setStatus("Can't reach the table. Try again in a moment.", true);
+        return;
+      }
+
+      if (!resp.ok) {
+        // Wrong / expired / already-redeemed code -> retry in place.
+        submitEl.disabled = false;
+        let detail = "That code isn't valid or has expired.";
+        try {
+          const body = await resp.json();
+          if (body && typeof body.detail === "string") detail = body.detail;
+        } catch { /* non-JSON error body — keep the friendly default */ }
+        setStatus(detail, true);
+        codeEl.focus();
+        codeEl.select();
+        return;
+      }
+
+      let data;
+      try {
+        data = await resp.json();
+      } catch {
+        submitEl.disabled = false;
+        setStatus("Unexpected response from the table. Try again.", true);
+        return;
+      }
+
+      // Stash the LOCKED redeem contract for the player view's boot read.
+      try {
+        sessionStorage.setItem("vwag.guest", JSON.stringify({
+          token:  data.token,
+          gameId: data.gameId,
+          name:   data.name,
+        }));
+      } catch {
+        submitEl.disabled = false;
+        setStatus("Your browser is blocking session storage. Enable it to join.", true);
+        return;
+      }
+
+      setStatus("Welcome, " + data.name + "! Entering the table\u2026", false);
+      window.location.href = "index.html?view=player";
+    });
+  </script>
+</body>
+</html>

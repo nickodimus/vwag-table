@@ -18,9 +18,16 @@
 // `Authorization: Bearer <unique_key>` on every guarded call. See VWAG's
 // docs/source/security.md.
 //
-// Base URL is a single constant. Today it points at the LAN (plain HTTP, fine
-// on the off-grid wire). When the vwag.worhl.net TLS vhost lands, this one line
-// changes to https://vwag.worhl.net — no other edit.
+// Base URL for the FastAPI on fallon — context-aware, ONE client, two serving
+// contexts:
+//   - served FROM game.worhl.net (the online tier / player view, the remote
+//     guest, or a GM using the hosted client): same-origin, so the base is ""
+//     and every call is a relative /api/... that Apache proxies to uvicorn — no
+//     host baked in, identical on the LAN and over the public TLS vhost. A public
+//     guest MUST have this; the LAN IP is unreachable from off-site.
+//   - served locally for GM dev (python3 -m http.server on jedas): a DIFFERENT
+//     origin from the API, so it needs the absolute LAN address. This preserves
+//     the GM's direct, off-grid LAN path instead of routing it through Apache.
 //
 // Chunk 4 (online tier): this module also registers a remote content source into
 // content.js's resolver (fetchModule / fetchImage). Any map or image not found
@@ -29,7 +36,8 @@
 
 import { registerRemoteSource } from "./content.js";
 
-const FALLON_BASE = "http://10.10.0.10:8002";
+const FALLON_BASE =
+  window.location.hostname === "game.worhl.net" ? "" : "http://10.10.0.10:8002";
 
 const STORE_KEY  = "vwag.unique_key";
 const STORE_USER = "vwag.username";
@@ -87,6 +95,40 @@ export function logout() {
 
 export function authHeader() {
   return _token ? { Authorization: `Bearer ${_token}` } : {};
+}
+
+// ── ephemeral guest identity (online tier, Chunk 1) ──────────────────────────
+// The player view has no login of its own. A remote guest is handed in by the
+// join gate (landing.html), which redeems a code and stashes the contract in
+// sessionStorage before redirecting to ?view=player. Seat that token in-memory
+// so authHeader() carries it — the Chunk 2 relay authenticates the socket with
+// it. Returns the seated identity { token, name, gameId } or null if there was
+// no stash (a normal local player view, or storage disabled).
+//
+// Deliberately NOT _store(): the guest identity is ephemeral (it dies with the
+// tab) and must never touch the persistent localStorage the GM login uses.
+// Guests are never admins.
+export function adoptStoredGuest() {
+  let raw;
+  try {
+    raw = sessionStorage.getItem("vwag.guest");
+  } catch {
+    return null;   // storage disabled / private mode
+  }
+  if (!raw) return null;
+
+  let guest;
+  try {
+    guest = JSON.parse(raw);
+  } catch {
+    return null;   // corrupt stash — ignore rather than throw into boot
+  }
+  if (!guest || !guest.token) return null;
+
+  _token    = guest.token;
+  _username = guest.name || null;
+  _isAdmin  = false;
+  return { token: _token, name: _username, gameId: guest.gameId ?? null };
 }
 
 
