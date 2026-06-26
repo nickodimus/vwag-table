@@ -211,6 +211,10 @@ const controls = {
   measureUnit: document.getElementById("measureUnit"),
   measureCalibrate: document.getElementById("measureCalibrate"),
   measureCalibrateRow: document.getElementById("measureCalibrateRow"),
+  scaleDist: document.getElementById("scaleDist"),
+  scaleUnit: document.getElementById("scaleUnit"),
+  calibrateScale: document.getElementById("calibrateScale"),
+  scaleReadout: document.getElementById("scaleReadout"),
   gridCalibrate: document.getElementById("gridCalibrate"),
   roundShape: document.getElementById("roundShape"),
   squareShape: document.getElementById("squareShape"),
@@ -453,7 +457,7 @@ const state = {
   initiative: { active: false, showPlayers: false, showOverlay: true, round: 1, turn: 0, combatants: [] },
   // Measurement: unit system + an optional calibrated cell size (world px) used when the
   // grid overlay is off but the map has its own printed grid.
-  measure: { unit: "imperial", cellSize: 0 },
+  measure: { unit: "imperial", cellSize: 0, unitsPerPx: 0, scaleLabel: "" },
   // Views carry a rotation (degrees) so the map can be re-oriented. The GM "rotate map"
   // drives view.rotation; the player can be rotated independently via playerView.rotation.
   view: { scale: 1, cx: 0, cy: 0, rotation: 0 },

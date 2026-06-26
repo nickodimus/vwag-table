@@ -879,6 +879,7 @@ function bindControls() {
     render();
   });
   controls.measureCalibrate?.addEventListener("click", () => armCalibration("measure"));
+  controls.calibrateScale?.addEventListener("click", () => armCalibration("scale"));
   controls.gridCalibrate?.addEventListener("click", () => armCalibration("grid"));
   controls.playerFrameToggle?.addEventListener("input", () => {
     ui.showPlayerFrame = controls.playerFrameToggle.checked;
@@ -1883,6 +1884,8 @@ function syncControlsFromState() {
   if (controls.aoeColor) controls.aoeColor.value = tools.aoe.color;
   if (controls.aoeCustomSize) controls.aoeCustomSize.value = tools.aoe.sizeFt;
   if (controls.measureUnit) controls.measureUnit.value = state.measure.unit || "imperial";
+  if (controls.scaleUnit && state.measure.scaleLabel) controls.scaleUnit.value = state.measure.scaleLabel;
+  updateScaleReadout();
   if (controls.stairColor) controls.stairColor.value = state.stairColor || "#ffffff";
   updateMeasureCalibrateRow();
   updatePlayerSliderRanges();
@@ -2777,7 +2780,9 @@ function armCalibration(purpose) {
   tools.calibrationDraft = null;
   updateCalibrationUI();
   controls.modeHint.textContent = tools.calibrating
-    ? "Drag a square over one grid cell on the map, then release to set the size."
+    ? (tools.calibrating === "scale"
+        ? "Drag a line along the map's printed scale bar, then release."
+        : "Drag a square over one grid cell on the map, then release to set the size.")
     : "";
   render();
 }
@@ -2786,6 +2791,14 @@ function armCalibration(purpose) {
 // set the grid cell SIZE, align the grid OFFSET to where the square was drawn, and store the
 // measure cell size. Because token snapping and the ruler both read grid size+offset, tokens
 // land on the printed cells whether or not the grid overlay is shown.
+function updateScaleReadout() {
+  if (!controls.scaleReadout) return;
+  const m = state.measure;
+  controls.scaleReadout.textContent = m.unitsPerPx > 0
+    ? `Calibrated — the ruler reads in ${m.scaleLabel || "km"}.`
+    : "Not calibrated — the ruler still measures in feet.";
+}
+
 function finishCalibration() {
   const draft = tools.calibrationDraft;
   const purpose = tools.calibrating;
@@ -2794,6 +2807,26 @@ function finishCalibration() {
   updateCalibrationUI();
   if (!draft || !purpose) {
     render();
+    return;
+  }
+  if (purpose === "scale") {
+    // Scale calibration: the dragged line spans a known length of the map's printed scale bar.
+    // Store real units per world-px so the ruler reads in map units (km/mi/…), no cells. map.scale
+    // is applied here AND in drawMeasureLabel's worldDist, so it cancels and the ruler stays right.
+    const ms = state.map.scale || 1;
+    const lenPx = Math.hypot(draft.end.x - draft.start.x, draft.end.y - draft.start.y) * ms;
+    const dist = parseFloat(controls.scaleDist?.value);
+    const label = controls.scaleUnit?.value || "km";
+    if (lenPx >= 4 && dist > 0) {
+      state.measure.unitsPerPx = dist / lenPx;
+      state.measure.scaleLabel = label;
+      updateScaleReadout();
+      controls.modeHint.textContent = `Calibrated: that line = ${dist} ${label}. Ruler now reads ${label}.`;
+      renderAndSync();
+    } else {
+      controls.modeHint.textContent = "Scale not set — enter a length, then drag a longer line along the bar.";
+      render();
+    }
     return;
   }
   const ms = state.map.scale || 1;
