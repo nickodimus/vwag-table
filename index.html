@@ -754,7 +754,10 @@
       <form method="dialog">
         <div class="dialog-head">
           <h2>Saved Maps</h2>
-          <button value="cancel" type="submit">Close</button>
+          <div class="library-head-tools">
+            <input id="mapSize" type="range" min="160" max="380" step="20" value="220" title="Thumbnail size" aria-label="Map thumbnail size">
+            <button value="cancel" type="submit">Close</button>
+          </div>
         </div>
         <p class="hint">Double-click a map to load it.</p>
         <div id="savedMapList" class="saved-map-list"></div>

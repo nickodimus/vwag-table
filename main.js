@@ -217,6 +217,8 @@ let paletteEntries = []; // in-memory mirror of the persisted palette
 let activePaletteId = null; // entry whose template is currently loaded into the token controls
 let paletteThumbPx = 64; // browse size for palette thumbnails, persisted to localStorage
 const PALETTE_THUMB_KEY = "vwag-table-palette-thumb";
+let mapThumbPx = 220; // browse size for My-maps picker thumbnails, persisted to localStorage
+const MAP_THUMB_KEY = "vwag-table-map-thumb";
 const IMAGE_MAX_EDGE = 1024; // cap dropped map images so saves/syncs stay bounded
 let isDragging = false;
 let dragStart = { x: 0, y: 0 };
@@ -476,6 +478,8 @@ function setup() {
     loadSquareLock();
     loadPaletteThumb();
     if (controls.paletteSize) controls.paletteSize.value = paletteThumbPx;
+    loadMapThumb();
+    if (controls.mapSize) controls.mapSize.value = mapThumbPx;
     loadPalette();
     syncControlsFromState();
     updateSquareLockUI();
@@ -671,6 +675,7 @@ function bindControls() {
 
   controls.paletteAdd?.addEventListener("click", addCurrentToPalette);
   controls.paletteSize?.addEventListener("input", () => setPaletteThumb(Number(controls.paletteSize.value) || 64));
+  controls.mapSize?.addEventListener("input", () => setMapThumb(Number(controls.mapSize.value) || 220));
   controls.paletteImport?.addEventListener("change", (e) => {
     importImageFiles(e.target.files);
     e.target.value = "";
@@ -1249,6 +1254,7 @@ function loadSplashFile(event) {
 async function openLibrary() {
   try {
     const sessions = await listSessionRecords();
+    if (controls.savedMapList) controls.savedMapList.style.setProperty("--map-thumb", mapThumbPx + "px");
     await renderLibraryGrid(sessions);
     controls.libraryDialog.showModal();
   } catch (error) {
@@ -3058,6 +3064,28 @@ function loadPaletteThumb() {
     const v = Number(localStorage.getItem(PALETTE_THUMB_KEY));
     if (v > 0) paletteThumbPx = v;
   } catch {}
+}
+
+// My-maps picker zoom — the exact mirror of the palette's thumbnail-size machinery.
+// Drives --map-thumb (the grid's column min-width) so the slider changes thumbnail size,
+// just like --palette-thumb does for the token palette.
+function loadMapThumb() {
+  try {
+    const v = Number(localStorage.getItem(MAP_THUMB_KEY));
+    if (v > 0) mapThumbPx = v;
+  } catch {}
+}
+
+function persistMapThumb() {
+  try {
+    localStorage.setItem(MAP_THUMB_KEY, String(mapThumbPx));
+  } catch {}
+}
+
+function setMapThumb(px) {
+  mapThumbPx = Math.max(160, Math.min(380, px || 220));
+  persistMapThumb();
+  if (controls.savedMapList) controls.savedMapList.style.setProperty("--map-thumb", mapThumbPx + "px");
 }
 
 function persistPaletteThumb() {

@@ -275,6 +275,7 @@ const controls = {
   playerFullscreen: document.getElementById("playerFullscreen"),
   libraryDialog: document.getElementById("libraryDialog"),
   savedMapList: document.getElementById("savedMapList"),
+  mapSize: document.getElementById("mapSize"),
   nameDialog: document.getElementById("nameDialog"),
   roomNameInput: document.getElementById("roomNameInput"),
   stairMode: document.getElementById("stairMode"),
