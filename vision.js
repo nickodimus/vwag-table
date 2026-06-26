@@ -224,15 +224,128 @@ function lightSources() {
   return sources;
 }
 
-// Cached wall-occluded visibility polygon cast from a native point. The cast doesn't depend on
-// radius (radius only clips at composite), so the key is position + geometry version.
-function getLightPolygon(pos) {
-  const key = castVersion + "|" + Math.round(pos.x) + "|" + Math.round(pos.y);
+// ── light radius culling (uniform spatial grid) ──────────────────────────────
+// castVisibility is O(6·N²) in the segment count N. A light only illuminates out to
+// its radius, so casting against the whole floor (≈8,600 segments on Caves of Chaos)
+// is wasted: the radial gradient clips visible reach to R regardless. We bucket the
+// light-blocking segments into a uniform grid once per castVersion, then each light
+// casts only against segments whose AABB overlaps its [pos ± R] box, plus a synthetic
+// box at extent R so rays always close. The drop is EXACT, not approximate: a segment
+// whose AABB lies fully outside the R-square is > R away (outside the axis-aligned
+// square ⟹ Euclidean distance > R), so it can never be hit within R — the lit pixels
+// are identical, only the invisible polygon tail beyond R changes.
+
+const LIGHT_GRID_CELL_CELLS = 4; // bucket size in map cells (× pxPerCellNative → native px)
+
+let _lightGrid = null;      // { cell, cols, rows, minX, minY, buckets:Map<int,segIndex[]>, segs }
+let _lightGridVersion = -1; // the castVersion the grid was built for
+
+// (Re)build the bucket grid for the current castVersion. One O(N) pass that every
+// light cast this frame reuses; the version gate clears it when geometry changes.
+function lightGrid() {
+  if (_lightGrid && _lightGridVersion === castVersion) return _lightGrid;
+  const segs = lightSegments();
+  const cell = Math.max(1, LIGHT_GRID_CELL_CELLS * pxPerCellNative());
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const s of segs) {
+    if (s.a.x < minX) minX = s.a.x; if (s.b.x < minX) minX = s.b.x;
+    if (s.a.y < minY) minY = s.a.y; if (s.b.y < minY) minY = s.b.y;
+    if (s.a.x > maxX) maxX = s.a.x; if (s.b.x > maxX) maxX = s.b.x;
+    if (s.a.y > maxY) maxY = s.a.y; if (s.b.y > maxY) maxY = s.b.y;
+  }
+  if (!segs.length) { minX = minY = maxX = maxY = 0; }
+  const cols = Math.max(1, Math.ceil((maxX - minX) / cell) + 1);
+  const rows = Math.max(1, Math.ceil((maxY - minY) / cell) + 1);
+  const buckets = new Map();
+  segs.forEach((s, i) => {
+    const cx0 = Math.floor((Math.min(s.a.x, s.b.x) - minX) / cell);
+    const cy0 = Math.floor((Math.min(s.a.y, s.b.y) - minY) / cell);
+    const cx1 = Math.floor((Math.max(s.a.x, s.b.x) - minX) / cell);
+    const cy1 = Math.floor((Math.max(s.a.y, s.b.y) - minY) / cell);
+    for (let cy = cy0; cy <= cy1; cy++) {
+      for (let cx = cx0; cx <= cx1; cx++) {
+        const k = cy * cols + cx;
+        let arr = buckets.get(k);
+        if (!arr) { arr = []; buckets.set(k, arr); }
+        arr.push(i);
+      }
+    }
+  });
+  _lightGrid = { cell, cols, rows, minX, minY, buckets, segs };
+  _lightGridVersion = castVersion;
+  return _lightGrid;
+}
+
+// Segments whose AABB overlaps the light's [pos ± R] box. AABB-overlap (NOT
+// endpoint-inside) so a wall straddling the box edge is kept — dropping it would leak
+// light. A few far-AABB segments may survive the grid query; the explicit overlap
+// test trims those, and any that remain are harmless (conservative, never under-keeps).
+function segmentsNearLight(pos, radius) {
+  const g = lightGrid();
+  const bMinX = pos.x - radius, bMinY = pos.y - radius;
+  const bMaxX = pos.x + radius, bMaxY = pos.y + radius;
+  const cx0 = Math.max(0, Math.floor((bMinX - g.minX) / g.cell));
+  const cy0 = Math.max(0, Math.floor((bMinY - g.minY) / g.cell));
+  const cx1 = Math.min(g.cols - 1, Math.floor((bMaxX - g.minX) / g.cell));
+  const cy1 = Math.min(g.rows - 1, Math.floor((bMaxY - g.minY) / g.cell));
+  const seen = new Set();
+  const out = [];
+  for (let cy = cy0; cy <= cy1; cy++) {
+    for (let cx = cx0; cx <= cx1; cx++) {
+      const arr = g.buckets.get(cy * g.cols + cx);
+      if (!arr) continue;
+      for (const i of arr) {
+        if (seen.has(i)) continue;
+        seen.add(i);
+        const s = g.segs[i];
+        if (Math.max(s.a.x, s.b.x) < bMinX || Math.min(s.a.x, s.b.x) > bMaxX) continue;
+        if (Math.max(s.a.y, s.b.y) < bMinY || Math.min(s.a.y, s.b.y) > bMaxY) continue;
+        out.push(s);
+      }
+    }
+  }
+  return out;
+}
+
+// Four segments forming the light's radius box — ray terminators so a ray that escapes
+// every nearby wall still closes locally instead of shooting to the map edge. Extent R:
+// the box sits at the radius, where the gradient alpha is already 0, so it paints nothing
+// visible. Wound as a closed loop a→b→c→d→a.
+function lightBoxSegments(pos, r) {
+  const p0 = { x: pos.x - r, y: pos.y - r }, p1 = { x: pos.x + r, y: pos.y - r };
+  const p2 = { x: pos.x + r, y: pos.y + r }, p3 = { x: pos.x - r, y: pos.y + r };
+  return [{ a: p0, b: p1 }, { a: p1, b: p2 }, { a: p2, b: p3 }, { a: p3, b: p0 }];
+}
+
+// Cached wall-occluded visibility polygon cast from a light. With radius culling the
+// cast now depends on R (it bounds the segment set and the terminator box), so the cache
+// key carries R — the version|lx|ly|radius shape state.js already anticipates. Lights are
+// static, so an entry is reused until geometry changes (invalidateCast clears lightCache).
+function getLightPolygon(pos, radius) {
+  const r = Math.max(0, radius || 0);
+  const key = castVersion + "|" + Math.round(pos.x) + "|" + Math.round(pos.y) + "|" + Math.round(r);
   lightFrameKeys.add(key);
   let poly = lightCache.get(key);
   if (!poly) {
-    poly = castVisibility(pos, lightSegments());
+    const segs = segmentsNearLight(pos, r).concat(lightBoxSegments(pos, r));
+    const t0 = window.VWAG_PERF ? performance.now() : 0; // dev hook: VWAG_PERF=true in console
+    poly = castVisibility(pos, segs);
     lightCache.set(key, poly);
+    if (window.VWAG_PERF) {
+      const p = (window.__perf = window.__perf || { casts: 0, totalSegs: 0, totalMs: 0, floorSegs: 0, _last: 0 });
+      p.casts++;
+      p.totalSegs += segs.length;              // segments this cast saw (culled set + 4 box)
+      p.totalMs += performance.now() - t0;
+      p.floorSegs = _lightGrid ? _lightGrid.segs.length : 0; // full floor N, for the ratio
+      const now = performance.now();
+      if (now - p._last > 400) {               // throttle: at most ~2 lines/sec
+        p._last = now;
+        const avgSegs = (p.totalSegs / p.casts).toFixed(0);
+        const avgMs = (p.totalMs / p.casts).toFixed(3);
+        const speedup = p.floorSegs ? Math.round((p.floorSegs * p.floorSegs) / ((p.totalSegs / p.casts) ** 2)) : 0;
+        console.log(`[perf] ${p.casts} casts · ${avgSegs} segs/cast vs ${p.floorSegs} floor · ${avgMs}ms/cast · ~${speedup}x per-light speedup`);
+      }
+    }
   }
   return poly;
 }
@@ -245,7 +358,7 @@ function buildLightCoverage() {
   lightCtx.setTransform(1, 0, 0, 1, 0, 0);
   lightCtx.clearRect(0, 0, lightCanvas.width, lightCanvas.height);
   lightSources().forEach(({ pos, radius }) => {
-    const poly = getLightPolygon(pos);
+    const poly = getLightPolygon(pos, radius);
     if (poly.length < 3 || radius <= 0) return;
     const cx = pos.x * fogBuf.resScale;
     const cy = pos.y * fogBuf.resScale;
@@ -268,7 +381,7 @@ function buildLightTint(sources) {
   tintCtx.setTransform(1, 0, 0, 1, 0, 0);
   tintCtx.clearRect(0, 0, tintCanvas.width, tintCanvas.height);
   sources.forEach(({ pos, radius, color }) => {
-    const poly = getLightPolygon(pos);
+    const poly = getLightPolygon(pos, radius);
     if (poly.length < 3 || radius <= 0) return;
     const cx = pos.x * fogBuf.resScale;
     const cy = pos.y * fogBuf.resScale;
