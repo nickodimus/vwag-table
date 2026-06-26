@@ -12,6 +12,9 @@ import {
 import {
   captureCurrentFloor,
 } from "./persistence.js";
+import {
+  getToken,
+} from "./api.js";
 
 let viewSyncQueued = false; // debounce flag: at most one view broadcast queued per animation frame
 
@@ -35,6 +38,95 @@ function relay(message) {
       target.postMessage(message, "*");
     } catch {}
   }
+  if (socketReady && socket) {
+    try {
+      socket.send(JSON.stringify(message));
+    } catch {}
+  }
+}
+
+// ── network relay (online tier, Chunk 2): a third transport ──────────────────
+// BroadcastChannel + postMessage reach same-machine windows only. To link the GM
+// to a remote player (another machine), we ALSO open a WebSocket to fallon's
+// stateless hub. The URL mirrors api.js's FALLON_BASE: the public TLS path when
+// served from game.worhl.net, the direct LAN address otherwise (so the local GM
+// on jedas reaches uvicorn directly). Both land on the same /ws hub + room.
+//
+// Auth is in-band: on open we send { type:"auth", token }. getToken() returns the
+// GM's unique_key (once logged in) or the guest token (seated by adoptStoredGuest
+// on the player view). No token yet (GM not logged in) -> we hold off and retry
+// rather than churn sockets. A dropped socket reconnects and re-auths, so a flaky
+// remote link self-heals — the cloud-dependent weakness we beat.
+
+let socket = null;
+let socketReady = false;
+let relayOnMessage = null;     // main.js's handleMessage, wired at connectRelay()
+let reconnectTimer = null;
+
+function _relayWsUrl() {
+  return window.location.hostname === "game.worhl.net"
+    ? `wss://${window.location.host}/ws`
+    : "ws://10.10.0.10:8002/ws";
+}
+
+function _scheduleReconnect() {
+  if (reconnectTimer) return;
+  reconnectTimer = setTimeout(() => {
+    reconnectTimer = null;
+    _openSocket();
+  }, 3000);
+}
+
+function _openSocket() {
+  const token = getToken();
+  if (!token) {                 // no identity yet (e.g. GM not logged in) — wait, don't churn
+    _scheduleReconnect();
+    return;
+  }
+  let ws;
+  try {
+    ws = new WebSocket(_relayWsUrl());
+  } catch {
+    _scheduleReconnect();
+    return;
+  }
+  socket = ws;
+
+  ws.onopen = () => {
+    try {
+      ws.send(JSON.stringify({ type: "auth", token }));
+    } catch {
+      try { ws.close(); } catch {}
+      return;
+    }
+    socketReady = true;
+    // Announce so the GM pushes a full sync to this player over the relay — the
+    // same handshake local play uses. The GM announces nothing.
+    if (isPlayer) relay({ type: "player-ready" });
+  };
+
+  ws.onmessage = (event) => {
+    if (!relayOnMessage) return;
+    let msg;
+    try { msg = JSON.parse(event.data); } catch { return; }
+    relayOnMessage(msg, null);
+  };
+
+  ws.onclose = () => {
+    socketReady = false;
+    if (socket === ws) socket = null;
+    _scheduleReconnect();
+  };
+
+  ws.onerror = () => { try { ws.close(); } catch {} };   // onclose schedules the retry
+}
+
+// Called once from main.js setup() with the inbound dispatcher (handleMessage).
+// Opens the relay socket for both GM and player; in local-only play with no
+// remote peer it simply never carries a frame, which is harmless.
+function connectRelay(onMessage) {
+  relayOnMessage = onMessage;
+  _openSocket();
 }
 
 function applyRemoteView(message) {
@@ -184,5 +276,5 @@ function renderAndSyncView() {
 
 export {
   reportPlayerViewport, relay, applyRemoteView, applyIncomingPlayerView, syncPlayerViewControls, snapPlayerViewToGM, broadcastAssets, broadcastState,
-  broadcastView, renderAndSync, renderAndSyncView, sanitizedState,
+  broadcastView, renderAndSync, renderAndSyncView, sanitizedState, connectRelay,
 };
