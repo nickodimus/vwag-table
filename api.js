@@ -207,7 +207,9 @@ export async function listRemoteModules() {
 
 // PUT /api/vtt/modules/{id}. Body mirrors the columns fallon extracts; `data` is
 // the whole browser module record, stored verbatim so a later pull round-trips.
-export async function publishModule(record) {
+// `thumbnail` is the served path of the cover thumb (already pushed via
+// putRemoteImage), so the From-fallon picker can show it without pulling the map.
+export async function publishModule(record, thumbnail = null) {
   return apiFetch(`/api/vtt/modules/${encodeURIComponent(record.id)}`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
@@ -216,6 +218,7 @@ export async function publishModule(record) {
       map_kind: record.mapKind || "battle",
       parent_id: record.parentId ?? null,
       data: record,
+      thumbnail: thumbnail ?? null,
     }),
   });
 }

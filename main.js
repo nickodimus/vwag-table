@@ -1549,8 +1549,19 @@ async function publishToFallon() {
       if (!dataURL) continue; // image already gone from the store — skip, not fatal
       await putRemoteImage(floor.imageId, dataURL, floor.imageWidth, floor.imageHeight);
     }
-    // 2 — the authored module.
-    await publishModule(module);
+    // 1b — cover thumbnail. ensureThumb makes it if it isn't already cached, then it
+    //      rides the same image endpoint as a `thumb_<coverId>` image. We keep its
+    //      served path to hand to the module, so the From-fallon picker can show a
+    //      cover without pulling the full map.
+    let thumbnailPath = null;
+    const coverId = floors.find((f) => f.imageId)?.imageId;
+    const thumbDataURL = await ensureThumb(coverId);
+    if (thumbDataURL) {
+      const resp = await putRemoteImage(`thumb_${coverId}`, thumbDataURL, THUMB_MAX_EDGE, THUMB_MAX_EDGE);
+      if (resp?.url) thumbnailPath = resp.url.replace(/^.*\/static\/vtt\//, "");
+    }
+    // 2 — the authored module (carries the thumbnail path).
+    await publishModule(module, thumbnailPath);
     // 3 — the play-state session (Fork 2/B: checkpoint bundles it). Autosave keeps
     //     the local session record fresh, so this pushes the current game up. The
     //     module above satisfies the FK, so the session PUT lands cleanly.
