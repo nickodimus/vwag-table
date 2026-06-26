@@ -69,7 +69,7 @@ import {
 } from "./content.js";
 import {
   reportPlayerViewport, relay, applyRemoteView, applyIncomingPlayerView, syncPlayerViewControls, snapPlayerViewToGM, broadcastAssets, broadcastState,
-  broadcastView, renderAndSync, renderAndSyncView,
+  broadcastView, renderAndSync, renderAndSyncView, connectRelay,
 } from "./sync.js";
 import {
   render, playerFrameCorners,
@@ -501,6 +501,7 @@ function setup() {
   // ignores the duplicate when both transports succeed.
   channel.onmessage = (event) => handleMessage(event.data, null);
   window.addEventListener("message", (event) => handleMessage(event.data, event.source));
+  connectRelay(handleMessage);   // third transport: WebSocket to fallon (online tier)
 
   watchCanvasSize();
   window.addEventListener("keydown", onKeyDown);
