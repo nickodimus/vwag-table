@@ -324,6 +324,12 @@ function handleMessage(message, source) {
       }
     }
   }
+  if (message.type === "map-link-descend" && !isPlayer) {
+    // A player walked their token onto a map-link and pressed 'd'. The GM owns the map stack,
+    // so descend here — loads the child map, sets the table, and broadcasts it back so every
+    // screen travels together (the diegetic "party walks through the door" move).
+    if (message.targetMapId) descend(message.targetMapId);
+  }
   if (message.type === "stair-traverse" && !isPlayer) {
     // A player took a stair with a selection of tokens. They all live on the ACTIVE (table) floor —
     // live state when the GM is viewing that floor, a stored record otherwise. What happens next keys
@@ -4644,6 +4650,16 @@ function onKeyDown(event) {
         const ids = sel.playerTokens.map((t) => t.id); // the whole selection rides together
         relay({ type: "stair-traverse", ids, targetFloorId: rider.stair.targetFloorId });
       }
+      return;
+    }
+    // 'd' descends through a map-link: if any selected token stands on a map-link, ask the GM
+    // (who owns the map stack) to travel the table into the linked map. Mirrors the stair 's'
+    // gesture, but crosses MAPS, not floors — region → town, town → battle.
+    if (event.key === "d" || event.key === "D") {
+      const rider = sel.playerTokens
+        .map((t) => ({ token: t, link: hitMapLink({ x: t.x, y: t.y }) }))
+        .find((o) => o.link && o.link.targetMapId);
+      if (rider) relay({ type: "map-link-descend", targetMapId: rider.link.targetMapId });
       return;
     }
     // Arrow keys walk the selected player token(s). First press steps instantly; holding marches at
