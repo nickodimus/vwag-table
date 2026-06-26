@@ -33,6 +33,7 @@ const FALLON_BASE = "http://10.10.0.10:8002";
 
 const STORE_KEY  = "vwag.unique_key";
 const STORE_USER = "vwag.username";
+const STORE_ADMIN = "vwag.is_admin";
 
 // GM view only — the player display (?view=player) never shows login.
 const IS_PLAYER =
@@ -43,13 +44,16 @@ const IS_PLAYER =
 
 let _token    = null;
 let _username = null;
+let _isAdmin  = false; // whether the logged-in player may delete any map (whoami)
 
 function _loadStored() {
   try {
     _token    = localStorage.getItem(STORE_KEY)  || null;
     _username = localStorage.getItem(STORE_USER) || null;
+    _isAdmin  = localStorage.getItem(STORE_ADMIN) === "1";
   } catch {
     _token = _username = null;   // private mode / storage disabled
+    _isAdmin = false;
   }
 }
 
@@ -63,15 +67,18 @@ function _store(token, username) {
     } else {
       localStorage.removeItem(STORE_KEY);
       localStorage.removeItem(STORE_USER);
+      localStorage.removeItem(STORE_ADMIN);
     }
   } catch {
     /* non-persistent session is acceptable; in-memory token still works */
   }
+  if (!token) _isAdmin = false; // logging out drops admin rights
 }
 
 export function getToken()    { return _token; }
 export function getUsername() { return _username; }
 export function isLoggedIn()  { return !!_token; }
+export function isAdmin()     { return _isAdmin; }
 
 export function logout() {
   _store(null, null);
@@ -125,6 +132,7 @@ export async function login(username, password) {
   const r = await _postJson("/api/auth/login", { username, password });
   if (!r.ok) return r;
   _store(r.body.unique_key, r.body.username);
+  await refreshWhoami();
   return { ok: true, username: r.body.username };
 }
 
@@ -132,7 +140,28 @@ export async function register(username, email, password) {
   const r = await _postJson("/api/auth/register", { username, email, password });
   if (!r.ok) return r;
   _store(r.body.unique_key, r.body.username);
+  await refreshWhoami();
   return { ok: true, username: r.body.username };
+}
+
+// Confirm identity + admin flag against fallon. Best-effort: a failure (offline,
+// stale token) just leaves is_admin false rather than throwing into the caller.
+// Persisted so a returning admin's rights are known before the call resolves.
+export async function refreshWhoami() {
+  if (!isLoggedIn()) { _isAdmin = false; return; }
+  try {
+    const me = await apiFetch("/api/vtt/whoami");
+    _isAdmin = !!(me && me.is_admin);
+    try { localStorage.setItem(STORE_ADMIN, _isAdmin ? "1" : "0"); } catch {}
+  } catch {
+    /* leave the persisted/in-memory value as-is on a transient failure */
+  }
+}
+
+// DELETE /api/vtt/modules/{id}. Guarded server-side (owner or admin); apiFetch
+// carries the Bearer and throws with .status set (403 not yours / 404 gone / 401).
+export async function deleteRemoteModule(id) {
+  return apiFetch(`/api/vtt/modules/${encodeURIComponent(id)}`, { method: "DELETE" });
 }
 
 // General authed fetch for the NEXT chunk (settlement NPC pulls). Returns
