@@ -140,7 +140,7 @@ async function deleteLibraryMap(id, name) {
   // map.)
   await deleteModuleRecord(session?.moduleId || id);
   const sessions = await listSessionRecords();
-  renderLibraryList(sessions);
+  await renderLibraryGrid(sessions);
   refreshLibraryButtonState(sessions);
 }
 
@@ -184,7 +184,7 @@ function importLibrary(event) {
       }
       window.alert(`Imported ${imported} map${imported === 1 ? "" : "s"}.`);
       const updated = await listSessionRecords();
-      renderLibraryList(updated);
+      await renderLibraryGrid(updated);
       refreshLibraryButtonState(updated);
     } catch (error) {
       window.alert(`Could not import that file: ${error.message}`);
@@ -1249,14 +1249,14 @@ function loadSplashFile(event) {
 async function openLibrary() {
   try {
     const sessions = await listSessionRecords();
-    renderLibraryList(sessions);
+    await renderLibraryGrid(sessions);
     controls.libraryDialog.showModal();
   } catch (error) {
     window.alert(`Could not open the map library: ${error.message}`);
   }
 }
 
-function renderLibraryList(records) {
+async function renderLibraryGrid(records) {
   controls.savedMapList.replaceChildren();
   if (!records.length) {
     const empty = document.createElement("p");
@@ -1266,34 +1266,53 @@ function renderLibraryList(records) {
     return;
   }
 
-  records
-    .sort((a, b) => new Date(b.savedAt) - new Date(a.savedAt))
-    .forEach((record) => {
-      const row = document.createElement("div");
-      row.className = "saved-map-row";
+  const sorted = [...records].sort((a, b) => new Date(b.savedAt) - new Date(a.savedAt));
+  for (const record of sorted) {
+    const card = document.createElement("div");
+    card.className = "map-card";
+    card.title = "Double-click to load";
 
-      const text = document.createElement("div");
-      const name = document.createElement("strong");
-      name.textContent = record.name;
-      const meta = document.createElement("span");
-      meta.textContent = record.savedAt ? new Date(record.savedAt).toLocaleString() : "Saved map";
-      text.append(name, meta);
-
-      const actions = document.createElement("div");
-      actions.className = "saved-map-actions";
-      const load = document.createElement("button");
-      load.type = "button";
-      load.textContent = "Load";
-      load.addEventListener("click", () => loadLibraryMap(record.id));
-      const remove = document.createElement("button");
-      remove.type = "button";
-      remove.textContent = "Delete";
-      remove.addEventListener("click", () => deleteLibraryMap(record.id, record.name));
-      actions.append(load, remove);
-
-      row.append(text, actions);
-      controls.savedMapList.appendChild(row);
+    // Corner delete. stopPropagation so the card's dblclick-to-load can't also fire.
+    const del = document.createElement("button");
+    del.type = "button";
+    del.className = "map-card-delete";
+    del.textContent = "×";
+    del.title = "Delete this map";
+    del.setAttribute("aria-label", `Delete ${record.name || "map"}`);
+    del.addEventListener("click", (event) => {
+      event.stopPropagation();
+      deleteLibraryMap(record.id, record.name);
     });
+
+    // Cover thumbnail, or a placeholder tile when the map has no image.
+    const thumbBox = document.createElement("div");
+    thumbBox.className = "map-card-thumb";
+    const module = await getModuleRecord(record.moduleId || record.id);
+    const coverId = module?.floors?.find((floor) => floor.imageId)?.imageId;
+    const thumb = await ensureThumb(coverId);
+    if (thumb) {
+      const img = document.createElement("img");
+      img.src = thumb;
+      img.alt = record.name || "map";
+      img.loading = "lazy";
+      thumbBox.appendChild(img);
+    } else {
+      thumbBox.classList.add("empty");
+      thumbBox.textContent = "No image";
+    }
+
+    const name = document.createElement("strong");
+    name.className = "map-card-name";
+    name.textContent = record.name || "Untitled map";
+
+    const meta = document.createElement("span");
+    meta.className = "map-card-meta";
+    meta.textContent = record.savedAt ? new Date(record.savedAt).toLocaleString() : "Saved map";
+
+    card.addEventListener("dblclick", () => loadLibraryMap(record.id));
+    card.append(del, thumbBox, name, meta);
+    controls.savedMapList.appendChild(card);
+  }
 }
 
 // ─── Map navigation: the containment trail ──────────────────────────────────────
@@ -2971,6 +2990,24 @@ function downscaleImage(src, maxEdge, callback) {
   };
   img.onerror = () => callback(src);
   img.src = src;
+}
+
+// Map-picker thumbnails. A map's cover image can be a multi-MB PNG, so the picker grid never
+// paints it directly: each cover is downscaled once to THUMB_MAX_EDGE and cached in the image
+// store under a thumb:<imageId> key. First open of a map generates + caches it; every open
+// after is an instant store read. Returns a dataURL, or null when there's no cover to show.
+const THUMB_MAX_EDGE = 256;
+
+async function ensureThumb(imageId) {
+  if (!imageId) return null;
+  const thumbKey = `thumb:${imageId}`;
+  const cached = await getImage(thumbKey);
+  if (cached) return cached;
+  const full = await getImage(imageId);
+  if (!full) return null;
+  const thumb = await new Promise((resolve) => downscaleImage(full, THUMB_MAX_EDGE, resolve));
+  if (thumb) await putImage(thumbKey, thumb);
+  return thumb || null;
 }
 
 function loadTokenImage(event) {
