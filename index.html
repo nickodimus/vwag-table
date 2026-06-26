@@ -272,6 +272,21 @@
           <p class="hint">Battlemaps have floors and an initiative tracker. Town and world maps hide both — use map-links to travel between them. Saves with the map.</p>
           <button id="importPartyWorld" type="button" class="init-add-tokens world-only">Import party</button>
           <p class="hint world-only">Adds your party to the player-screen roster (names + HP) without dropping any tokens — place one party token yourself for position. GM only, log in first.</p>
+          <div id="scaleCalibrateRow" class="world-only scale-cal">
+            <p class="hint">Match the ruler to this map's printed scale: type the scale bar's length, then drag a line along it.</p>
+            <div class="scale-cal-fields">
+              <span>Scale bar =</span>
+              <input id="scaleDist" type="number" min="0" step="0.1" value="50" />
+              <select id="scaleUnit">
+                <option value="km">km</option>
+                <option value="mi">mi</option>
+                <option value="m">m</option>
+                <option value="ft">ft</option>
+              </select>
+              <button id="calibrateScale" type="button" class="mini-btn">Calibrate</button>
+            </div>
+            <p class="hint" id="scaleReadout"></p>
+          </div>
           <label>
             Go to map <span class="hint-inline">(GM view only — players stay put)</span>
             <select id="mapJump"></select>

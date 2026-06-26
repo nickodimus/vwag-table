@@ -29,19 +29,26 @@ function drawCalibrationDraft() {
   if (!tools.calibrationDraft) return;
   const a = tools.calibrationDraft.start;
   const b = tools.calibrationDraft.end;
-  const ms = state.map.scale || 1;
-  const side = Math.max(Math.abs(b.x - a.x), Math.abs(b.y - a.y));
-  const sx = b.x >= a.x ? 1 : -1;
-  const sy = b.y >= a.y ? 1 : -1;
-  const x0 = Math.min(a.x, a.x + sx * side);
-  const y0 = Math.min(a.y, a.y + sy * side);
   ctx.save();
-  ctx.fillStyle = "rgba(177, 195, 1, 0.18)";
   ctx.strokeStyle = "#b1c301";
   ctx.lineWidth = 2 / (cur.k * cur.ms);
   ctx.setLineDash([6 / (cur.k * cur.ms), 4 / (cur.k * cur.ms)]);
-  ctx.strokeRect(x0, y0, side, side);
-  ctx.fillRect(x0, y0, side, side);
+  if (tools.calibrating === "scale") {
+    // Scale calibration marks a straight line along the printed scale bar (a length, not a cell).
+    ctx.beginPath();
+    ctx.moveTo(a.x, a.y);
+    ctx.lineTo(b.x, b.y);
+    ctx.stroke();
+  } else {
+    const side = Math.max(Math.abs(b.x - a.x), Math.abs(b.y - a.y));
+    const sx = b.x >= a.x ? 1 : -1;
+    const sy = b.y >= a.y ? 1 : -1;
+    const x0 = Math.min(a.x, a.x + sx * side);
+    const y0 = Math.min(a.y, a.y + sy * side);
+    ctx.fillStyle = "rgba(177, 195, 1, 0.18)";
+    ctx.strokeRect(x0, y0, side, side);
+    ctx.fillRect(x0, y0, side, side);
+  }
   ctx.restore();
 }
 
@@ -194,12 +201,20 @@ function drawMeasureLabel(line = tools.measureLine) {
   const dx = (line.end.x - line.start.x) * ms;
   const dy = (line.end.y - line.start.y) * ms;
   const worldDist = Math.hypot(dx, dy);
-  const cellW = measureCellWorld();
-  const cells = cellW > 0 ? worldDist / cellW : 0;
-  const unit = MEASURE_UNITS[state.measure.unit] || MEASURE_UNITS.imperial;
-  const dist = cells * unit.perCell;
-  const distStr = state.measure.unit === "metric" ? dist.toFixed(1) : String(Math.round(dist));
-  const label = `${cells.toFixed(1)} cells · ${distStr} ${unit.label}`;
+  let label;
+  if (state.measure.unitsPerPx > 0) {
+    // Map calibrated to its printed scale bar: show real-world distance only, no cells.
+    const dist = worldDist * state.measure.unitsPerPx;
+    const dstr = dist >= 100 ? String(Math.round(dist)) : dist.toFixed(1);
+    label = `${dstr} ${state.measure.scaleLabel || "km"}`;
+  } else {
+    const cellW = measureCellWorld();
+    const cells = cellW > 0 ? worldDist / cellW : 0;
+    const unit = MEASURE_UNITS[state.measure.unit] || MEASURE_UNITS.imperial;
+    const dist = cells * unit.perCell;
+    const distStr = state.measure.unit === "metric" ? dist.toFixed(1) : String(Math.round(dist));
+    label = `${cells.toFixed(1)} cells · ${distStr} ${unit.label}`;
+  }
   const mid = nativeToScreen({
     x: (line.start.x + line.end.x) / 2,
     y: (line.start.y + line.end.y) / 2,
