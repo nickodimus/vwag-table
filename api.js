@@ -192,7 +192,13 @@ const remoteSource = {
 export async function listRemoteModules() {
   try {
     const rows = await apiFetch("/api/vtt/modules");
-    return Array.isArray(rows) ? rows : [];
+    if (!Array.isArray(rows)) return [];
+    // Absolutize the cover thumb URL so the picker can use it directly as an <img>
+    // src (keeps FALLON_BASE here, where the host concern already lives).
+    return rows.map((r) => ({
+      ...r,
+      thumbnail_url: r.thumbnail_url ? `${FALLON_BASE}${r.thumbnail_url}` : null,
+    }));
   } catch {
     return [];
   }

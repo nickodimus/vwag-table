@@ -480,6 +480,7 @@ function setup() {
     if (controls.paletteSize) controls.paletteSize.value = paletteThumbPx;
     loadMapThumb();
     if (controls.mapSize) controls.mapSize.value = mapThumbPx;
+    if (controls.fallonMapSize) controls.fallonMapSize.value = mapThumbPx;
     loadPalette();
     syncControlsFromState();
     updateSquareLockUI();
@@ -591,15 +592,8 @@ function bindControls() {
       if (id) jumpToMap(id).catch((e) => window.alert(`Could not jump to that map: ${e.message}`));
     });
   }
-  if (controls.fallonJump) {
-    controls.fallonJump.addEventListener("focus", populateFallonJump); // refresh fallon's catalog on open
-    controls.fallonJump.addEventListener("change", () => {
-      const id = controls.fallonJump.value;
-      // Reset to the placeholder either way, so the same map can be re-pulled.
-      if (id) openRemoteMap(id).finally(() => { controls.fallonJump.value = ""; });
-    });
-    populateFallonJump(); // seed it once at startup (empty/disabled if fallon is unreachable)
-  }
+  controls.loadFallon?.addEventListener("click", openFallonDialog);
+  controls.fallonMapSize?.addEventListener("input", () => setMapThumb(Number(controls.fallonMapSize.value) || 220));
   if (controls.publishFallon) {
     controls.publishFallon.addEventListener("click", publishToFallon);
   }
@@ -1262,6 +1256,55 @@ async function openLibrary() {
   }
 }
 
+// Shared map-card DOM for both pickers. `thumbSrc` is a ready <img> src (a local
+// dataURL for My-maps, or fallon's absolute thumbnail URL) or null → the "No image"
+// placeholder. `onDelete` is omitted for the remote catalog (you don't delete
+// fallon's maps from this table). Double-click fires `onActivate`.
+function buildMapCard({ name, metaText, thumbSrc, onActivate, onDelete }) {
+  const card = document.createElement("div");
+  card.className = "map-card";
+  card.title = "Double-click to load";
+
+  if (onDelete) {
+    const del = document.createElement("button");
+    del.type = "button";
+    del.className = "map-card-delete";
+    del.textContent = "×";
+    del.title = "Delete this map";
+    del.setAttribute("aria-label", `Delete ${name || "map"}`);
+    del.addEventListener("click", (event) => {
+      event.stopPropagation(); // don't also trigger the card's dblclick-to-load
+      onDelete();
+    });
+    card.appendChild(del);
+  }
+
+  const thumbBox = document.createElement("div");
+  thumbBox.className = "map-card-thumb";
+  if (thumbSrc) {
+    const img = document.createElement("img");
+    img.src = thumbSrc;
+    img.alt = name || "map";
+    img.loading = "lazy";
+    thumbBox.appendChild(img);
+  } else {
+    thumbBox.classList.add("empty");
+    thumbBox.textContent = "No image";
+  }
+
+  const nameEl = document.createElement("strong");
+  nameEl.className = "map-card-name";
+  nameEl.textContent = name || "Untitled map";
+
+  const meta = document.createElement("span");
+  meta.className = "map-card-meta";
+  meta.textContent = metaText || "";
+
+  card.addEventListener("dblclick", onActivate);
+  card.append(thumbBox, nameEl, meta);
+  return card;
+}
+
 async function renderLibraryGrid(records) {
   controls.savedMapList.replaceChildren();
   if (!records.length) {
@@ -1274,49 +1317,17 @@ async function renderLibraryGrid(records) {
 
   const sorted = [...records].sort((a, b) => new Date(b.savedAt) - new Date(a.savedAt));
   for (const record of sorted) {
-    const card = document.createElement("div");
-    card.className = "map-card";
-    card.title = "Double-click to load";
-
-    // Corner delete. stopPropagation so the card's dblclick-to-load can't also fire.
-    const del = document.createElement("button");
-    del.type = "button";
-    del.className = "map-card-delete";
-    del.textContent = "×";
-    del.title = "Delete this map";
-    del.setAttribute("aria-label", `Delete ${record.name || "map"}`);
-    del.addEventListener("click", (event) => {
-      event.stopPropagation();
-      deleteLibraryMap(record.id, record.name);
-    });
-
-    // Cover thumbnail, or a placeholder tile when the map has no image.
-    const thumbBox = document.createElement("div");
-    thumbBox.className = "map-card-thumb";
+    // Cover comes from the local image store via the floor's imageId.
     const module = await getModuleRecord(record.moduleId || record.id);
     const coverId = module?.floors?.find((floor) => floor.imageId)?.imageId;
     const thumb = await ensureThumb(coverId);
-    if (thumb) {
-      const img = document.createElement("img");
-      img.src = thumb;
-      img.alt = record.name || "map";
-      img.loading = "lazy";
-      thumbBox.appendChild(img);
-    } else {
-      thumbBox.classList.add("empty");
-      thumbBox.textContent = "No image";
-    }
-
-    const name = document.createElement("strong");
-    name.className = "map-card-name";
-    name.textContent = record.name || "Untitled map";
-
-    const meta = document.createElement("span");
-    meta.className = "map-card-meta";
-    meta.textContent = record.savedAt ? new Date(record.savedAt).toLocaleString() : "Saved map";
-
-    card.addEventListener("dblclick", () => loadLibraryMap(record.id));
-    card.append(del, thumbBox, name, meta);
+    const card = buildMapCard({
+      name: record.name,
+      metaText: record.savedAt ? new Date(record.savedAt).toLocaleString() : "Saved map",
+      thumbSrc: thumb,
+      onActivate: () => loadLibraryMap(record.id),
+      onDelete: () => deleteLibraryMap(record.id, record.name),
+    });
     controls.savedMapList.appendChild(card);
   }
 }
@@ -1476,30 +1487,45 @@ async function openRemoteMap(id) {
   }
 }
 
-// Fill the "From fallon" picker with the catalog fallon is serving. Kept separate
-// from the local fast-switch (populateMapJump) on purpose: this is the REMOTE
-// catalog, and picking one pulls it down into the local library. Empty + disabled
-// when fallon is unreachable, so off-grid the picker simply shows nothing.
-async function populateFallonJump() {
-  const select = controls.fallonJump;
-  if (!select || isPlayer) return;
-  const rows = await listRemoteModules();
-  select.replaceChildren();
-  const placeholder = document.createElement("option");
-  placeholder.value = "";
-  placeholder.textContent = rows.length ? "Pull a map from fallon…" : "fallon unreachable";
-  placeholder.disabled = true;
-  placeholder.selected = true;
-  select.appendChild(placeholder);
-  rows
-    .sort((a, b) => (a.name || a.id || "").localeCompare(b.name || b.id || ""))
-    .forEach((r) => {
-      const opt = document.createElement("option");
-      opt.value = r.id;
-      opt.textContent = r.name || r.id;
-      select.appendChild(opt);
+// The "From fallon" picker — the remote catalog fallon is serving, shown as the
+// same thumbnail grid as My-maps (buildMapCard). Covers come from each row's
+// thumbnail_url (set on checkpoint, B2a); double-click pulls the map down via
+// openRemoteMap. No delete here — this is fallon's catalog, not the local library.
+function renderFallonGrid(rows) {
+  controls.fallonMapList.replaceChildren();
+  if (!rows.length) {
+    const empty = document.createElement("p");
+    empty.className = "hint";
+    empty.textContent = "No maps on fallon (or fallon is unreachable).";
+    controls.fallonMapList.appendChild(empty);
+    return;
+  }
+
+  const sorted = [...rows].sort((a, b) => (a.name || a.id || "").localeCompare(b.name || b.id || ""));
+  for (const row of sorted) {
+    const card = buildMapCard({
+      name: row.name || row.id,
+      metaText: row.updated_at ? new Date(row.updated_at).toLocaleString() : "",
+      thumbSrc: row.thumbnail_url || null, // already absolute (api.js)
+      onActivate: () => {
+        controls.fallonDialog.close();
+        openRemoteMap(row.id);
+      },
     });
-  select.disabled = rows.length === 0;
+    controls.fallonMapList.appendChild(card);
+  }
+}
+
+async function openFallonDialog() {
+  if (isPlayer) return;
+  try {
+    const rows = await listRemoteModules(); // [] when fallon is unreachable
+    if (controls.fallonMapList) controls.fallonMapList.style.setProperty("--map-thumb", mapThumbPx + "px");
+    renderFallonGrid(rows);
+    controls.fallonDialog.showModal();
+  } catch (error) {
+    window.alert(`Could not open the fallon map list: ${error.message}`);
+  }
 }
 
 // Publish the in-view map UP to fallon so other tables can pull it (the inverse
@@ -3096,7 +3122,11 @@ function persistMapThumb() {
 function setMapThumb(px) {
   mapThumbPx = Math.max(160, Math.min(380, px || 220));
   persistMapThumb();
+  // One shared zoom preference, honored by both pickers and both sliders.
   if (controls.savedMapList) controls.savedMapList.style.setProperty("--map-thumb", mapThumbPx + "px");
+  if (controls.fallonMapList) controls.fallonMapList.style.setProperty("--map-thumb", mapThumbPx + "px");
+  if (controls.mapSize && Number(controls.mapSize.value) !== mapThumbPx) controls.mapSize.value = mapThumbPx;
+  if (controls.fallonMapSize && Number(controls.fallonMapSize.value) !== mapThumbPx) controls.fallonMapSize.value = mapThumbPx;
 }
 
 function persistPaletteThumb() {

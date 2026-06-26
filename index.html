@@ -291,10 +291,8 @@
             Go to map <span class="hint-inline">(GM view only — players stay put)</span>
             <select id="mapJump"></select>
           </label>
-          <label>
-            From fallon <span class="hint-inline">(pull a map off the server)</span>
-            <select id="fallonJump"></select>
-          </label>
+          <button id="loadFallon" type="button" class="init-add-tokens">From fallon</button>
+          <p class="hint">Browse maps published to fallon and pull one onto this table. GM only.</p>
           <button id="publishFallon" type="button" class="init-add-tokens">Checkpoint to fallon</button>
           <p class="hint">Pushes the open map AND the current game state (tokens, fog, initiative) up to fallon, so another table can pull the map and you can resume this game. GM only — log in first. Overwriting an existing copy asks first.</p>
           <button id="pullFallon" type="button" class="init-add-tokens">Resume from fallon</button>
@@ -761,6 +759,20 @@
         </div>
         <p class="hint">Double-click a map to load it.</p>
         <div id="savedMapList" class="saved-map-list"></div>
+      </form>
+    </dialog>
+
+    <dialog id="fallonDialog" class="library-dialog">
+      <form method="dialog">
+        <div class="dialog-head">
+          <h2>Maps on fallon</h2>
+          <div class="library-head-tools">
+            <input id="fallonMapSize" type="range" min="160" max="380" step="20" value="220" title="Thumbnail size" aria-label="Map thumbnail size">
+            <button value="cancel" type="submit">Close</button>
+          </div>
+        </div>
+        <p class="hint">Double-click a map to pull it onto this table.</p>
+        <div id="fallonMapList" class="saved-map-list"></div>
       </form>
     </dialog>
 
