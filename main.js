@@ -4280,7 +4280,7 @@ function onPointerDown(event) {
         // Shift-click toggles a token in/out of the selection (no drag) — for fixups.
         sel.playerTokens = sel.playerTokens.includes(hit)
           ? sel.playerTokens.filter((t) => t !== hit)
-          : [...selectedPlayerTokens, hit];
+          : [...sel.playerTokens, hit];
         render();
       } else {
         // Grab a token to drag. Grabbing a token that's ALREADY in the selection keeps the whole
