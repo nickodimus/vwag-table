@@ -18,13 +18,6 @@ import {
 
 let viewSyncQueued = false; // debounce flag: at most one view broadcast queued per animation frame
 
-// Player -> GM: report this display's pixel size so the GM can draw the "player frame".
-function reportPlayerViewport() {
-  if (!isPlayer) return;
-  const rect = canvas.getBoundingClientRect();
-  relay({ type: "viewport", w: rect.width, h: rect.height });
-}
-
 // Send a message over both transports. BroadcastChannel reaches any same-origin window;
 // the direct postMessage reaches the opener/popup even when BroadcastChannel does not.
 function relay(message) {
@@ -294,6 +287,6 @@ function renderAndSyncView() {
 }
 
 export {
-  reportPlayerViewport, relay, applyRemoteView, applyIncomingPlayerView, syncPlayerViewControls, snapPlayerViewToGM, broadcastAssets, broadcastState,
+  relay, applyRemoteView, applyIncomingPlayerView, syncPlayerViewControls, snapPlayerViewToGM, broadcastAssets, broadcastState,
   broadcastView, renderAndSync, renderAndSyncView, sanitizedState, connectRelay, refitFramedView,
 };

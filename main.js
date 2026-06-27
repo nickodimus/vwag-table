@@ -68,7 +68,7 @@ import {
   cacheHas, cacheGet, cacheSet,
 } from "./content.js";
 import {
-  reportPlayerViewport, relay, applyRemoteView, applyIncomingPlayerView, syncPlayerViewControls, snapPlayerViewToGM, broadcastAssets, broadcastState,
+  relay, applyRemoteView, applyIncomingPlayerView, syncPlayerViewControls, snapPlayerViewToGM, broadcastAssets, broadcastState,
   broadcastView, renderAndSync, renderAndSyncView, connectRelay, refitFramedView,
 } from "./sync.js";
 import {
@@ -272,10 +272,6 @@ function handleMessage(message, source) {
     broadcastState();
   }
   if (message.type === "request-assets" && !isPlayer) broadcastAssets();
-  if (message.type === "viewport" && !isPlayer) {
-    ui.playerViewport = { w: message.w, h: message.h };
-    render();
-  }
   if (message.type === "token-grab" && !isPlayer) {
     // Snapshot once at the start of a remote drag so the whole move is one undo step — but only when
     // the table follows the GM's view. A drag on a floor the GM isn't viewing (table pinned
@@ -564,7 +560,6 @@ function setup() {
   resizeCanvas();
   refreshFloorUI();
   render();
-  reportPlayerViewport(); // player: announce initial size for the GM's player-frame
 }
 
 function bindControls() {
@@ -2752,7 +2747,6 @@ function watchCanvasSize() {
       resizeCanvas();
       refitFramedView(); // player: re-fit the broadcast region to the new canvas size (no-op on GM)
       render();
-      reportPlayerViewport(); // keep the GM's player-frame in sync with this display's size
     });
   };
   if (window.ResizeObserver) {
