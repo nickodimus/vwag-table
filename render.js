@@ -9,7 +9,7 @@ import {
   STAIRS_ICON_DOWN, STAIRS_ICON_NEUTRAL, STAIRS_ICON_UP, MAP_LINK_ICON_PATHS, MAP_LINK_DEFAULT_ICON, canvas, castCache, castFrameKeys, ctx, cur,
   emptyState, fogBuf, isPlayer, lightCache, lightFrameKeys, sel, state, tools,
   ui,
-  scene,
+  scene, PLAYER_FRAME_REF,
 } from "./state.js";
 import {
   clientToCanvasPoint, currentViewRotation, gridCellNative, keepUpright, nativeToScreen, screenToNative, viewTransform, worldDims,
@@ -279,13 +279,13 @@ function render() {
 // Un-rotates by the player's own rotation, then projects through the GM transform, so the
 // frame is correct even when the GM and player views are rotated differently.
 function playerFrameCorners() {
-  if (!ui.showPlayerFrame || !ui.playerViewport || !state.imageData) return null;
+  if (!ui.showPlayerFrame || !state.imageData) return null;
   const ms = state.map.scale || 1;
   const pv = state.playerView.matchDM ? state.view : state.playerView;
   if (!pv.scale) return null;
   const s = pv.scale * ms;
-  const hw = ui.playerViewport.w / 2;
-  const hh = ui.playerViewport.h / 2;
+  const hw = PLAYER_FRAME_REF.w / 2;
+  const hh = PLAYER_FRAME_REF.h / 2;
   const pr = ((pv.rotation || 0) * Math.PI) / 180;
   const cosP = Math.cos(-pr);
   const sinP = Math.sin(-pr);

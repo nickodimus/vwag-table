@@ -14,7 +14,7 @@ import {
   strokeCanvas, strokeCtx, losCanvas, losCtx, darkCanvas, darkCtx, lightCanvas, lightCtx,
   exploredMasks, lightCache, shell, emptyState, channel, APP_NAME, LEGACY_APP_NAME, SAVE_FILE_VERSION,
   DB_NAME, DB_VERSION, MAP_STORE, IMAGE_STORE, MODULE_STORE, SESSION_STORE, TOKEN_STORE, FOG_MAX_EDGE,
-  HISTORY_LIMIT, STAIRS_ICON_NEUTRAL, STAIRS_ICON_UP, STAIRS_ICON_DOWN, FEET_PER_CELL, MEASURE_UNITS, PING_DURATION, controls,
+  HISTORY_LIMIT, STAIRS_ICON_NEUTRAL, STAIRS_ICON_UP, STAIRS_ICON_DOWN, FEET_PER_CELL, MEASURE_UNITS, PING_DURATION, PLAYER_FRAME_REF, controls,
   CONDITIONS,
   MAP_LINK_ICONS, MAP_LINK_DEFAULT_ICON, MAP_KIND_CAPS,
   isPlayer, DEFAULT_GM_FOG_OPACITY, INITIAL_FLOOR_ID, makeFloor, state, normalizeInput, uuid, escapeHtml,
@@ -69,7 +69,7 @@ import {
 } from "./content.js";
 import {
   reportPlayerViewport, relay, applyRemoteView, applyIncomingPlayerView, syncPlayerViewControls, snapPlayerViewToGM, broadcastAssets, broadcastState,
-  broadcastView, renderAndSync, renderAndSyncView, connectRelay,
+  broadcastView, renderAndSync, renderAndSyncView, connectRelay, refitFramedView,
 } from "./sync.js";
 import {
   render, playerFrameCorners,
@@ -2743,6 +2743,7 @@ function watchCanvasSize() {
     requestAnimationFrame(() => {
       queued = false;
       resizeCanvas();
+      refitFramedView(); // player: re-fit the broadcast region to the new canvas size (no-op on GM)
       render();
       reportPlayerViewport(); // keep the GM's player-frame in sync with this display's size
     });
@@ -2799,10 +2800,9 @@ function fitPlayerView() {
   if (!state.imageWidth || !state.imageHeight) return;
   state.playerView.matchDM = false;
   if (controls.playerMatchDM) controls.playerMatchDM.checked = false;
-  const rect = canvas.getBoundingClientRect();
-  const vw = ui.playerViewport?.w || rect.width;
-  const vh = ui.playerViewport?.h || rect.height;
-  state.playerView.scale = fitScaleFor(vw, vh, state.playerView.rotation || 0);
+  // Fit the whole map into the broadcast region (the red box), not into any one
+  // device's viewport — keeps "Fit player view" consistent with the framing model.
+  state.playerView.scale = fitScaleFor(PLAYER_FRAME_REF.w, PLAYER_FRAME_REF.h, state.playerView.rotation || 0);
   state.playerView.cx = state.imageWidth / 2;
   state.playerView.cy = state.imageHeight / 2;
   captureSquareLock(); // fitting re-dials the locked TV square size
