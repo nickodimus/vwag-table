@@ -149,10 +149,29 @@ function applyRemoteView(message) {
   hooks.render();
 }
 
-// Player side: the player display is fully GM-driven, so it just adopts whatever
-// playerView the GM sends (framing + rotation).
+// Player side: the player display is fully GM-driven, so it adopts whatever playerView
+// the GM sends (framing + rotation), then re-derives its own on-screen scale by fitting
+// the broadcast region to THIS device (refitFramedView).
 function applyIncomingPlayerView(pv) {
   Object.assign(state.playerView, pv);
+  state.playerView.frameScale = pv.scale; // the GM's region-defining scale (pre-fit)
+  refitFramedView();                       // derive THIS device's fitted render scale
+}
+
+// Player: fit the GM's broadcast region (the red box — the frameRef world-rectangle at
+// frameScale) to this device's own canvas. Every device fits the SAME region, so the
+// framing is identical across phone / laptop / TV; a smaller screen just shows it more
+// zoomed out (letterboxed where the aspect differs). The map.scale cancels, so it reduces
+// to base * fit-factor. Re-run on every framing update (here) and on this device's own
+// resize (main.js's canvas watcher).
+function refitFramedView() {
+  if (!isPlayer) return;
+  const ref = state.playerView.frameRef;
+  const base = state.playerView.frameScale;
+  if (!ref || !ref.w || !ref.h || !base) return;
+  const rect = canvas.getBoundingClientRect();
+  if (!rect.width || !rect.height) return;
+  state.playerView.scale = base * Math.min(rect.width / ref.w, rect.height / ref.h) * 0.96;
 }
 
 function syncPlayerViewControls() {
@@ -276,5 +295,5 @@ function renderAndSyncView() {
 
 export {
   reportPlayerViewport, relay, applyRemoteView, applyIncomingPlayerView, syncPlayerViewControls, snapPlayerViewToGM, broadcastAssets, broadcastState,
-  broadcastView, renderAndSync, renderAndSyncView, sanitizedState, connectRelay,
+  broadcastView, renderAndSync, renderAndSyncView, sanitizedState, connectRelay, refitFramedView,
 };

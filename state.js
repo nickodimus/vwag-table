@@ -124,6 +124,12 @@ const MEASURE_UNITS = {
 };
 const PING_DURATION = 1300;
 
+// The player-view broadcast region — a stable, GM-anchored 16:9 rectangle (the red
+// box). Every player device fits THIS world-rectangle to its own screen, so the
+// framing is identical across phone / laptop / TV and never depends on which device
+// reported its size last. 1920x1080 = the 43" TV target aspect.
+const PLAYER_FRAME_REF = { w: 1920, h: 1080 };
+
 const controls = {
   mapUpload: document.getElementById("mapUpload"),
   dttUpload: document.getElementById("dttUpload"),
@@ -469,7 +475,7 @@ const state = {
   // Views carry a rotation (degrees) so the map can be re-oriented. The GM "rotate map"
   // drives view.rotation; the player can be rotated independently via playerView.rotation.
   view: { scale: 1, cx: 0, cy: 0, rotation: 0 },
-  playerView: { matchDM: true, scale: 1, cx: 0, cy: 0, rotation: 0 },
+  playerView: { matchDM: true, scale: 1, cx: 0, cy: 0, rotation: 0, frameRef: PLAYER_FRAME_REF },
   // Containment-trail metadata mirrored from the active map's module record. mapKind gates which
   // subsystems run (chunk 3); parentId positions this map in the breadcrumb; source marks local vs
   // fallon-served (chunk 4). Round-trip through splitState/mergeModuleSession/loadSnapshot.
@@ -502,7 +508,7 @@ export {
   strokeCanvas, strokeCtx, losCanvas, losCtx, darkCanvas, darkCtx, lightCanvas, lightCtx, tintCanvas, tintCtx,
   exploredMasks, lightCache, shell, emptyState, channel, APP_NAME, LEGACY_APP_NAME, SAVE_FILE_VERSION,
   DB_NAME, DB_VERSION, MAP_STORE, IMAGE_STORE, MODULE_STORE, SESSION_STORE, TOKEN_STORE, FOG_MAX_EDGE,
-  HISTORY_LIMIT, STAIRS_ICON_NEUTRAL, STAIRS_ICON_UP, STAIRS_ICON_DOWN, FEET_PER_CELL, MEASURE_UNITS, PING_DURATION, controls,
+  HISTORY_LIMIT, STAIRS_ICON_NEUTRAL, STAIRS_ICON_UP, STAIRS_ICON_DOWN, FEET_PER_CELL, MEASURE_UNITS, PING_DURATION, PLAYER_FRAME_REF, controls,
   MAP_LINK_ICONS, MAP_LINK_ICON_PATHS, MAP_LINK_DEFAULT_ICON, MAP_KIND_CAPS,
   CONDITIONS, EXHAUSTION_ICON,
   isPlayer, DEFAULT_GM_FOG_OPACITY, INITIAL_FLOOR_ID, makeFloor, state, normalizeInput, uuid, escapeHtml,

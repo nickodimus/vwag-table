@@ -55,7 +55,10 @@ function simplifyPolyline(points, tolerance) {
 }
 
 function activeView() {
-  return isPlayer && !state.playerView.matchDM ? state.playerView : state.view;
+  // The player always renders from its (device-fitted) playerView framing. The GM keeps
+  // playerView synced to its own view while Follow-GM is on, so this is correct in both
+  // modes and needs no matchDM branch here.
+  return isPlayer ? state.playerView : state.view;
 }
 
 // Player follow-camera: computes the effective view (center, and optionally fit-zoom) that tracks the
