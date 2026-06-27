@@ -602,6 +602,21 @@ function bindControls() {
   if (controls.pullFallon) {
     controls.pullFallon.addEventListener("click", pullSessionFromFallon);
   }
+  if (controls.inviteFallon) {
+    controls.inviteFallon.addEventListener("click", openInviteDialog);
+  }
+  if (controls.inviteCopy) {
+    controls.inviteCopy.addEventListener("click", () => {
+      const code = controls.inviteCode ? controls.inviteCode.textContent : "";
+      const restore = controls.inviteCopy.textContent;
+      const flash = (msg) => {
+        controls.inviteCopy.textContent = msg;
+        setTimeout(() => { controls.inviteCopy.textContent = restore; }, 1200);
+      };
+      if (!navigator.clipboard && !document.queryCommandSupported?.("copy")) { flash("Copy unavailable"); return; }
+      _copyText(code, controls.inviteDialog).then(() => flash("Copied"), () => flash("Copy failed"));
+    });
+  }
   // Flush autosave on the moments most likely to drop the last few changes: the
   // tab going hidden (screen sleep, tab switch — fires more reliably than unload)
   // and the page unloading. autosaveNow() self-guards player view + scratch maps.
@@ -1563,6 +1578,70 @@ async function openFallonDialog() {
 // live state) so `data` round-trips byte-identical with what the resolver hands
 // back — author edits go up only after a Save. Images first (so the module's
 // references resolve on the far side), then the module.
+// Copy helper for the invite dialog. navigator.clipboard.writeText only exists in
+// a secure context; the GM table runs on plain http://localhost, where it's absent.
+// Fall back to a temporary textarea + execCommand so copy works regardless of origin.
+// The textarea is appended INSIDE the open modal dialog — a modal makes the rest of
+// the document inert, so a textarea on <body> couldn't be selected.
+function _copyText(text, container) {
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    return navigator.clipboard.writeText(text);
+  }
+  return new Promise((resolve, reject) => {
+    try {
+      const host = container || document.body;
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      ta.setAttribute("readonly", "");
+      ta.style.position = "absolute";
+      ta.style.left = "-9999px";
+      host.appendChild(ta);
+      ta.select();
+      const ok = document.execCommand("copy");
+      host.removeChild(ta);
+      ok ? resolve() : reject(new Error("copy rejected"));
+    } catch (err) {
+      reject(err);
+    }
+  });
+}
+
+// Online tier (Chunk 3): mint a guest join code for a remote player. POST
+// /api/join/mint is guarded (require_player), so apiFetch carries the GM's Bearer —
+// gate on isLoggedIn() first and mirror publishToFallon's flashImportStatus feedback.
+// On success the server returns { code }; we show it big in inviteDialog beside the
+// public landing URL the player redeems it at. GM-only (isPlayer guard). On error,
+// flashImportStatus re-enables + flashes + restores the button; on success we restore
+// the button ourselves and open the dialog instead of flashing.
+async function openInviteDialog() {
+  if (isPlayer) return;
+  const btn = controls.inviteFallon;
+  const original = btn ? btn.textContent : "";
+  if (!isLoggedIn()) {
+    flashImportStatus(btn, "Log in to Victen Worhl first", original);
+    return;
+  }
+  if (btn) { btn.disabled = true; btn.textContent = "Minting…"; }
+  let code;
+  try {
+    const resp = await apiFetch("/api/join/mint", { method: "POST" });
+    code = resp && resp.code;
+  } catch (err) {
+    const msg = err.status === 401
+      ? "Session expired — log in again"
+      : "Can't reach Victen Worhl. Is fallon online?";
+    flashImportStatus(btn, msg, original);
+    return;
+  }
+  if (btn) { btn.disabled = false; btn.textContent = original; }
+  if (!code) {
+    flashImportStatus(btn, "No code returned — try again", original);
+    return;
+  }
+  if (controls.inviteCode) controls.inviteCode.textContent = code;
+  controls.inviteDialog?.showModal();
+}
+
 async function publishToFallon() {
   if (isPlayer) return;
   const btn = controls.publishFallon;
