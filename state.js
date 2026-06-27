@@ -279,6 +279,7 @@ const controls = {
   playerOffsetY: document.getElementById("playerOffsetY"),
   modeHint: document.getElementById("modeHint"),
   playerFullscreen: document.getElementById("playerFullscreen"),
+  playerFollow: document.getElementById("playerFollow"),
   libraryDialog: document.getElementById("libraryDialog"),
   savedMapList: document.getElementById("savedMapList"),
   mapSize: document.getElementById("mapSize"),

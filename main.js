@@ -553,6 +553,7 @@ function setup() {
 
   if (isPlayer) {
     controls.playerFullscreen?.addEventListener("click", toggleFullscreen);
+    controls.playerFollow?.addEventListener("click", toggleFollow);
     setupPlayerCursor();
   }
 
@@ -4904,15 +4905,14 @@ function onKeyDown(event) {
       return;
     }
     if (event.key === "c" || event.key === "C") {
-      playerCam.follow = !playerCam.follow; // toggle the party follow-camera
-      if (playerCam.follow) ensureCameraLoop(); else stopCameraLoop();
-      render();
+      toggleFollow(); // shared with the on-screen follow button (keeps .active in sync)
       return;
     }
     if (event.key === "z" || event.key === "Z") {
       playerCam.fitZoom = !playerCam.fitZoom; // toggle fit-to-party zoom
       if (playerCam.fitZoom) playerCam.follow = true; // fitting implies following the party
       if (playerCam.follow) ensureCameraLoop(); else stopCameraLoop();
+      controls.playerFollow?.classList.toggle("active", playerCam.follow);
       render();
       return;
     }
@@ -5311,6 +5311,16 @@ function toggleFullscreen() {
   } else {
     document.documentElement.requestFullscreen?.();
   }
+}
+
+// Player: flip the party follow-camera. Shared by the on-screen button (for touch, where the
+// 'c' key is unreachable) and the 'c' key itself, so the two stay in sync. The .active class
+// reflects the current state on the button.
+function toggleFollow() {
+  playerCam.follow = !playerCam.follow;
+  if (playerCam.follow) ensureCameraLoop(); else stopCameraLoop();
+  controls.playerFollow?.classList.toggle("active", playerCam.follow);
+  render();
 }
 
 
