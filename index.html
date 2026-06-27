@@ -669,6 +669,21 @@
           <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v3"/><path d="M12 19v3"/><path d="M2 12h3"/><path d="M19 12h3"/></svg>
         </button>
 
+        <div id="playerDpad" class="player-dpad" aria-label="Move selected token one cell">
+          <button id="dpadUp" class="dpad-btn dpad-up" type="button" aria-label="Move up">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 14l6-6 6 6"/></svg>
+          </button>
+          <button id="dpadLeft" class="dpad-btn dpad-left" type="button" aria-label="Move left">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 6l-6 6 6 6"/></svg>
+          </button>
+          <button id="dpadRight" class="dpad-btn dpad-right" type="button" aria-label="Move right">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 6l6 6-6 6"/></svg>
+          </button>
+          <button id="dpadDown" class="dpad-btn dpad-down" type="button" aria-label="Move down">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 10l6 6 6-6"/></svg>
+          </button>
+        </div>
+
         <canvas id="battlemap" aria-label="Battlemap canvas"></canvas>
         <div class="empty-state" id="emptyState">
           <strong>No map loaded</strong>

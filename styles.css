@@ -997,6 +997,57 @@ input:disabled {
   opacity: 1;
 }
 
+/* Touch d-pad: one cell per tap. Bottom-right (clear of follow=top-left, roster/fullscreen=
+   top-right, initiative=bottom-left). 3x3 grid placing the arrows in a cross; empty cells fall
+   through to the canvas. Shown only on the player view. */
+.player-dpad {
+  display: none;
+  gap: 4px;
+  grid-template-columns: repeat(3, 46px);
+  grid-template-rows: repeat(3, 46px);
+  bottom: 24px;
+  position: absolute;
+  right: 20px;
+  z-index: 7;
+}
+
+.app-shell[data-role="player"] .player-dpad {
+  display: grid;
+}
+
+.dpad-btn {
+  align-items: center;
+  background: rgba(25, 28, 29, 0.6);
+  border: 1px solid rgba(120, 130, 130, 0.4);
+  border-radius: 8px;
+  color: var(--text);
+  display: flex;
+  justify-content: center;
+  opacity: 0.6;
+  transition: opacity 120ms ease, background 120ms ease;
+}
+
+.dpad-btn:active {
+  background: var(--brand);
+  color: var(--on-brand);
+  opacity: 1;
+}
+
+.dpad-btn svg {
+  fill: none;
+  height: 22px;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2;
+  width: 22px;
+}
+
+.dpad-up { grid-column: 2; grid-row: 1; }
+.dpad-left { grid-column: 1; grid-row: 2; }
+.dpad-right { grid-column: 3; grid-row: 2; }
+.dpad-down { grid-column: 2; grid-row: 3; }
+
 /* ---- Top-right stage widgets (initiative toggle + floor nav) ---- */
 .stage-top-right {
   align-items: flex-end;
