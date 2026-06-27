@@ -297,6 +297,8 @@
           <p class="hint">Pushes the open map AND the current game state (tokens, fog, initiative) up to fallon, so another table can pull the map and you can resume this game. GM only — log in first. Overwriting an existing copy asks first.</p>
           <button id="pullFallon" type="button" class="init-add-tokens">Resume from fallon</button>
           <p class="hint">Pulls this map's saved game state down from fallon and loads it onto this table, replacing the current tokens/fog/initiative. Open the map first (use "From fallon" if it's new here).</p>
+          <button id="inviteFallon" type="button" class="init-add-tokens">Invite player</button>
+          <p class="hint">Mints a join code a remote player redeems at game.worhl.net to watch this table over the internet. GM only — log in first. Code expires in 12h.</p>
           <div id="mapLinkSelPanel" class="hidden">
             <label>
               Map-link leads to
@@ -823,6 +825,20 @@
         <div class="name-dialog-actions">
           <button value="place" type="submit" class="save-btn">Place</button>
           <button value="cancel" type="submit">Cancel</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="inviteDialog" class="name-dialog">
+      <form method="dialog">
+        <h2>Invite a player</h2>
+        <p class="hint">Give this code to a remote player. They redeem it at the URL below to watch this table over the internet.</p>
+        <div id="inviteCode" class="invite-code" aria-live="polite">– – – –</div>
+        <div id="inviteUrl" class="invite-url">https://game.worhl.net/</div>
+        <p class="hint">The code expires in 12 hours.</p>
+        <div class="name-dialog-actions">
+          <button id="inviteCopy" type="button" class="save-btn">Copy code</button>
+          <button value="cancel" type="submit">Close</button>
         </div>
       </form>
     </dialog>
