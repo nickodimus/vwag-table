@@ -147,6 +147,7 @@ button:hover {
      by transitioning the track widths. */
   grid-template-columns: 320px minmax(0, 1fr) 0px;
   height: 100vh;
+  height: 100dvh; /* dvh = height visible excluding mobile browser chrome; the vh line is the fallback */
   transition: grid-template-columns 0.28s ease;
   width: 100vw;
 }
@@ -182,6 +183,7 @@ button:hover {
 
 .app-shell[data-role="player"] .stage-wrap {
   height: 100vh;
+  height: 100dvh; /* fit the player stage to the visible area so top/bottom HUD clears the toolbars */
 }
 
 .gm-panel {
