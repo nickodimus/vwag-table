@@ -554,6 +554,10 @@ function setup() {
   if (isPlayer) {
     controls.playerFullscreen?.addEventListener("click", toggleFullscreen);
     controls.playerFollow?.addEventListener("click", toggleFollow);
+    controls.dpadUp?.addEventListener("click", () => dpadStep("ArrowUp"));
+    controls.dpadDown?.addEventListener("click", () => dpadStep("ArrowDown"));
+    controls.dpadLeft?.addEventListener("click", () => dpadStep("ArrowLeft"));
+    controls.dpadRight?.addEventListener("click", () => dpadStep("ArrowRight"));
     setupPlayerCursor();
   }
 
@@ -3645,6 +3649,17 @@ function glideTick(now) {
 // End the glide and commit the final position authoritatively (token-drop = snap + clamp + broadcast),
 // pairing the single grab into one undo step. Pass skipCommit=true only when tearing down because the
 // selection vanished (nothing to drop).
+// Player touch d-pad: move the selected token(s) exactly ONE cell per tap, reusing the glide
+// machinery (grab -> one cell-step -> drop/commit). A discrete step rather than a held march,
+// so it's precise on touch where the arrow keys aren't reachable. No-op if nothing's selected
+// or a wall/occupant blocks the step.
+function dpadStep(key) {
+  if (!isPlayer || !sel.playerTokens.length) return;
+  glideKey = key;
+  glideStepOnce();  // lazy grab + move one cell (no-op if blocked)
+  stopGlide(false); // commit the drop if a step landed; harmless no-op otherwise
+}
+
 function stopGlide(skipCommit) {
   if (glideRaf) { cancelAnimationFrame(glideRaf); glideRaf = 0; }
   glideKey = null;
