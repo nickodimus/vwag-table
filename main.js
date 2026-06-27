@@ -233,6 +233,8 @@ let draggingFrame = false; // GM is dragging the player-view frame to pan the pl
 let dragGrab = { dx: 0, dy: 0 }; // offset from cursor to object center while dragging images/notes/frame
 let groupDragOffsets = null; // [{token,dx,dy}] formation captured at grab, for a player group-drag
 let dragGrabbed = false; // a token-grab has been relayed for the current player pointer-drag
+let lastTokenTap = { token: null, time: 0 }; // tracks the previous player token tap for double-tap traverse
+const DOUBLE_TAP_MS = 350; // second tap on the same token within this window = traverse gesture
 let dragMeasureStart = null; // the dragged token's pre-drag position; anchors the live drag-distance line
 
 const undoStack = [];
@@ -4220,6 +4222,22 @@ function triggerPing(native) {
 
 /* ----------------------------- pointer input ----------------------------- */
 
+// Player: a double-tapped token that's standing on a marker traverses — stairs first
+// (ride the floor change, carrying the current selection if this token is part of it),
+// else a map-link (cross maps: region -> town -> battle). Mirrors the 's'/'d' keys, but
+// driven by touch. On a marker = goes; not on a marker = no-op. The GM owns the floor/map
+// stacks, so we only relay the intent and the GM carries the table.
+function tokenTraverse(token) {
+  const stair = hitStair({ x: token.x, y: token.y });
+  if (stair && stair.targetFloorId) {
+    const riders = sel.playerTokens.includes(token) && sel.playerTokens.length ? sel.playerTokens : [token];
+    relay({ type: "stair-traverse", ids: riders.map((t) => t.id), targetFloorId: stair.targetFloorId });
+    return;
+  }
+  const link = hitMapLink({ x: token.x, y: token.y });
+  if (link && link.targetMapId) relay({ type: "map-link-descend", targetMapId: link.targetMapId });
+}
+
 function onPointerDown(event) {
   ui.lastPointer = { clientX: event.clientX, clientY: event.clientY };
 
@@ -4233,6 +4251,15 @@ function onPointerDown(event) {
     if (hit) {
       // On touch/pen, stop the browser from claiming the gesture (scroll/cancel) for itself.
       if (event.pointerType !== "mouse") event.preventDefault();
+      // Double-tap the same token within the window = traverse (stairs/map-link). Detected here
+      // in the pointer flow rather than via dblclick, which the grab preventDefault eats on touch.
+      const now = performance.now();
+      if (lastTokenTap.token === hit && now - lastTokenTap.time < DOUBLE_TAP_MS) {
+        lastTokenTap = { token: null, time: 0 };
+        tokenTraverse(hit); // on a marker -> relays the traverse; otherwise a no-op
+        return; // don't arm a drag on the traverse tap
+      }
+      lastTokenTap = { token: hit, time: now };
       if (event.shiftKey) {
         // Shift-click toggles a token in/out of the selection (no drag) — for fixups.
         sel.playerTokens = sel.playerTokens.includes(hit)
@@ -4811,7 +4838,10 @@ function onWheel(event) {
 
 function onDoubleClick(event) {
   if (isPlayer) {
-    toggleFullscreen();
+    // A double-tap ON a player token is the traverse gesture (handled in the pointer flow, so it
+    // works on touch where the synthesized dblclick is unreliable). Don't also toggle fullscreen
+    // for it; double-tapping anywhere else still toggles fullscreen.
+    if (!hitToken(toNativePoint(event), (t) => t.type === "player")) toggleFullscreen();
     return;
   }
   const note = hitNote(clientToCanvasPoint(event));
