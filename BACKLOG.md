@@ -16,6 +16,11 @@ Shipped items are removed once merged — this file is what's left to do, not a 
 
 ## Performance / cleanup
 
+- **Keyboard shortcuts blocked until first focus** — window `keydown` handlers don't fire until
+  the page/canvas first receives focus (a click). On a fresh load, or after focus leaves the
+  document, keystrokes are swallowed until you click back into the page. Pre-existing input-focus
+  issue, surfaced again by the `?` overlay. Likely fix: focus the canvas on load / when a map
+  becomes ready, so the keymap is live without an initial click.
 - Re-author very large wall polylines into smaller segments so heavy maps stay responsive.
 - Event-listener leak audit across the module split.
 - Large-map memory handling — cap pixel/file size on load, or chunk very large maps, so the
@@ -52,7 +57,7 @@ links, lighting/LOS, bulk token import). These are the net-new ones worth consid
 
 Hand-ported into the modules, not merged. Ordered by value-to-effort:
 
-1. Shortcuts overlay (press `?` for the hotkey list).
+1. ~~Shortcuts overlay (press `?` for the hotkey list).~~ Shipped (`shortcuts.js`, context-aware GM/player).
 2. DM PDF windows (see Community-requested above — same feature).
 3. Rich-text notes (upgrade the existing floating notes).
 4. Image transform handles (on-canvas resize/rotate for dropped map images).
