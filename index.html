@@ -259,7 +259,7 @@
 
         <section class="control-section">
           <div class="section-title">
-            <h2>Map</h2>
+            <h2>Map setup</h2>
           </div>
           <label>
             Map type
@@ -270,8 +270,6 @@
             </select>
           </label>
           <p class="hint">Battlemaps have floors and an initiative tracker. Town and world maps hide both — use map-links to travel between them. Saves with the map.</p>
-          <button id="importPartyWorld" type="button" class="init-add-tokens world-only">Import party</button>
-          <p class="hint world-only">Adds your party to the player-screen roster (names + HP) without dropping any tokens — place one party token yourself for position. GM only, log in first.</p>
           <div id="scaleCalibrateRow" class="world-only scale-cal">
             <p class="hint">Match the ruler to this map's printed scale: type the scale bar's length, then drag a line along it.</p>
             <div class="scale-cal-fields">
@@ -291,14 +289,6 @@
             Go to map <span class="hint-inline">(GM view only — players stay put)</span>
             <select id="mapJump"></select>
           </label>
-          <button id="loadFallon" type="button" class="init-add-tokens">From fallon</button>
-          <p class="hint">Browse maps published to fallon and pull one onto this table. GM only.</p>
-          <button id="publishFallon" type="button" class="init-add-tokens">Checkpoint to fallon</button>
-          <p class="hint">Pushes the open map AND the current game state (tokens, fog, initiative) up to fallon, so another table can pull the map and you can resume this game. GM only — log in first. Overwriting an existing copy asks first.</p>
-          <button id="pullFallon" type="button" class="init-add-tokens">Resume from fallon</button>
-          <p class="hint">Pulls this map's saved game state down from fallon and loads it onto this table, replacing the current tokens/fog/initiative. Open the map first (use "From fallon" if it's new here).</p>
-          <button id="inviteFallon" type="button" class="init-add-tokens">Invite player</button>
-          <p class="hint">Mints a join code a remote player redeems at game.worhl.net to watch this table over the internet. GM only — log in first. Code expires in 12h.</p>
           <div id="mapLinkSelPanel" class="hidden">
             <label>
               Map-link leads to
@@ -314,6 +304,22 @@
             </label>
             <button id="mapLinkSelDelete" class="danger-button" type="button">Delete this map-link</button>
           </div>
+        </section>
+
+        <section class="control-section hidden" id="onlineSection">
+          <div class="section-title">
+            <h2>Online session</h2>
+          </div>
+          <button id="importPartyWorld" type="button" class="init-add-tokens world-only">Import party</button>
+          <p class="hint world-only">Adds your party to the player-screen roster (names + HP) without dropping any tokens — place one party token yourself for position.</p>
+          <button id="loadFallon" type="button" class="init-add-tokens">From fallon</button>
+          <p class="hint">Browse maps published to fallon and pull one onto this table.</p>
+          <button id="publishFallon" type="button" class="init-add-tokens">Checkpoint to fallon</button>
+          <p class="hint">Pushes the open map AND the current game state (tokens, fog, initiative) up to fallon, so another table can pull the map and you can resume this game. Overwriting an existing copy asks first.</p>
+          <button id="pullFallon" type="button" class="init-add-tokens">Resume from fallon</button>
+          <p class="hint">Pulls this map's saved game state down from fallon and loads it onto this table, replacing the current tokens/fog/initiative. Open the map first (use "From fallon" if it's new here).</p>
+          <button id="inviteFallon" type="button" class="init-add-tokens">Invite player</button>
+          <p class="hint">Mints a join code a remote player redeems at game.worhl.net to watch this table over the internet. Code expires in 12h.</p>
         </section>
 
         <section class="control-section" id="floorsSection">
