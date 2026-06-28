@@ -607,6 +607,19 @@ function bindControls() {
   if (controls.inviteFallon) {
     controls.inviteFallon.addEventListener("click", openInviteDialog);
   }
+  // The Online session section (Import party + fallon controls) belongs to a
+  // logged-in GM only. api.js broadcasts "vwag:auth" from its auth chokepoint on
+  // login, logout, and init; reflect that here. The direct call covers the
+  // restored-token case (token loaded before this runs); the event covers later
+  // login/logout with no reload. Guests carry a _token too, so guard on isPlayer.
+  if (!isPlayer) {
+    const onlineSection = document.getElementById("onlineSection");
+    const applyOnlineVisibility = () => {
+      if (onlineSection) onlineSection.classList.toggle("hidden", !isLoggedIn());
+    };
+    document.addEventListener("vwag:auth", applyOnlineVisibility);
+    applyOnlineVisibility();
+  }
   if (controls.inviteCopy) {
     controls.inviteCopy.addEventListener("click", () => {
       const code = controls.inviteCode ? controls.inviteCode.textContent : "";
