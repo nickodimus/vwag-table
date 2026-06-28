@@ -312,12 +312,12 @@
           </div>
           <button id="importPartyWorld" type="button" class="init-add-tokens world-only">Import party</button>
           <p class="hint world-only">Adds your party to the player-screen roster (names + HP) without dropping any tokens — place one party token yourself for position.</p>
-          <button id="loadFallon" type="button" class="init-add-tokens">From fallon</button>
-          <p class="hint">Browse maps published to fallon and pull one onto this table.</p>
-          <button id="publishFallon" type="button" class="init-add-tokens">Checkpoint to fallon</button>
-          <p class="hint">Pushes the open map AND the current game state (tokens, fog, initiative) up to fallon, so another table can pull the map and you can resume this game. Overwriting an existing copy asks first.</p>
-          <button id="pullFallon" type="button" class="init-add-tokens">Resume from fallon</button>
-          <p class="hint">Pulls this map's saved game state down from fallon and loads it onto this table, replacing the current tokens/fog/initiative. Open the map first (use "From fallon" if it's new here).</p>
+          <button id="loadFallon" type="button" class="init-add-tokens">Get a map from Fallon</button>
+          <p class="hint">Browse maps published to Fallon and pull one onto this table.</p>
+          <button id="publishFallon" type="button" class="init-add-tokens">Checkpoint to Fallon</button>
+          <p class="hint">Pushes the open map AND the current game state (tokens, fog, initiative) up to Fallon, so another table can pull the map and you can resume this game. Overwriting an existing copy asks first.</p>
+          <button id="pullFallon" type="button" class="init-add-tokens">Resume from Fallon</button>
+          <p class="hint">Pulls this map's saved game state down from Fallon and loads it onto this table, replacing the current tokens/fog/initiative. Open the map first (use "Get a map from Fallon" if it's new here).</p>
           <button id="inviteFallon" type="button" class="init-add-tokens">Invite player</button>
           <p class="hint">Mints a join code a remote player redeems at game.worhl.net to watch this table over the internet. Code expires in 12h.</p>
         </section>
@@ -792,7 +792,7 @@
     <dialog id="fallonDialog" class="library-dialog">
       <form method="dialog">
         <div class="dialog-head">
-          <h2>Maps on fallon</h2>
+          <h2>Maps on Fallon</h2>
           <div class="library-head-tools">
             <input id="fallonMapSize" type="range" min="160" max="380" step="20" value="220" title="Thumbnail size" aria-label="Map thumbnail size">
             <button value="cancel" type="submit">Close</button>

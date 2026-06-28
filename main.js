@@ -1490,7 +1490,7 @@ async function openRemoteMap(id) {
     module = null;
   }
   if (!module) {
-    window.alert("Couldn't load that map from Victen Worhl. Is fallon online?");
+    window.alert("Couldn't load that map from Victen Worhl. Is Fallon online?");
     return;
   }
   if (!(await getSessionRecord(id))) {
@@ -1528,7 +1528,7 @@ function renderFallonGrid(rows) {
   if (!rows.length) {
     const empty = document.createElement("p");
     empty.className = "hint";
-    empty.textContent = "No maps on fallon (or fallon is unreachable).";
+    empty.textContent = "No maps on Fallon (or Fallon is unreachable).";
     controls.fallonMapList.appendChild(empty);
     return;
   }
@@ -1558,15 +1558,15 @@ function renderFallonGrid(rows) {
 // server-side too — this only gates the UI. The confirm spells out the blast radius.
 async function deleteFallonMap(id, name) {
   if (!window.confirm(
-    `Delete "${name}" from fallon for everyone? This removes the map, its images, and any saved game on the server. This can't be undone.`
+    `Delete "${name}" from Fallon for everyone? This removes the map, its images, and any saved game on the server. This can't be undone.`
   )) return;
   try {
     await deleteRemoteModule(id);
   } catch (err) {
     const msg = err.status === 403 ? "That isn't your map to delete."
       : err.status === 401 ? "Your session expired — log in again."
-      : err.status === 404 ? "That map is already gone from fallon."
-      : "Couldn't reach fallon to delete that map.";
+      : err.status === 404 ? "That map is already gone from Fallon."
+      : "Couldn't reach Fallon to delete that map.";
     window.alert(msg);
     return;
   }
@@ -1583,7 +1583,7 @@ async function openFallonDialog() {
     renderFallonGrid(rows);
     controls.fallonDialog.showModal();
   } catch (error) {
-    window.alert(`Could not open the fallon map list: ${error.message}`);
+    window.alert(`Could not open the Fallon map list: ${error.message}`);
   }
 }
 
@@ -1644,7 +1644,7 @@ async function openInviteDialog() {
   } catch (err) {
     const msg = err.status === 401
       ? "Session expired — log in again"
-      : "Can't reach Victen Worhl. Is fallon online?";
+      : "Can't reach Victen Worhl. Is Fallon online?";
     flashImportStatus(btn, msg, original);
     return;
   }
@@ -1683,7 +1683,7 @@ async function publishToFallon() {
   let exists = false;
   try { exists = await remoteModuleExists(id); } catch { exists = false; }
   if (exists && !window.confirm(
-    `"${module.name || id}" is already on fallon. Overwrite it and its saved session with this table's current map and game state?`
+    `"${module.name || id}" is already on Fallon. Overwrite it and its saved session with this table's current map and game state?`
   )) {
     return;
   }
@@ -1719,7 +1719,7 @@ async function publishToFallon() {
   } catch (err) {
     const msg = err.status === 401
       ? "Session expired — log in again"
-      : "Can't reach Victen Worhl. Is fallon online?";
+      : "Can't reach Victen Worhl. Is Fallon online?";
     flashImportStatus(btn, msg, original);
     return;
   }
@@ -1750,18 +1750,18 @@ async function pullSessionFromFallon() {
     remote = await fetchRemoteSession(id);
   } catch (err) {
     const msg = err.status === 404
-      ? "No saved session on fallon for this map"
-      : "Can't reach Victen Worhl. Is fallon online?";
+      ? "No saved session on Fallon for this map"
+      : "Can't reach Victen Worhl. Is Fallon online?";
     flashImportStatus(btn, msg, original);
     return;
   }
   if (!remote) {
-    flashImportStatus(btn, "No saved session on fallon for this map", original);
+    flashImportStatus(btn, "No saved session on Fallon for this map", original);
     return;
   }
 
   if (!window.confirm(
-    "Replace this table's current game state (tokens, fog, initiative) with the saved session from fallon? This can't be undone."
+    "Replace this table's current game state (tokens, fog, initiative) with the saved session from Fallon? This can't be undone."
   )) return;
 
   if (btn) { btn.disabled = true; btn.textContent = "Resuming…"; }
@@ -1777,7 +1777,7 @@ async function pullSessionFromFallon() {
     flashImportStatus(btn, `Couldn't apply the session: ${err.message}`, original);
     return;
   }
-  flashImportStatus(btn, "Resumed from fallon", original);
+  flashImportStatus(btn, "Resumed from Fallon", original);
 }
 
 async function loadLibraryMap(id) {
@@ -4018,7 +4018,7 @@ async function importMyCharacters() {
   } catch (err) {
     const msg = err.status === 401
       ? "Session expired — log in again"
-      : "Can't reach Victen Worhl. Is fallon online?";
+      : "Can't reach Victen Worhl. Is Fallon online?";
     flashImportStatus(btn, msg, original);
     return;
   }
