@@ -160,7 +160,7 @@ async function _postJson(path, payload) {
     });
   } catch {
     // Network error — fallon down / off-grid / wrong host. Distinct from auth.
-    return { ok: false, error: "Can't reach Victen Worhl. Is fallon online?" };
+    return { ok: false, error: "Can't reach Victen Worhl. Is Fallon online?" };
   }
 
   let body = null;
