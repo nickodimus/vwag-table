@@ -820,10 +820,9 @@ function bindControls() {
     updateSelectionPanels();
     renderAndSync();
   });
-  controls.aoeSelLabel?.addEventListener("input", () => {
+  controls.aoeSelRename?.addEventListener("click", () => {
     if (!sel.aoe) return;
-    sel.aoe.label = controls.aoeSelLabel.value.trim();
-    renderAndSync();
+    promptAoeName(sel.aoe, { isNew: false });
   });
   controls.aoeSelColor?.addEventListener("input", () => {
     if (!sel.aoe) return;
@@ -3887,7 +3886,6 @@ function updateSelectionPanels() {
   if (controls.aoeSelPanel) {
     controls.aoeSelPanel.classList.toggle("hidden", !sel.aoe);
     if (sel.aoe) {
-      if (controls.aoeSelLabel) controls.aoeSelLabel.value = sel.aoe.label || "";
       if (controls.aoeSelColor) controls.aoeSelColor.value = sel.aoe.color || "#e2603a";
     }
   }
@@ -4389,30 +4387,35 @@ function onPointerDown(event) {
   }
 
   if (ui.mode === "aoe") {
-    // Click an existing zone to select it (Selected AoE panel); click empty map to commit the
-    // current hover template as a persistent, labeled zone and select it for naming.
+    // Click an existing zone to select it; click empty map to drop a new zone and name it via a
+    // modal. The new zone shows on the GM table as a preview but only commits to state and
+    // broadcasts to players once a name is saved (Skip discards it).
     const hit = hitAoe(native);
     if (hit) {
       sel.aoe = hit;
-    } else {
-      pushHistory();
-      const a = {
-        id: uuid(),
-        shape: tools.aoe.shape,
-        x: native.x,
-        y: native.y,
-        sizeFt: tools.aoe.sizeFt,
-        angle: tools.aoe.angle,
-        color: tools.aoe.color,
-        label: "",
-        effect: null, // reserved: a future animated spell visual binds here (animated-token type)
-      };
-      state.aoes.push(a);
-      sel.aoe = a;
+      sel.token = sel.image = sel.note = sel.stair = null;
+      updateSelectionPanels();
+      renderAndSync();
+      return;
     }
+    pushHistory();
+    const a = {
+      id: uuid(),
+      shape: tools.aoe.shape,
+      x: native.x,
+      y: native.y,
+      sizeFt: tools.aoe.sizeFt,
+      angle: tools.aoe.angle,
+      color: tools.aoe.color,
+      label: "",
+      effect: null, // reserved: a future animated spell visual binds here (animated-token type)
+    };
+    state.aoes.push(a);
+    sel.aoe = a;
     sel.token = sel.image = sel.note = sel.stair = null;
     updateSelectionPanels();
-    renderAndSync();
+    render(); // GM preview only — players receive it after the name is saved
+    promptAoeName(a, { isNew: true });
     return;
   }
 
@@ -5347,6 +5350,44 @@ function promptRoomName(room) {
   controls.nameDialog.showModal();
   controls.roomNameInput.focus();
   controls.roomNameInput.select();
+}
+
+// GM-only: name an area of effect through a modal. The native <dialog> owns keyboard focus while
+// open, so typing the name can't trigger tool hotkeys. For a fresh drop (isNew) the zone has
+// already been pushed to state.aoes as a GM-only preview; Save names it and broadcasts to players,
+// while Skip/Escape removes it (nothing was synced). For a rename, Save updates the label and
+// Skip leaves it unchanged.
+function promptAoeName(zone, { isNew }) {
+  if (!controls.aoeNameDialog || !controls.aoeNameInput) {
+    if (isNew) renderAndSync(); // no dialog available — keep the zone rather than lose it
+    return;
+  }
+  controls.aoeNameInput.value = zone.label || "";
+  controls.aoeNameDialog.returnValue = "";
+  controls.aoeNameDialog.addEventListener(
+    "close",
+    () => {
+      const saved = controls.aoeNameDialog.returnValue === "save";
+      if (isNew) {
+        if (saved) {
+          zone.label = controls.aoeNameInput.value.trim();
+          renderAndSync(); // commit is implicit (already in state.aoes) — this broadcasts it
+        } else {
+          state.aoes = state.aoes.filter((a) => a !== zone); // discard the un-named preview
+          if (sel.aoe === zone) sel.aoe = null;
+          updateSelectionPanels();
+          render(); // GM-only repaint; players never received it
+        }
+      } else if (saved) {
+        zone.label = controls.aoeNameInput.value.trim();
+        renderAndSync();
+      }
+    },
+    { once: true },
+  );
+  controls.aoeNameDialog.showModal();
+  controls.aoeNameInput.focus();
+  controls.aoeNameInput.select();
 }
 
 
