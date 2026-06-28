@@ -50,6 +50,10 @@
             <button id="openPlayer" class="top-action" type="button" title="Open player display" aria-label="Open player display">
               <svg viewBox="0 0 24 24" aria-hidden="true"><rect width="20" height="14" x="2" y="3" rx="2"/><line x1="8" x2="16" y1="21" y2="21"/><line x1="12" x2="12" y1="17" y2="21"/></svg>
             </button>
+            <button id="pdfBtn" class="top-action" type="button" title="Open PDF resource (GM-only)" aria-label="Open PDF resource">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 3v4a1 1 0 0 0 1 1h4"/><path d="M5 12v-7a2 2 0 0 1 2 -2h7l5 5v4"/><path d="M5 18h1.5a1.5 1.5 0 0 0 0 -3h-1.5v6"/><path d="M17 18h2"/><path d="M20 15h-3v6"/><path d="M11 15v6h1a2 2 0 0 0 2 -2v-2a2 2 0 0 0 -2 -2h-1"/></svg>
+            </button>
+            <input id="pdfFileInput" type="file" accept="application/pdf" multiple hidden>
           </div>
         </section>
 
@@ -660,6 +664,9 @@
         <!-- Initiative order overlay (GM always when active; player when shared) -->
         <div class="initiative-overlay" id="initiativeOverlay" hidden></div>
 
+        <!-- GM-only floating PDF resource windows (session-only, never synced or saved). -->
+        <div id="pdfLayer"></div>
+
         <!-- Player floor badge top-right (player display only) -->
         <div class="player-floor-badge" id="playerFloorBadge" hidden></div>
         <div class="player-party-roster" id="playerPartyRoster" hidden></div>
@@ -879,5 +886,6 @@
     <script type="module" src="main.js"></script>
     <script type="module" src="api.js"></script>
     <script type="module" src="shortcuts.js"></script>
+    <script type="module" src="pdf-windows.js"></script>
   </body>
 </html>
