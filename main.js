@@ -1670,9 +1670,47 @@ async function publishToFallon() {
     flashImportStatus(btn, "No map open to publish", original);
     return;
   }
-  const module = await getModuleRecord(id);
+  let module = await getModuleRecord(id);
   if (!module) {
     flashImportStatus(btn, "Save this map first", original);
+    return;
+  }
+
+  // Flush the live table to the local library FIRST, so the checkpoint always ships
+  // the current state — including map-level edits autosave doesn't cover, like scale
+  // calibration (measure rides the module; autosave only writes the session). Without
+  // this you'd have to click Save before every push. Keeps the record's id + name +
+  // metadata; just refreshes its contents from live state, then publishes that.
+  try {
+    captureCurrentFloor();
+    const prevSession = await getSessionRecord(id);
+    const live = splitState(state);
+    Object.assign(live.module, {
+      id,
+      app: APP_NAME,
+      version: SAVE_FILE_VERSION,
+      kind: "module",
+      name: module.name || id,
+      parentId: module.parentId ?? null,
+      source: module.source || "local",
+      savedAt: new Date().toISOString(),
+    });
+    await saveModuleRecord(live.module);
+    if (prevSession) {
+      Object.assign(live.session, {
+        id,
+        moduleId: prevSession.moduleId || id,
+        app: APP_NAME,
+        version: SAVE_FILE_VERSION,
+        kind: "session",
+        name: prevSession.name || id,
+        savedAt: new Date().toISOString(),
+      });
+      await saveSessionRecord(live.session);
+    }
+    module = live.module; // publish the freshly-saved module below
+  } catch (err) {
+    flashImportStatus(btn, `Couldn't save before checkpoint: ${err.message}`, original);
     return;
   }
 
