@@ -537,6 +537,11 @@ function _toggleEye() {
 }
 
 function _refreshButton() {
+  // Single auth chokepoint: called on login success, logout, and init. Broadcast
+  // the current auth state so the rest of the app (e.g. the Online session sidebar
+  // section) can show/hide itself. Fired before the no-button bail so listeners run
+  // regardless of whether the toolbar button exists.
+  document.dispatchEvent(new CustomEvent("vwag:auth", { detail: { loggedIn: isLoggedIn() } }));
   if (!btn) return;
   if (isLoggedIn()) {
     btn.innerHTML = USER_ICON;
