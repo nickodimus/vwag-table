@@ -8,6 +8,12 @@ A local-first virtual tabletop for game masters. The GM runs a private panel and
 **Do I need an account or an internet connection?**
 No, not for normal play. The GM and player windows talk to each other directly in the browser, fully offline. You only need a backend (and an account, or your own server) if you want *online* play with players who aren't in the room — see *Online play* below.
 
+**Does it run on Mac / Windows / Linux?**
+Yes. vwag-table is browser-based, so it runs anywhere a current Chromium-based browser (Chrome, Edge) does, regardless of operating system.
+
+**Is there a manual or tutorial?**
+This FAQ and the README cover the essentials for now. A fuller in-app manual is planned.
+
 **Is this related to Lodestar?**
 Yes — vwag-table started as a fork of [Lodestar](https://github.com/UnclePlants/Lodestar) and has since diverged into its own program. It's MIT-licensed, original authorship is credited, and upstream improvements are ported by hand with the author's blessing.
 
@@ -30,6 +36,17 @@ On the player display, a player drags their token; the move is sent to the GM, w
 
 **Can players see my notes or the unrevealed map?**
 No. GM-only notes, controls, and any area still under fog never appear on the player display.
+
+## Maps, lighting, and import
+
+**Does it have dynamic lighting and line-of-sight?**
+Yes. Place wall and obstacle geometry in Draw mode and drop light sources; player tokens are clipped to what's actually visible from where they stand. Line-of-sight is toggleable per session.
+
+**Can I import a map that already has walls and lights, instead of drawing them by hand?**
+Yes, for one format today. vwag-table imports map packages exported from Digital Table Tops (a `.dtt` module — the map image plus its walls/obstacles, lights, tokens, and notes), and drops that geometry straight into the vision system, so you don't re-draw it. Support for other tools' exports — Foundry, Roll20, Owlbear, and the Universal VTT (`.dd2vtt`/`.uvtt`) format — is on the roadmap.
+
+**Can I use animated or video maps?**
+Not currently — maps are static images. Animated/video backgrounds are a possible future addition.
 
 ## Saving and backups
 
