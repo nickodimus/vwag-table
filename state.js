@@ -354,6 +354,12 @@ const controls = {
 };
 
 const isPlayer = new URLSearchParams(window.location.search).get("view") === "player";
+
+// True on the public sandbox host (vtt.worhl.net), or when ?sandbox is set (for local
+// preview). Lets the client hide backend-only UI and auto-load a demo map. vtt is a
+// different origin from game.worhl.net, so login/localStorage never carry over.
+const isSandbox = window.location.hostname === "vtt.worhl.net"
+  || new URLSearchParams(window.location.search).has("sandbox");
 const DEFAULT_GM_FOG_OPACITY = 0.3;
 const INITIAL_FLOOR_ID = "floor-1";
 
@@ -518,7 +524,7 @@ export {
   HISTORY_LIMIT, STAIRS_ICON_NEUTRAL, STAIRS_ICON_UP, STAIRS_ICON_DOWN, FEET_PER_CELL, MEASURE_UNITS, PING_DURATION, PLAYER_FRAME_REF, controls,
   MAP_LINK_ICONS, MAP_LINK_ICON_PATHS, MAP_LINK_DEFAULT_ICON, MAP_KIND_CAPS,
   CONDITIONS, EXHAUSTION_ICON,
-  isPlayer, DEFAULT_GM_FOG_OPACITY, INITIAL_FLOOR_ID, makeFloor, state, normalizeInput, uuid, escapeHtml,
+  isPlayer, isSandbox, DEFAULT_GM_FOG_OPACITY, INITIAL_FLOOR_ID, makeFloor, state, normalizeInput, uuid, escapeHtml,
   playerCam,
   tools,
   cur,

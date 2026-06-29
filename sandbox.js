@@ -15,8 +15,7 @@
 // A ?sandbox query param forces sandbox mode anywhere, so it can be previewed locally
 // without deploying to vtt.
 
-const params = new URLSearchParams(location.search);
-const isSandbox = location.hostname === "vtt.worhl.net" || params.has("sandbox");
+import { isSandbox } from "./state.js";
 
 const STYLE_ID = "sandbox-style";
 

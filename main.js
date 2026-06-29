@@ -17,7 +17,7 @@ import {
   HISTORY_LIMIT, STAIRS_ICON_NEUTRAL, STAIRS_ICON_UP, STAIRS_ICON_DOWN, FEET_PER_CELL, MEASURE_UNITS, PING_DURATION, PLAYER_FRAME_REF, controls,
   CONDITIONS,
   MAP_LINK_ICONS, MAP_LINK_DEFAULT_ICON, MAP_KIND_CAPS,
-  isPlayer, DEFAULT_GM_FOG_OPACITY, INITIAL_FLOOR_ID, makeFloor, state, normalizeInput, uuid, escapeHtml,
+  isPlayer, isSandbox, DEFAULT_GM_FOG_OPACITY, INITIAL_FLOOR_ID, makeFloor, state, normalizeInput, uuid, escapeHtml,
   playerCam, tools, cur, hooks, sel, fogBuf, peerWindow,
   castCache, castFrameKeys, lightFrameKeys,
   ui,
@@ -560,6 +560,10 @@ function setup() {
   resizeCanvas();
   refreshFloorUI();
   render();
+
+  // Sandbox first-load: drop visitors onto a sample map instead of a blank canvas.
+  // GM client only, and only when nothing's already loaded (don't clobber a returning visitor).
+  if (isSandbox && !isPlayer && !state.imageData) loadSampleMap();
 }
 
 function bindControls() {
@@ -1187,6 +1191,21 @@ function loadMapFile(event) {
   reader.onerror = () => window.alert("Could not read that image file.");
   reader.onload = () => installMap(reader.result, file.name);
   reader.readAsDataURL(file);
+}
+
+// Sandbox first-load: fetch the bundled sample map and install it pre-calibrated to its
+// printed 44x32 grid, so a "try it now" visitor lands on a real battlemap instead of an
+// empty "No map loaded" board. Rides the same installMap path as the file picker. Quiet on
+// any failure — a blank board is an acceptable fallback (the GM panel can still load one).
+async function loadSampleMap() {
+  try {
+    const resp = await fetch("sample/lake-spring-day-44x32.jpg");
+    if (!resp.ok) return;
+    const dataURL = await blobToDataURL(await resp.blob());
+    installMap(dataURL, "Lake — Spring (sample)", { cellsX: 44, cellsY: 32 });
+  } catch {
+    /* leave the board empty; loading a local image from the GM panel still works */
+  }
 }
 
 /* ----------------------------- DTT module import ----------------------------- */
