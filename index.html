@@ -667,6 +667,16 @@
         <!-- GM-only floating PDF resource windows (session-only, never synced or saved). -->
         <div id="pdfLayer"></div>
 
+        <!-- GM-only on-canvas resize/rotate grips for the selected image (Move mode). -->
+        <div id="imageHandles" hidden>
+          <div class="img-handle" data-corner="nw"></div>
+          <div class="img-handle" data-corner="ne"></div>
+          <div class="img-handle" data-corner="se"></div>
+          <div class="img-handle" data-corner="sw"></div>
+          <div class="img-rot-stem"></div>
+          <div class="img-rot-ball"></div>
+        </div>
+
         <!-- Player floor badge top-right (player display only) -->
         <div class="player-floor-badge" id="playerFloorBadge" hidden></div>
         <div class="player-party-roster" id="playerPartyRoster" hidden></div>
