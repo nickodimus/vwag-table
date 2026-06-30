@@ -1193,16 +1193,17 @@ function loadMapFile(event) {
   reader.readAsDataURL(file);
 }
 
-// Sandbox first-load: fetch the bundled sample map and install it pre-calibrated to its
-// printed 44x32 grid, so a "try it now" visitor lands on a real battlemap instead of an
-// empty "No map loaded" board. Rides the same installMap path as the file picker. Quiet on
-// any failure — a blank board is an acceptable fallback (the GM panel can still load one).
+// Sandbox first-load: fetch the bundled sample map and install it calibrated to a clean
+// 38x26 grid (1216x832 @ 32 px/cell, edge-aligned), so a "try it now" visitor lands on a
+// real battlemap instead of an empty "No map loaded" board. Rides the same installMap path
+// as the file picker. Quiet on any failure — a blank board is an acceptable fallback (the
+// GM panel can still load one). The map is an original, freely-redistributable asset.
 async function loadSampleMap() {
   try {
-    const resp = await fetch("sample/lake-spring-day-44x32.jpg");
+    const resp = await fetch("sample/stone-ring-camp.jpg");
     if (!resp.ok) return;
     const dataURL = await blobToDataURL(await resp.blob());
-    installMap(dataURL, "Lake — Spring (sample)", { cellsX: 44, cellsY: 32 });
+    installMap(dataURL, "Stone Ring Camp (sample)", { cellsX: 38, cellsY: 26 });
   } catch {
     /* leave the board empty; loading a local image from the GM panel still works */
   }
