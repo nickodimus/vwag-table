@@ -474,6 +474,10 @@ const state = {
   // Placed lights for the current floor (5d): { id, x, y, radius, color }. Authored, per-floor
   // like obstacles. color (5e) tints the light's reach; absent on old saves -> warm default.
   lights: [],
+  // Area-of-effect zones for the current floor — authored, per-floor like tokens/stairs. Mirrors
+  // the floor record (makeFloor); without it here, a freshly installed map with no prior floor
+  // restore (e.g. the sandbox autoload) left state.aoes undefined and AoE drops threw.
+  aoes: [],
   // Droppable map images (synced to players; only those with showPlayers render there) and
   // GM-only floating notes (never synced). Both are per-floor like tokens/stairs.
   images: [],
