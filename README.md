@@ -2,15 +2,17 @@
 
 A local-first virtual tabletop. The GM drives a private panel; players see a clean battlemap with fog, dynamic light, and line-of-sight, cast to a second screen. It runs entirely in the browser with no build step, no dependencies, and no account — serve the folder and go, fully offline.
 
+**▶ Try it live at [vtt.worhl.net](https://vtt.worhl.net)** — a public sandbox, no install and no account. Drop a map and play; export anything you want to keep.
+
 Two things are **optional add-ons, not requirements**: vwag-table is designed to drive a physical touch table with an infrared frame (but works fine with any display and a mouse), and it can connect to a backend for online play with remote players (see *Online play* below). Neither is needed for local, in-person use.
 
 ## Screenshots
 
-![vwag-table — GM panel driving a battlemap with a named area of effect, cast to the player display](screenshot.png)
+![vwag-table — GM panel driving a battlemap with a named area of effect, cast to the player display](screenshot.jpg)
 
 *The GM panel on the left; the player display on the right showing the cast map with a named "Fireball" area of effect.*
 
-> Demo map: "MAP NAME" by CREATOR, licensed under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). Modified — fog, tokens, and an area of effect added in vwag-table.
+> Demo map: "Stone Ring Camp," an original asset made with [zsky.ai](https://zsky.ai). Fog, tokens, dynamic light, and a named area of effect added in vwag-table.
 
 ## Running
 
