@@ -34,7 +34,7 @@ Or just try the hosted sandbox at **[vtt.worhl.net](https://vtt.worhl.net)** —
 - **Tokens** — drop, drag, label, color, and size tokens, or give them a custom image. Type rings distinguish players, NPCs, and monsters; tokens carry on-token HP and status/condition markers and have an edit panel. They snap to the grid and appear on both displays. Bulk-add by selecting multiple image files — each becomes a reusable token in your palette. On the player display, movement is touch-driven and synced GM-authoritative: the GM clamps and rebroadcasts every move.
 - **Step arrows** — select a token and eight pop-out arrows ring it for one-cell steps in any direction, diagonals included — wall-aware, with a live distance readout. Works on the GM view and for a single selected player token, keyboard- and wheel-free for finger control on the touch table.
 - **Initiative** — a turn-order tracker with initiative and HP, linked to the board tokens: the active combatant is highlighted on the board on both the GM and player views. Advance turns and rounds, and import the party roster in one step. A compact order overlay can ride in the corner of the GM screen and/or the player display independently — it stays put when the docked panel is closed and has its own turn arrows, so you can advance the round without reopening the panel.
-- **Area of effect** — drop a persistent zone (circle, square, or cone) in any color and size, name it through a modal, and it commits and mirrors to the player display in real time with its label. Rename or recolor placed zones; the cone rotates with the mouse wheel.
+- **Area of effect** — drop a persistent zone (circle, square, or cone) in any color and size, name it through a modal, and it commits and mirrors to the player display in real time with its label. Select any placed zone to edit it — rename, recolor, resize, and re-aim a cone (with a direction slider or the mouse wheel); every change mirrors to the players live.
 - **Map images** — add an image to the board (drag a file onto the map, or use *Add image* in View), then move, resize, and rotate it with on-canvas handles and optionally snap it to the grid. Toggle per-image whether players can see it — hidden from players by default.
 - **Notes** — drop GM-only floating notes on the map from View; drag to move, double-click to edit, delete to remove. Notes never appear on the player display.
 - **PDF resources** — open reference PDFs (rules, handouts, stat blocks) in floating windows alongside the board, kept on the GM side.
@@ -52,7 +52,6 @@ Ports in flight from [Lodestar](https://github.com/UnclePlants/Lodestar), the up
 - **In-app manual** — a built-in tutorial and help guide covering calibration, maps, fog, light, line-of-sight, tokens, initiative, stairs, area of effect, online play, and the sandbox. Ported from Lodestar's manual and expanded for vwag-table's diverged features.
 - **Rich-text notes** — formatted note bodies (bold, lists, links) on top of the current plain GM notes.
 - **Music & ambient sound** — a built-in ambient/audio player for table atmosphere.
-- **Cone aim slider** — a direction slider for aiming cone templates without a scroll wheel, for touch use.
 
 ## Keyboard shortcuts (GM)
 

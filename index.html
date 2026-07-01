@@ -595,6 +595,16 @@
             <div id="aoeSelPanel" class="hidden">
               <button id="aoeSelRename" type="button" class="init-add-tokens">Rename</button>
               <label>
+                Size (ft)
+                <input id="aoeSelSize" type="number" min="1" max="500" step="5" value="10">
+              </label>
+              <div id="aoeSelAngleRow" class="hidden">
+                <label>
+                  Direction
+                  <input id="aoeSelAngleSlider" type="range" min="0" max="359" value="270">
+                </label>
+              </div>
+              <label>
                 Zone color
                 <input id="aoeSelColor" type="color" value="#e2603a">
               </label>
