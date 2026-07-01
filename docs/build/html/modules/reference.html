@@ -1,0 +1,444 @@
+<!doctype html>
+<html class="no-js" lang="en" data-content_root="../">
+  <head><meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <meta name="color-scheme" content="light dark"><meta name="viewport" content="width=device-width, initial-scale=1" />
+<link rel="index" title="Index" href="../genindex.html"><link rel="search" title="Search" href="../search.html"><link rel="next" title="Contributing" href="../contributing.html"><link rel="prev" title="Leaf modules" href="leaf-modules.html">
+
+    <!-- Generated with Sphinx 9.1.0 and Furo 2025.12.19 -->
+        <title>Module reference - vwag-table architecture</title>
+      <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=d111a655" />
+    <link rel="stylesheet" type="text/css" href="../_static/styles/furo.css?v=7bdb33bb" />
+    <link rel="stylesheet" type="text/css" href="../_static/styles/furo-extensions.css?v=8dab3a3b" />
+    
+    
+
+
+<style>
+  body {
+    --color-code-background: #f2f2f2;
+  --color-code-foreground: #1e1e1e;
+  
+  }
+  @media not print {
+    body[data-theme="dark"] {
+      --color-code-background: #202020;
+  --color-code-foreground: #d0d0d0;
+  
+    }
+    @media (prefers-color-scheme: dark) {
+      body:not([data-theme="light"]) {
+        --color-code-background: #202020;
+  --color-code-foreground: #d0d0d0;
+  
+      }
+    }
+  }
+</style></head>
+  <body>
+    
+    <script>
+      document.body.dataset.theme = localStorage.getItem("theme") || "auto";
+    </script>
+    
+
+<svg xmlns="http://www.w3.org/2000/svg" style="display: none;">
+  <symbol id="svg-toc" viewBox="0 0 24 24">
+    <title>Contents</title>
+    <svg stroke="currentColor" fill="currentColor" stroke-width="0" viewBox="0 0 1024 1024">
+      <path d="M408 442h480c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8H408c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8zm-8 204c0 4.4 3.6 8 8 8h480c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8H408c-4.4 0-8 3.6-8 8v56zm504-486H120c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8h784c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8zm0 632H120c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8h784c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8zM115.4 518.9L271.7 642c5.8 4.6 14.4.5 14.4-6.9V388.9c0-7.4-8.5-11.5-14.4-6.9L115.4 505.1a8.74 8.74 0 0 0 0 13.8z"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-menu" viewBox="0 0 24 24">
+    <title>Menu</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather-menu">
+      <line x1="3" y1="12" x2="21" y2="12"></line>
+      <line x1="3" y1="6" x2="21" y2="6"></line>
+      <line x1="3" y1="18" x2="21" y2="18"></line>
+    </svg>
+  </symbol>
+  <symbol id="svg-arrow-right" viewBox="0 0 24 24">
+    <title>Expand</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather-chevron-right">
+      <polyline points="9 18 15 12 9 6"></polyline>
+    </svg>
+  </symbol>
+  <symbol id="svg-sun" viewBox="0 0 24 24">
+    <title>Light mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="feather-sun">
+      <circle cx="12" cy="12" r="5"></circle>
+      <line x1="12" y1="1" x2="12" y2="3"></line>
+      <line x1="12" y1="21" x2="12" y2="23"></line>
+      <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+      <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+      <line x1="1" y1="12" x2="3" y2="12"></line>
+      <line x1="21" y1="12" x2="23" y2="12"></line>
+      <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+      <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+    </svg>
+  </symbol>
+  <symbol id="svg-moon" viewBox="0 0 24 24">
+    <title>Dark mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-moon">
+      <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+      <path d="M12 3c.132 0 .263 0 .393 0a7.5 7.5 0 0 0 7.92 12.446a9 9 0 1 1 -8.313 -12.454z" />
+    </svg>
+  </symbol>
+  <symbol id="svg-sun-with-moon" viewBox="0 0 24 24">
+    <title>Auto light/dark, in light mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round"
+      class="icon-custom-derived-from-feather-sun-and-tabler-moon">
+      <path style="opacity: 50%" d="M 5.411 14.504 C 5.471 14.504 5.532 14.504 5.591 14.504 C 3.639 16.319 4.383 19.569 6.931 20.352 C 7.693 20.586 8.512 20.551 9.25 20.252 C 8.023 23.207 4.056 23.725 2.11 21.184 C 0.166 18.642 1.702 14.949 4.874 14.536 C 5.051 14.512 5.231 14.5 5.411 14.5 L 5.411 14.504 Z"/>
+      <line x1="14.5" y1="3.25" x2="14.5" y2="1.25"/>
+      <line x1="14.5" y1="15.85" x2="14.5" y2="17.85"/>
+      <line x1="10.044" y1="5.094" x2="8.63" y2="3.68"/>
+      <line x1="19" y1="14.05" x2="20.414" y2="15.464"/>
+      <line x1="8.2" y1="9.55" x2="6.2" y2="9.55"/>
+      <line x1="20.8" y1="9.55" x2="22.8" y2="9.55"/>
+      <line x1="10.044" y1="14.006" x2="8.63" y2="15.42"/>
+      <line x1="19" y1="5.05" x2="20.414" y2="3.636"/>
+      <circle cx="14.5" cy="9.55" r="3.6"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-moon-with-sun" viewBox="0 0 24 24">
+    <title>Auto light/dark, in dark mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round"
+      class="icon-custom-derived-from-feather-sun-and-tabler-moon">
+      <path d="M 8.282 7.007 C 8.385 7.007 8.494 7.007 8.595 7.007 C 5.18 10.184 6.481 15.869 10.942 17.24 C 12.275 17.648 13.706 17.589 15 17.066 C 12.851 22.236 5.91 23.143 2.505 18.696 C -0.897 14.249 1.791 7.786 7.342 7.063 C 7.652 7.021 7.965 7 8.282 7 L 8.282 7.007 Z"/>
+      <line style="opacity: 50%" x1="18" y1="3.705" x2="18" y2="2.5"/>
+      <line style="opacity: 50%" x1="18" y1="11.295" x2="18" y2="12.5"/>
+      <line style="opacity: 50%" x1="15.316" y1="4.816" x2="14.464" y2="3.964"/>
+      <line style="opacity: 50%" x1="20.711" y1="10.212" x2="21.563" y2="11.063"/>
+      <line style="opacity: 50%" x1="14.205" y1="7.5" x2="13.001" y2="7.5"/>
+      <line style="opacity: 50%" x1="21.795" y1="7.5" x2="23" y2="7.5"/>
+      <line style="opacity: 50%" x1="15.316" y1="10.184" x2="14.464" y2="11.036"/>
+      <line style="opacity: 50%" x1="20.711" y1="4.789" x2="21.563" y2="3.937"/>
+      <circle style="opacity: 50%" cx="18" cy="7.5" r="2.169"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-pencil" viewBox="0 0 24 24">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-pencil-code">
+      <path d="M4 20h4l10.5 -10.5a2.828 2.828 0 1 0 -4 -4l-10.5 10.5v4" />
+      <path d="M13.5 6.5l4 4" />
+      <path d="M20 21l2 -2l-2 -2" />
+      <path d="M17 17l-2 2l2 2" />
+    </svg>
+  </symbol>
+  <symbol id="svg-eye" viewBox="0 0 24 24">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-eye-code">
+      <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+      <path d="M10 12a2 2 0 1 0 4 0a2 2 0 0 0 -4 0" />
+      <path
+        d="M11.11 17.958c-3.209 -.307 -5.91 -2.293 -8.11 -5.958c2.4 -4 5.4 -6 9 -6c3.6 0 6.6 2 9 6c-.21 .352 -.427 .688 -.647 1.008" />
+      <path d="M20 21l2 -2l-2 -2" />
+      <path d="M17 17l-2 2l2 2" />
+    </svg>
+  </symbol>
+</svg>
+
+<input type="checkbox" class="sidebar-toggle" name="__navigation" id="__navigation" aria-label="Toggle site navigation sidebar">
+<input type="checkbox" class="sidebar-toggle" name="__toc" id="__toc" aria-label="Toggle table of contents sidebar">
+<label class="overlay sidebar-overlay" for="__navigation"></label>
+<label class="overlay toc-overlay" for="__toc"></label>
+
+<a class="skip-to-content muted-link" href="#furo-main-content">Skip to content</a>
+
+
+
+<div class="page">
+  <header class="mobile-header">
+    <div class="header-left">
+      <label class="nav-overlay-icon" for="__navigation">
+        <span class="icon"><svg><use href="#svg-menu"></use></svg></span>
+      </label>
+    </div>
+    <div class="header-center">
+      <a href="../index.html"><div class="brand">vwag-table architecture</div></a>
+    </div>
+    <div class="header-right">
+      <div class="theme-toggle-container theme-toggle-header">
+        <button class="theme-toggle" aria-label="Toggle Light / Dark / Auto color theme">
+          <svg class="theme-icon-when-auto-light"><use href="#svg-sun-with-moon"></use></svg>
+          <svg class="theme-icon-when-auto-dark"><use href="#svg-moon-with-sun"></use></svg>
+          <svg class="theme-icon-when-dark"><use href="#svg-moon"></use></svg>
+          <svg class="theme-icon-when-light"><use href="#svg-sun"></use></svg>
+        </button>
+      </div>
+      <label class="toc-overlay-icon toc-header-icon" for="__toc">
+        <span class="icon"><svg><use href="#svg-toc"></use></svg></span>
+      </label>
+    </div>
+  </header>
+  <aside class="sidebar-drawer">
+    <div class="sidebar-container">
+      
+      <div class="sidebar-sticky"><a class="sidebar-brand" href="../index.html">
+  
+  <span class="sidebar-brand-text">vwag-table architecture</span>
+  
+</a><form class="sidebar-search-container" method="get" action="../search.html" role="search">
+  <input class="sidebar-search" placeholder="Search" name="q" aria-label="Search">
+  <input type="hidden" name="check_keywords" value="yes">
+  <input type="hidden" name="area" value="default">
+</form>
+<div id="searchbox"></div><div class="sidebar-scroll"><div class="sidebar-tree">
+  <p class="caption" role="heading"><span class="caption-text">Contents</span></p>
+<ul class="current">
+<li class="toctree-l1"><a class="reference internal" href="../architecture.html">Architecture</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../data-flow.html">Data flow</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../coordinate-model.html">Coordinate model</a></li>
+<li class="toctree-l1 current has-children"><a class="reference internal" href="index.html">Modules</a><input aria-label="Toggle navigation of Modules" checked="" class="toctree-checkbox" id="toctree-checkbox-1" name="toctree-checkbox-1" role="switch" type="checkbox"/><label for="toctree-checkbox-1"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul class="current">
+<li class="toctree-l2"><a class="reference internal" href="state.html">state.js</a></li>
+<li class="toctree-l2"><a class="reference internal" href="render.html">render.js</a></li>
+<li class="toctree-l2"><a class="reference internal" href="main.html">main.js</a></li>
+<li class="toctree-l2"><a class="reference internal" href="vision.html">vision.js</a></li>
+<li class="toctree-l2"><a class="reference internal" href="leaf-modules.html">Leaf modules</a></li>
+<li class="toctree-l2 current current-page"><a class="current reference internal" href="#">Module reference</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="../contributing.html">Contributing</a></li>
+</ul>
+
+</div>
+</div>
+
+      </div>
+      
+    </div>
+  </aside>
+  <div class="main">
+    <div class="content">
+      <div class="article-container">
+        <a href="#" class="back-to-top muted-link">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+            <path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8v12z"></path>
+          </svg>
+          <span>Back to top</span>
+        </a>
+        <div class="content-icon-container">
+          <div class="view-this-page">
+  <a class="muted-link" href="../_sources/modules/reference.md.txt" title="View this page">
+    <svg><use href="#svg-eye"></use></svg>
+    <span class="visually-hidden">View this page</span>
+  </a>
+</div>
+<div class="theme-toggle-container theme-toggle-content">
+            <button class="theme-toggle" aria-label="Toggle Light / Dark / Auto color theme">
+              <svg class="theme-icon-when-auto-light"><use href="#svg-sun-with-moon"></use></svg>
+              <svg class="theme-icon-when-auto-dark"><use href="#svg-moon-with-sun"></use></svg>
+              <svg class="theme-icon-when-dark"><use href="#svg-moon"></use></svg>
+              <svg class="theme-icon-when-light"><use href="#svg-sun"></use></svg>
+            </button>
+          </div>
+          <label class="toc-overlay-icon toc-content-icon" for="__toc">
+            <span class="icon"><svg><use href="#svg-toc"></use></svg></span>
+          </label>
+        </div>
+        <article role="main" id="furo-main-content">
+          <section id="module-reference">
+<h1>Module reference<a class="headerlink" href="#module-reference" title="Link to this heading">¶</a></h1>
+<p>One-line ownership plus public exports for the remaining modules. The
+architecturally load-bearing modules have their own pages
+(<a class="reference internal" href="state.html"><span class="std std-doc">state</span></a>, <a class="reference internal" href="render.html"><span class="std std-doc">render</span></a>, <a class="reference internal" href="main.html"><span class="std std-doc">main</span></a>, <a class="reference internal" href="vision.html"><span class="std std-doc">vision</span></a>)
+and the leaf modules are covered in <a class="reference internal" href="leaf-modules.html"><span class="std std-doc">Leaf modules</span></a>.</p>
+<section id="geometry-js">
+<h2>geometry.js<a class="headerlink" href="#geometry-js" title="Link to this heading">¶</a></h2>
+<p>Pure coordinate/geometry math; imports only <code class="docutils literal notranslate"><span class="pre">state</span></code>. See
+<a class="reference internal" href="../coordinate-model.html"><span class="std std-doc">Coordinate model</span></a>.
+<strong>Exports:</strong> <code class="docutils literal notranslate"><span class="pre">simplifyPolyline</span></code>, <code class="docutils literal notranslate"><span class="pre">distToSegment</span></code>, <code class="docutils literal notranslate"><span class="pre">pointInPolygon</span></code>,
+<code class="docutils literal notranslate"><span class="pre">gridCellNative</span></code>, <code class="docutils literal notranslate"><span class="pre">pxPerCellNative</span></code>, <code class="docutils literal notranslate"><span class="pre">nativeToCells</span></code>, <code class="docutils literal notranslate"><span class="pre">cellsToNative</span></code>,
+<code class="docutils literal notranslate"><span class="pre">tokenRadius</span></code>, <code class="docutils literal notranslate"><span class="pre">snapToGrid</span></code>, <code class="docutils literal notranslate"><span class="pre">snapNative</span></code>, <code class="docutils literal notranslate"><span class="pre">worldDims</span></code>, <code class="docutils literal notranslate"><span class="pre">activeView</span></code>,
+<code class="docutils literal notranslate"><span class="pre">fitScaleFor</span></code>, <code class="docutils literal notranslate"><span class="pre">viewTransform</span></code>, <code class="docutils literal notranslate"><span class="pre">clientToCanvasPoint</span></code>, <code class="docutils literal notranslate"><span class="pre">currentViewRotation</span></code>,
+<code class="docutils literal notranslate"><span class="pre">keepUpright</span></code>, <code class="docutils literal notranslate"><span class="pre">screenToNative</span></code>, <code class="docutils literal notranslate"><span class="pre">nativeToScreen</span></code>, <code class="docutils literal notranslate"><span class="pre">followView</span></code>, <code class="docutils literal notranslate"><span class="pre">cellWorldPx</span></code>,
+<code class="docutils literal notranslate"><span class="pre">FOLLOW_FIT_PADDING</span></code>, <code class="docutils literal notranslate"><span class="pre">FOLLOW_FIT_MIN_CELLS</span></code>.</p>
+</section>
+<section id="db-js">
+<h2>db.js<a class="headerlink" href="#db-js" title="Link to this heading">¶</a></h2>
+<p>IndexedDB wrapper; imports only <code class="docutils literal notranslate"><span class="pre">state</span></code>.
+<strong>Exports:</strong> <code class="docutils literal notranslate"><span class="pre">openMapDatabase</span></code>, <code class="docutils literal notranslate"><span class="pre">withStore</span></code>, map/module/session/token record CRUD
+(<code class="docutils literal notranslate"><span class="pre">saveMapRecord</span></code>, <code class="docutils literal notranslate"><span class="pre">listMapRecords</span></code>, <code class="docutils literal notranslate"><span class="pre">deleteMapRecord</span></code>, <code class="docutils literal notranslate"><span class="pre">saveModuleRecord</span></code>, …),
+and image helpers (<code class="docutils literal notranslate"><span class="pre">putImage</span></code>, <code class="docutils literal notranslate"><span class="pre">getImageRecord</span></code>, <code class="docutils literal notranslate"><span class="pre">getImage</span></code>).</p>
+</section>
+<section id="content-js">
+<h2>content.js<a class="headerlink" href="#content-js" title="Link to this heading">¶</a></h2>
+<p>Remote content resolution + navigation trail + cache; imports <code class="docutils literal notranslate"><span class="pre">db</span></code>.
+<strong>Exports:</strong> <code class="docutils literal notranslate"><span class="pre">registerRemoteSource</span></code>, <code class="docutils literal notranslate"><span class="pre">resolveSession</span></code>, <code class="docutils literal notranslate"><span class="pre">resolveModule</span></code>,
+<code class="docutils literal notranslate"><span class="pre">resolveImage</span></code>, <code class="docutils literal notranslate"><span class="pre">trailActiveId</span></code>, <code class="docutils literal notranslate"><span class="pre">trailDepth</span></code>, <code class="docutils literal notranslate"><span class="pre">trailList</span></code>, <code class="docutils literal notranslate"><span class="pre">trailPush</span></code>,
+<code class="docutils literal notranslate"><span class="pre">trailPop</span></code>, <code class="docutils literal notranslate"><span class="pre">trailReset</span></code>, <code class="docutils literal notranslate"><span class="pre">cacheHas</span></code>, <code class="docutils literal notranslate"><span class="pre">cacheGet</span></code>, <code class="docutils literal notranslate"><span class="pre">cacheSet</span></code>, <code class="docutils literal notranslate"><span class="pre">cacheClear</span></code>.</p>
+</section>
+<section id="persistence-js">
+<h2>persistence.js<a class="headerlink" href="#persistence-js" title="Link to this heading">¶</a></h2>
+<p>Save-file schema + migration; imports <code class="docutils literal notranslate"><span class="pre">db</span></code>, <code class="docutils literal notranslate"><span class="pre">state</span></code>.
+<strong>Exports:</strong> <code class="docutils literal notranslate"><span class="pre">validateSessionData</span></code>, <code class="docutils literal notranslate"><span class="pre">migrateState</span></code>, <code class="docutils literal notranslate"><span class="pre">hydrateFloorImages</span></code>,
+<code class="docutils literal notranslate"><span class="pre">mergeModuleSession</span></code>, <code class="docutils literal notranslate"><span class="pre">migrateMapsToModulesAndSessions</span></code>, <code class="docutils literal notranslate"><span class="pre">captureCurrentFloor</span></code>,
+<code class="docutils literal notranslate"><span class="pre">splitState</span></code>, <code class="docutils literal notranslate"><span class="pre">makeMapId</span></code>, <code class="docutils literal notranslate"><span class="pre">deriveCellGrid</span></code>, <code class="docutils literal notranslate"><span class="pre">snapshotFromLiveState</span></code>.</p>
+</section>
+<section id="api-js">
+<h2>api.js<a class="headerlink" href="#api-js" title="Link to this heading">¶</a></h2>
+<p>Online-tier HTTP client + auth; imports <code class="docutils literal notranslate"><span class="pre">content</span></code>.
+<strong>Exports:</strong> <code class="docutils literal notranslate"><span class="pre">getToken</span></code>, <code class="docutils literal notranslate"><span class="pre">getUsername</span></code>, <code class="docutils literal notranslate"><span class="pre">isLoggedIn</span></code>, <code class="docutils literal notranslate"><span class="pre">isAdmin</span></code>, <code class="docutils literal notranslate"><span class="pre">logout</span></code>,
+<code class="docutils literal notranslate"><span class="pre">authHeader</span></code>, <code class="docutils literal notranslate"><span class="pre">adoptStoredGuest</span></code>, <code class="docutils literal notranslate"><span class="pre">login</span></code>, <code class="docutils literal notranslate"><span class="pre">register</span></code>, <code class="docutils literal notranslate"><span class="pre">refreshWhoami</span></code>,
+<code class="docutils literal notranslate"><span class="pre">apiFetch</span></code>, <code class="docutils literal notranslate"><span class="pre">listRemoteModules</span></code>, <code class="docutils literal notranslate"><span class="pre">publishModule</span></code>, <code class="docutils literal notranslate"><span class="pre">putRemoteImage</span></code>,
+<code class="docutils literal notranslate"><span class="pre">publishSession</span></code>, <code class="docutils literal notranslate"><span class="pre">remoteModuleExists</span></code>, <code class="docutils literal notranslate"><span class="pre">fetchRemoteSession</span></code>,
+<code class="docutils literal notranslate"><span class="pre">deleteRemoteModule</span></code>.</p>
+</section>
+<section id="sync-js">
+<h2>sync.js<a class="headerlink" href="#sync-js" title="Link to this heading">¶</a></h2>
+<p>GM→player broadcast + online relay; imports <code class="docutils literal notranslate"><span class="pre">state</span></code>, <code class="docutils literal notranslate"><span class="pre">persistence</span></code>, <code class="docutils literal notranslate"><span class="pre">api</span></code>.
+GM-authoritative.
+<strong>Exports:</strong> <code class="docutils literal notranslate"><span class="pre">relay</span></code>, <code class="docutils literal notranslate"><span class="pre">applyRemoteView</span></code>, <code class="docutils literal notranslate"><span class="pre">applyIncomingPlayerView</span></code>,
+<code class="docutils literal notranslate"><span class="pre">syncPlayerViewControls</span></code>, <code class="docutils literal notranslate"><span class="pre">snapPlayerViewToGM</span></code>, <code class="docutils literal notranslate"><span class="pre">broadcastAssets</span></code>,
+<code class="docutils literal notranslate"><span class="pre">broadcastState</span></code>, <code class="docutils literal notranslate"><span class="pre">broadcastView</span></code>, <code class="docutils literal notranslate"><span class="pre">renderAndSync</span></code>, <code class="docutils literal notranslate"><span class="pre">renderAndSyncView</span></code>,
+<code class="docutils literal notranslate"><span class="pre">sanitizedState</span></code>, <code class="docutils literal notranslate"><span class="pre">connectRelay</span></code>, <code class="docutils literal notranslate"><span class="pre">refitFramedView</span></code>.</p>
+</section>
+<section id="fog-js">
+<h2>fog.js<a class="headerlink" href="#fog-js" title="Link to this heading">¶</a></h2>
+<p>Fog-of-war layer; imports <code class="docutils literal notranslate"><span class="pre">state</span></code>.
+<strong>Exports:</strong> <code class="docutils literal notranslate"><span class="pre">resizeFogLayer</span></code>, <code class="docutils literal notranslate"><span class="pre">buildStrokeLayer</span></code>, <code class="docutils literal notranslate"><span class="pre">rebuildFog</span></code>, <code class="docutils literal notranslate"><span class="pre">compositeFog</span></code>,
+<code class="docutils literal notranslate"><span class="pre">roomPathFog</span></code>, <code class="docutils literal notranslate"><span class="pre">strokePathFog</span></code>, <code class="docutils literal notranslate"><span class="pre">polygonCentroid</span></code>, <code class="docutils literal notranslate"><span class="pre">drawStampDraft</span></code>,
+<code class="docutils literal notranslate"><span class="pre">drawPolygon</span></code>, <code class="docutils literal notranslate"><span class="pre">stampPolygon</span></code>, <code class="docutils literal notranslate"><span class="pre">addInterpolatedStrokePoints</span></code>.</p>
+</section>
+<section id="tokens-js">
+<h2>tokens.js<a class="headerlink" href="#tokens-js" title="Link to this heading">¶</a></h2>
+<p>Token drawing; imports <code class="docutils literal notranslate"><span class="pre">state</span></code>, <code class="docutils literal notranslate"><span class="pre">geometry</span></code>, <code class="docutils literal notranslate"><span class="pre">annotations</span></code>, <code class="docutils literal notranslate"><span class="pre">initiative</span></code>,
+<code class="docutils literal notranslate"><span class="pre">vision</span></code>.
+<strong>Exports:</strong> <code class="docutils literal notranslate"><span class="pre">tokenIsSquare</span></code>, <code class="docutils literal notranslate"><span class="pre">tokenOutline</span></code>, <code class="docutils literal notranslate"><span class="pre">drawTokenTypeRing</span></code>,
+<code class="docutils literal notranslate"><span class="pre">drawActiveTurnRing</span></code>, <code class="docutils literal notranslate"><span class="pre">drawTokens</span></code>.</p>
+</section>
+<section id="aoe-measure-js">
+<h2>aoe-measure.js<a class="headerlink" href="#aoe-measure-js" title="Link to this heading">¶</a></h2>
+<p>AoE templates + measurement/calibration; imports <code class="docutils literal notranslate"><span class="pre">state</span></code>, <code class="docutils literal notranslate"><span class="pre">geometry</span></code>.
+<strong>Exports:</strong> <code class="docutils literal notranslate"><span class="pre">drawAoeTemplate</span></code>, <code class="docutils literal notranslate"><span class="pre">drawAoes</span></code>, <code class="docutils literal notranslate"><span class="pre">drawAoeLabels</span></code>, <code class="docutils literal notranslate"><span class="pre">hitAoe</span></code>,
+<code class="docutils literal notranslate"><span class="pre">drawMeasureLine</span></code>, <code class="docutils literal notranslate"><span class="pre">drawMeasureLabel</span></code>, <code class="docutils literal notranslate"><span class="pre">drawCalibrationDraft</span></code>, <code class="docutils literal notranslate"><span class="pre">measureCellWorld</span></code>,
+<code class="docutils literal notranslate"><span class="pre">updateCalibrationUI</span></code>, <code class="docutils literal notranslate"><span class="pre">updateMeasureCalibrateRow</span></code>.</p>
+</section>
+<section id="annotations-js">
+<h2>annotations.js<a class="headerlink" href="#annotations-js" title="Link to this heading">¶</a></h2>
+<p>Note pins, map images, pings; imports <code class="docutils literal notranslate"><span class="pre">state</span></code>, <code class="docutils literal notranslate"><span class="pre">geometry</span></code>.
+<strong>Exports:</strong> <code class="docutils literal notranslate"><span class="pre">wrapNoteText</span></code>, <code class="docutils literal notranslate"><span class="pre">noteFont</span></code>, <code class="docutils literal notranslate"><span class="pre">noteLayout</span></code>, <code class="docutils literal notranslate"><span class="pre">noteScreenRect</span></code>,
+<code class="docutils literal notranslate"><span class="pre">drawNotes</span></code>, <code class="docutils literal notranslate"><span class="pre">hitNote</span></code>, <code class="docutils literal notranslate"><span class="pre">drawImages</span></code>, <code class="docutils literal notranslate"><span class="pre">hitImage</span></code>, <code class="docutils literal notranslate"><span class="pre">snapImage</span></code>, <code class="docutils literal notranslate"><span class="pre">getTokenImage</span></code>,
+<code class="docutils literal notranslate"><span class="pre">addPing</span></code>, <code class="docutils literal notranslate"><span class="pre">ensurePingLoop</span></code>, <code class="docutils literal notranslate"><span class="pre">drawPings</span></code>.</p>
+</section>
+<section id="initiative-js">
+<h2>initiative.js<a class="headerlink" href="#initiative-js" title="Link to this heading">¶</a></h2>
+<p>Initiative order + HP; imports <code class="docutils literal notranslate"><span class="pre">state</span></code>.
+<strong>Exports:</strong> <code class="docutils literal notranslate"><span class="pre">sortedCombatants</span></code>, <code class="docutils literal notranslate"><span class="pre">activeTurnTokenId</span></code>, <code class="docutils literal notranslate"><span class="pre">tokenHp</span></code>,
+<code class="docutils literal notranslate"><span class="pre">clampInitiativeTurn</span></code>, <code class="docutils literal notranslate"><span class="pre">renderInitiativePanel</span></code>, <code class="docutils literal notranslate"><span class="pre">renderInitiativeOverlay</span></code>,
+<code class="docutils literal notranslate"><span class="pre">updateInitiativeUI</span></code>.</p>
+</section>
+<section id="rooms-obstacles-js">
+<h2>rooms-obstacles.js<a class="headerlink" href="#rooms-obstacles-js" title="Link to this heading">¶</a></h2>
+<p>Room &amp; obstacle geometry; imports <code class="docutils literal notranslate"><span class="pre">state</span></code>, <code class="docutils literal notranslate"><span class="pre">geometry</span></code>, <code class="docutils literal notranslate"><span class="pre">vision</span></code>, <code class="docutils literal notranslate"><span class="pre">fog</span></code>. Produces
+the wall segments (<code class="docutils literal notranslate"><span class="pre">moveSegments</span></code>) that vision consumes.
+<strong>Exports:</strong> <code class="docutils literal notranslate"><span class="pre">drawRoomOutlines</span></code>, <code class="docutils literal notranslate"><span class="pre">drawObstacleOutlines</span></code>, <code class="docutils literal notranslate"><span class="pre">drawDraftObstacle</span></code>,
+<code class="docutils literal notranslate"><span class="pre">wrapLabel</span></code>, <code class="docutils literal notranslate"><span class="pre">drawRoomNames</span></code>, <code class="docutils literal notranslate"><span class="pre">drawDraftRoom</span></code>, <code class="docutils literal notranslate"><span class="pre">obstacleDefaults</span></code>, <code class="docutils literal notranslate"><span class="pre">hitObstacle</span></code>,
+<code class="docutils literal notranslate"><span class="pre">moveSegments</span></code>.</p>
+</section>
+<section id="view-js">
+<h2>view.js<a class="headerlink" href="#view-js" title="Link to this heading">¶</a></h2>
+<p>Camera loop; imports <code class="docutils literal notranslate"><span class="pre">state</span></code>, <code class="docutils literal notranslate"><span class="pre">geometry</span></code>.
+<strong>Exports:</strong> <code class="docutils literal notranslate"><span class="pre">tickCamera</span></code>, <code class="docutils literal notranslate"><span class="pre">ensureCameraLoop</span></code>, <code class="docutils literal notranslate"><span class="pre">stopCameraLoop</span></code>, <code class="docutils literal notranslate"><span class="pre">rotateMap</span></code>.</p>
+</section>
+<section id="dtt-js">
+<h2>dtt.js<a class="headerlink" href="#dtt-js" title="Link to this heading">¶</a></h2>
+<p>Map-import pipeline; imports <code class="docutils literal notranslate"><span class="pre">state</span></code>, <code class="docutils literal notranslate"><span class="pre">geometry</span></code>, <code class="docutils literal notranslate"><span class="pre">vision</span></code>, <code class="docutils literal notranslate"><span class="pre">rooms-obstacles</span></code>.
+See <a class="reference internal" href="../data-flow.html"><span class="std std-doc">Data flow</span></a>.
+<strong>Exports:</strong> <code class="docutils literal notranslate"><span class="pre">readZip</span></code>, <code class="docutils literal notranslate"><span class="pre">parseDtt</span></code>, <code class="docutils literal notranslate"><span class="pre">importDtt</span></code>.</p>
+</section>
+</section>
+
+        </article>
+      </div>
+      <footer>
+        
+        <div class="related-pages">
+          <a class="next-page" href="../contributing.html">
+              <div class="page-info">
+                <div class="context">
+                  <span>Next</span>
+                </div>
+                <div class="title">Contributing</div>
+              </div>
+              <svg class="furo-related-icon"><use href="#svg-arrow-right"></use></svg>
+            </a>
+          <a class="prev-page" href="leaf-modules.html">
+              <svg class="furo-related-icon"><use href="#svg-arrow-right"></use></svg>
+              <div class="page-info">
+                <div class="context">
+                  <span>Previous</span>
+                </div>
+                
+                <div class="title">Leaf modules</div>
+                
+              </div>
+            </a>
+        </div>
+        <div class="bottom-of-page">
+          <div class="left-details">
+            <div class="copyright">
+                Copyright &#169; Sky Agnitti
+            </div>
+            Made with <a href="https://www.sphinx-doc.org/">Sphinx</a> and <a class="muted-link" href="https://pradyunsg.me">@pradyunsg</a>'s
+            
+            <a href="https://github.com/pradyunsg/furo">Furo</a>
+            
+          </div>
+          <div class="right-details">
+            
+          </div>
+        </div>
+        
+      </footer>
+    </div>
+    <aside class="toc-drawer">
+      
+      
+      <div class="toc-sticky toc-scroll">
+        <div class="toc-title-container">
+          <span class="toc-title">
+            On this page
+          </span>
+        </div>
+        <div class="toc-tree-container">
+          <div class="toc-tree">
+            <ul>
+<li><a class="reference internal" href="#">Module reference</a><ul>
+<li><a class="reference internal" href="#geometry-js">geometry.js</a></li>
+<li><a class="reference internal" href="#db-js">db.js</a></li>
+<li><a class="reference internal" href="#content-js">content.js</a></li>
+<li><a class="reference internal" href="#persistence-js">persistence.js</a></li>
+<li><a class="reference internal" href="#api-js">api.js</a></li>
+<li><a class="reference internal" href="#sync-js">sync.js</a></li>
+<li><a class="reference internal" href="#fog-js">fog.js</a></li>
+<li><a class="reference internal" href="#tokens-js">tokens.js</a></li>
+<li><a class="reference internal" href="#aoe-measure-js">aoe-measure.js</a></li>
+<li><a class="reference internal" href="#annotations-js">annotations.js</a></li>
+<li><a class="reference internal" href="#initiative-js">initiative.js</a></li>
+<li><a class="reference internal" href="#rooms-obstacles-js">rooms-obstacles.js</a></li>
+<li><a class="reference internal" href="#view-js">view.js</a></li>
+<li><a class="reference internal" href="#dtt-js">dtt.js</a></li>
+</ul>
+</li>
+</ul>
+
+          </div>
+        </div>
+      </div>
+      
+      
+    </aside>
+  </div>
+</div><script src="../_static/documentation_options.js?v=5929fcd5"></script>
+    <script src="../_static/doctools.js?v=fd6eb6e6"></script>
+    <script src="../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script src="../_static/scripts/furo.js?v=46bd48cc"></script>
+    </body>
+</html>
