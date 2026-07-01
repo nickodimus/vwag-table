@@ -1,0 +1,4 @@
+# Intermediate Sphinx artifacts — not committed.
+build/doctrees/
+.venv/
+__pycache__/
