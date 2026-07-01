@@ -836,6 +836,16 @@ function bindControls() {
     sel.aoe.color = controls.aoeSelColor.value;
     renderAndSync();
   });
+  controls.aoeSelSize?.addEventListener("input", () => {
+    if (!sel.aoe) return;
+    const v = parseFloat(controls.aoeSelSize.value);
+    if (v > 0) { sel.aoe.sizeFt = v; renderAndSync(); } // resize any placed zone; mirrors to players
+  });
+  controls.aoeSelAngleSlider?.addEventListener("input", () => {
+    if (!sel.aoe) return;
+    sel.aoe.angle = parseFloat(controls.aoeSelAngleSlider.value) * Math.PI / 180; // re-aim a placed cone
+    renderAndSync();
+  });
   controls.aoeSelDelete?.addEventListener("click", () => {
     if (!sel.aoe) return;
     pushHistory();
@@ -913,7 +923,7 @@ function bindControls() {
   });
   controls.aoeAngleSlider?.addEventListener("input", () => {
     tools.aoe.angle = parseFloat(controls.aoeAngleSlider.value) * Math.PI / 180;
-    render();
+    renderAndSyncView(); // mirror the live template aim to the players (parity with the wheel)
   });
   controls.measureCalibrate?.addEventListener("click", () => armCalibration("measure"));
   controls.calibrateScale?.addEventListener("click", () => armCalibration("scale"));
@@ -3957,6 +3967,13 @@ function updateSelectionPanels() {
     controls.aoeSelPanel.classList.toggle("hidden", !sel.aoe);
     if (sel.aoe) {
       if (controls.aoeSelColor) controls.aoeSelColor.value = sel.aoe.color || "#e2603a";
+      if (controls.aoeSelSize) controls.aoeSelSize.value = sel.aoe.sizeFt;
+      const isCone = sel.aoe.shape === "cone";
+      controls.aoeSelAngleRow?.classList.toggle("hidden", !isCone);
+      if (isCone && controls.aoeSelAngleSlider) {
+        const deg = ((sel.aoe.angle * 180 / Math.PI) % 360 + 360) % 360;
+        controls.aoeSelAngleSlider.value = Math.round(deg);
+      }
     }
   }
 }
@@ -4945,15 +4962,26 @@ function onWheel(event) {
   // The player display is view-only; the GM drives its framing.
   if (isPlayer) return;
 
-  // Rotate cone when in AoE mode (don't zoom)
-  if (ui.mode === "aoe" && tools.aoe.shape === "cone") {
+  // Rotate a cone with the wheel (don't zoom): a selected placed cone if one is picked, otherwise
+  // the live template. The direction sliders mirror this; both aim methods stay in lockstep.
+  if (ui.mode === "aoe" && ((sel.aoe && sel.aoe.shape === "cone") || tools.aoe.shape === "cone")) {
     event.preventDefault();
-    tools.aoe.angle += event.deltaY < 0 ? -0.1 : 0.1;
-    if (controls.aoeAngleSlider) {
-      const deg = ((tools.aoe.angle * 180 / Math.PI) % 360 + 360) % 360;
-      controls.aoeAngleSlider.value = Math.round(deg);
+    const step = event.deltaY < 0 ? -0.1 : 0.1;
+    if (sel.aoe && sel.aoe.shape === "cone") {
+      sel.aoe.angle += step;
+      if (controls.aoeSelAngleSlider) {
+        const deg = ((sel.aoe.angle * 180 / Math.PI) % 360 + 360) % 360;
+        controls.aoeSelAngleSlider.value = Math.round(deg);
+      }
+      renderAndSync();
+    } else {
+      tools.aoe.angle += step;
+      if (controls.aoeAngleSlider) {
+        const deg = ((tools.aoe.angle * 180 / Math.PI) % 360 + 360) % 360;
+        controls.aoeAngleSlider.value = Math.round(deg);
+      }
+      renderAndSyncView();
     }
-    renderAndSyncView();
     return;
   }
 
