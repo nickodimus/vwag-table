@@ -77,6 +77,9 @@ import {
 import {
   apiFetch, isLoggedIn, getUsername, isAdmin, listRemoteModules, publishModule, putRemoteImage, publishSession, remoteModuleExists, fetchRemoteSession, deleteRemoteModule, refreshWhoami, adoptStoredGuest,
 } from "./api.js";
+import {
+  hitTokenStepArrow, arrowAnchorToken,
+} from "./token-arrows.js";
 async function saveSession() {
   captureCurrentFloor();
   if (!state.floors.some((floor) => floor.imageData)) {
@@ -3551,18 +3554,65 @@ async function importPaletteJson(file) {
   await loadPalette();
 }
 
-function nudgeSelectedToken(key) {
-  if (!sel.token) return;
+// Native grid deltas for the eight octants, keyed by the compass id token-arrows.js reports on a hit
+// (and that the GM arrow keys map onto). One delta table so arrows, keys, draw, and hit-test agree.
+const STEP_DELTAS = {
+  N: [0, -1], NE: [1, -1], E: [1, 0], SE: [1, 1], S: [0, 1], SW: [-1, 1], W: [-1, 0], NW: [-1, -1],
+};
+let stepRunToken = null;  // the token the current arrow/key step run is anchored to
+let stepRunOrigin = null; // its position when the run began, anchoring the live distance line
+
+// A clean full cell-step is blocked when a wall stops it short (resolveMove slides/clips it) or a
+// non-group token already holds the destination cell. Shared by the GM and player step paths; the
+// glide loop keeps its own inline copy so the deferred rubber-band path stays untouched.
+function stepBlocked(from, target, group) {
+  const dest = resolveMove(from, target);
+  if (Math.abs(dest.x - target.x) > 1e-6 || Math.abs(dest.y - target.y) > 1e-6) return true; // wall
+  if (cellOccupiedByOther(target, group)) return true; // an occupant holds the cell
+  return false;
+}
+
+// End the current step run and drop its live distance line. Called on any pointer-down that isn't an
+// arrow tap, so selecting/panning/dragging clears the readout.
+function clearStepRun() {
+  if (!stepRunToken) return;
+  stepRunToken = null;
+  stepRunOrigin = null;
+  tools.dragMeasureLine = null;
+}
+
+// One discrete grid step of the arrow-anchored token in a compass direction, wall-aware. The GM
+// commits directly (history + mutate + renderAndSync); the player commits authoritatively through
+// the relay (grab -> move -> drop), the same triplet the touch d-pad uses. A wall or an occupied
+// cell holds. A running Euclidean distance from where the run began is shown by reusing the
+// drag-measure line + label.
+function arrowStep(dir) {
+  const delta = STEP_DELTAS[dir];
+  const token = arrowAnchorToken();
+  if (!delta || !token) return;
   const step = gridCellNative();
-  const delta = { ArrowUp: [0, -1], ArrowDown: [0, 1], ArrowLeft: [-1, 0], ArrowRight: [1, 0] }[key];
-  if (!delta) return;
-  pushHistory();
-  sel.token.x += delta[0] * step;
-  sel.token.y += delta[1] * step;
-  const snapped = snapNative(sel.token);
-  sel.token.x = snapped.x;
-  sel.token.y = snapped.y;
-  renderAndSync();
+  const from = { x: token.x, y: token.y };
+  const target = { x: from.x + delta[0] * step, y: from.y + delta[1] * step };
+  if (stepBlocked(from, target, new Set([token]))) return;
+  if (stepRunToken !== token) { stepRunToken = token; stepRunOrigin = { x: from.x, y: from.y }; }
+  if (isPlayer) {
+    relay({ type: "token-grab", id: token.id }); // one history snapshot for the step
+    token.x = target.x;
+    token.y = target.y;
+    relay({ type: "token-move", id: token.id, x: target.x, y: target.y });
+    relay({ type: "token-drop", id: token.id, x: target.x, y: target.y }); // GM snaps/clamps/broadcasts
+    render();
+    ensureCameraLoop();
+  } else {
+    pushHistory();
+    token.x = target.x;
+    token.y = target.y;
+    const snapped = snapNative(token);
+    token.x = snapped.x;
+    token.y = snapped.y;
+    renderAndSync();
+  }
+  tools.dragMeasureLine = { start: stepRunOrigin, end: { x: token.x, y: token.y } };
 }
 
 // --- Player movement clock (1b) -----------------------------------------------------------------
@@ -4319,6 +4369,16 @@ function tokenTraverse(token) {
 
 function onPointerDown(event) {
   ui.lastPointer = { clientX: event.clientX, clientY: event.clientY };
+
+  // Octant step arrows win their own hit zone: a tap on a selected token's pop-out arrow steps it
+  // one cell and nothing else. Checked before any selection/drag/marquee, on both GM and player.
+  const arrowDir = hitTokenStepArrow(clientToCanvasPoint(event));
+  if (arrowDir) {
+    if (event.pointerType !== "mouse") event.preventDefault();
+    arrowStep(arrowDir);
+    return;
+  }
+  clearStepRun(); // any other press ends the current step run and clears its distance line
 
   // Player display: only PLAYER-type tokens can be picked up and moved by touch. NPC and
   // monster tokens are GM-controlled and inert here — a touch on one does nothing. Empty space
@@ -5078,10 +5138,11 @@ function onKeyDown(event) {
     return;
   }
 
-  // A selected token (Move mode) nudges one grid cell per arrow press, snapped to grid.
+  // A selected token (Move mode) steps one grid cell per arrow press, wall-aware and snapped — the
+  // same step the on-canvas octant arrows use, so keys and arrows never behave differently.
   if (sel.token && ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(event.key)) {
     event.preventDefault();
-    nudgeSelectedToken(event.key);
+    arrowStep({ ArrowUp: "N", ArrowDown: "S", ArrowLeft: "W", ArrowRight: "E" }[event.key]);
     return;
   }
   if (sel.token && (event.key === "Delete" || event.key === "Backspace")) {
