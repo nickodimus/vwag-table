@@ -37,6 +37,7 @@ const CSS = `
   z-index: 40;
 }
 .vtt-sandbox-badge strong { color: var(--text); display: block; font-size: 0.78rem; }
+.vtt-sandbox-badge a { color: #b1c301; display: inline-block; margin-top: 4px; pointer-events: auto; }
 `;
 
 function injectStyles() {
@@ -56,6 +57,13 @@ function injectBadge() {
   badge.appendChild(title);
   // Accurate split: maps persist/export locally; live session state has no server save here.
   badge.appendChild(document.createTextNode("export to keep a map · game state isn't saved"));
+  badge.appendChild(document.createElement("br"));
+  const guide = document.createElement("a");
+  guide.href = "manual.html";
+  guide.target = "_blank";
+  guide.rel = "noopener";
+  guide.textContent = "New here? Read the guide →";
+  badge.appendChild(guide);
   document.body.appendChild(badge);
 }
 
