@@ -108,6 +108,17 @@ function armHistoryOnce() {
   historyArmed = true;
 }
 
+// Bulk show/hide every note on the current floor (one undo step). Operates on the whole floor, not
+// just the filtered list, so it's a true "reveal/clear the pins" control.
+function setAllHidden(hidden) {
+  const notes = state.notes || [];
+  if (!notes.length) return;
+  hooks.pushHistory();
+  notes.forEach((n) => { n.hidden = hidden; });
+  hooks.render();
+  refreshNotesPanel();
+}
+
 // Wire the drawer's own controls once at startup. Structural actions (add/delete/toggle) are wired
 // in app.js next to the other tool buttons; this covers search, list interaction, and editing.
 function initNotesPanel() {
@@ -117,6 +128,9 @@ function initNotesPanel() {
     query = controls.notesSearch.value.trim().toLowerCase();
     refreshNotesPanel();
   });
+
+  controls.notesShowAll?.addEventListener("click", () => setAllHidden(false));
+  controls.notesHideAll?.addEventListener("click", () => setAllHidden(true));
 
   // List via delegation: the label button selects + centers on a note; the eye checkbox toggles
   // its pin (handled on 'change' below).

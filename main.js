@@ -5112,6 +5112,14 @@ function onContextMenu(event) {
 }
 
 function onKeyDown(event) {
+  // While a text field or the notes rich body has focus, the keystroke belongs to it — global tool
+  // shortcuts must stand down (typing "d" in a note shouldn't switch to Draw). Esc drops focus back
+  // to the map. This guards every INPUT/TEXTAREA/SELECT and any contenteditable, app-wide.
+  const active = document.activeElement;
+  if (active && (active.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(active.tagName))) {
+    if (event.key === "Escape") active.blur();
+    return;
+  }
   if (isPlayer) {
     if (event.key === "f" || event.key === "F") {
       toggleFullscreen();

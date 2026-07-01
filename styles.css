@@ -1800,6 +1800,26 @@ input:disabled {
   min-width: 0;
 }
 
+.notes-bulk {
+  display: flex;
+  gap: 8px;
+}
+
+.notes-bulk button {
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: inherit;
+  cursor: pointer;
+  flex: 1;
+  font: inherit;
+  padding: 5px 0;
+}
+
+.notes-bulk button:hover {
+  background: rgba(255, 255, 255, 0.14);
+}
+
 .notes-list {
   display: flex;
   flex: 1;
