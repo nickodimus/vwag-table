@@ -273,6 +273,16 @@ const controls = {
   imageRotation: document.getElementById("imageRotation"),
   noteSelPanel: document.getElementById("noteSelPanel"),
   noteSize: document.getElementById("noteSize"),
+  notesToggle: document.getElementById("notesToggle"),
+  notesPanel: document.getElementById("notesPanel"),
+  notesClose: document.getElementById("notesClose"),
+  notesAdd: document.getElementById("notesAdd"),
+  notesSearch: document.getElementById("notesSearch"),
+  notesList: document.getElementById("notesList"),
+  notesEditor: document.getElementById("notesEditor"),
+  notesLabel: document.getElementById("notesLabel"),
+  notesBody: document.getElementById("notesBody"),
+  notesDelete: document.getElementById("notesDelete"),
   playerFrameColor: document.getElementById("playerFrameColor"),
   playerFrameOpacity: document.getElementById("playerFrameOpacity"),
   panelToggle: document.getElementById("panelToggle"),
@@ -397,7 +407,7 @@ const cur = { k: 1, ms: 1 };
 
 // Orchestration hooks — wired once at startup (app.js) so feature modules can trigger a redraw, a
 // redraw+sync, or a relay without importing the render/sync layer (which is split out last, step 14).
-const hooks = { render: () => {}, renderAndSync: () => {}, relay: () => {} };
+const hooks = { render: () => {}, renderAndSync: () => {}, relay: () => {}, pushHistory: () => {}, syncPanels: () => {} };
 
 // GM Move-mode selection of non-token objects, read by the annotation draws (to ring the selected
 // item) and written by the Move-mode handlers. Ephemeral; not part of the saved `state` document.

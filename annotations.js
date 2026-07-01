@@ -128,6 +128,7 @@ function drawNotes() {
   ctx.textAlign = "left";
   ctx.textBaseline = "top";
   list.forEach((note) => {
+    if (note.hidden) return; // hidden from the drawer's show/hide toggle — off the map, still listed
     const s = nativeToScreen({ x: note.x, y: note.y });
     const { lines, padX, padY, lh, boxW, boxH } = noteLayout(note);
     ctx.font = noteFont(note);
@@ -147,6 +148,7 @@ function drawNotes() {
 
 function hitNote(screenPt) {
   for (let i = state.notes.length - 1; i >= 0; i--) {
+    if (state.notes[i].hidden) continue; // a hidden pin isn't drawn, so it isn't clickable
     const r = noteScreenRect(state.notes[i]);
     if (screenPt.x >= r.x && screenPt.x <= r.x + r.w && screenPt.y >= r.y && screenPt.y <= r.y + r.h) {
       return state.notes[i];

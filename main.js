@@ -80,6 +80,9 @@ import {
 import {
   hitTokenStepArrow, arrowAnchorToken,
 } from "./token-arrows.js";
+import {
+  initNotesPanel, refreshNotesPanel,
+} from "./notes-panel.js";
 async function saveSession() {
   captureCurrentFloor();
   if (!state.floors.some((floor) => floor.imageData)) {
@@ -208,6 +211,8 @@ function importLibrary(event) {
 hooks.render = render;
 hooks.renderAndSync = renderAndSync;
 hooks.relay = relay;
+hooks.pushHistory = pushHistory;       // notes drawer: undo snapshot before a note edit
+hooks.syncPanels = updateSelectionPanels; // notes drawer: keep the View-section note panel in sync
 
 // Area of effect is a live "hover template" (not placed): the shape follows the cursor
 // and is mirrored to the player display in real time.
@@ -944,6 +949,11 @@ function bindControls() {
 
   // Initiative tracker
   controls.initToggle?.addEventListener("click", toggleInitiative);
+  controls.notesToggle?.addEventListener("click", toggleNotes);
+  controls.notesClose?.addEventListener("click", closeNotes);
+  controls.notesAdd?.addEventListener("click", addNote);
+  controls.notesDelete?.addEventListener("click", deleteSelectedNote);
+  initNotesPanel();
   controls.initClose?.addEventListener("click", () => setInitiativeActive(false));
   controls.initPrev?.addEventListener("click", () => stepInitiative(-1));
   controls.initNext?.addEventListener("click", () => stepInitiative(1));
@@ -2252,6 +2262,7 @@ function goToFloor(index) {
   syncControlsFromState();
   refreshFloorUI();
   updateSelectionPanels(); // selections were cleared in applyFloor; hide any open Selected-X panel
+  refreshNotesPanel(); // the drawer lists the current floor's notes
   broadcastAssets();
   broadcastState();
 }
@@ -3876,24 +3887,55 @@ function addImageFile(file, nx, ny) {
   reader.readAsDataURL(file);
 }
 
+// Notes drawer open/close. It's a fixed slide-over (no grid column), so unlike the initiative panel
+// there's no canvas re-measure — just the `has-notes` class.
+function openNotes() {
+  document.querySelector(".app-shell")?.classList.add("has-notes");
+  controls.notesToggle?.classList.add("active");
+  refreshNotesPanel();
+}
+
+function closeNotes() {
+  document.querySelector(".app-shell")?.classList.remove("has-notes");
+  controls.notesToggle?.classList.remove("active");
+}
+
+function toggleNotes() {
+  const on = document.querySelector(".app-shell")?.classList.toggle("has-notes");
+  controls.notesToggle?.classList.toggle("active", !!on);
+  if (on) refreshNotesPanel();
+}
+
 function addNote() {
-  const text = window.prompt("Note text (GM only):", "");
-  if (text === null) return;
   pushHistory();
-  const note = { id: uuid(), x: state.view.cx, y: state.view.cy, text: text || "Note", scale: 1 };
+  const note = { id: uuid(), x: state.view.cx, y: state.view.cy, text: "Note", body: "", scale: 1 };
   state.notes.push(note);
   sel.token = sel.image = sel.stair = null;
   sel.note = note;
   updateSelectionPanels();
   render(); // notes are GM-only, no broadcast needed
+  openNotes();
+  controls.notesLabel?.focus();
+  controls.notesLabel?.select(); // the default "Note" is selected so the GM types the real label
 }
 
+// Double-clicking a pin opens the drawer on that note and drops the caret in the rich body.
 function editNote(note) {
-  const text = window.prompt("Edit note (GM only):", note.text || "");
-  if (text === null) return;
+  sel.token = sel.image = sel.stair = null;
+  sel.note = note;
+  updateSelectionPanels();
+  openNotes();
+  controls.notesBody?.focus();
+}
+
+function deleteSelectedNote() {
+  if (!sel.note) return;
   pushHistory();
-  note.text = text;
+  state.notes = state.notes.filter((n) => n !== sel.note);
+  sel.note = null;
+  updateSelectionPanels();
   render();
+  refreshNotesPanel();
 }
 
 // Build the condition toggle grid in the selected-token panel from the CONDITIONS registry — each

@@ -426,6 +426,9 @@
               <button id="initToggle" class="tool-button" type="button" title="Initiative tracker" aria-label="Initiative tracker">
                 <svg viewBox="0 0 24 24" aria-hidden="true"><line x1="10" x2="21" y1="6" y2="6"/><line x1="10" x2="21" y1="12" y2="12"/><line x1="10" x2="21" y1="18" y2="18"/><path d="M4 6h1v4"/><path d="M4 10h2"/><path d="M6 18H4c0-1 2-2 2-3s-1-1.5-2-1"/></svg>
               </button>
+              <button id="notesToggle" class="tool-button" type="button" title="Notes drawer" aria-label="Notes drawer">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h11l5 5v11H4z"/><path d="M15 4v5h5"/><line x1="8" x2="16" y1="13" y2="13"/><line x1="8" x2="14" y1="17" y2="17"/></svg>
+              </button>
               <button id="fitMapBtn" class="tool-button" type="button" title="Fit to screen (F)" aria-label="Fit to screen">
                 <svg viewBox="0 0 24 24" aria-hidden="true"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" x2="14" y1="3" y2="10"/><line x1="3" x2="10" y1="21" y2="14"/></svg>
               </button>
@@ -748,6 +751,37 @@
         </aside>
       </section>
 
+      <aside class="notes-panel" id="notesPanel" aria-label="Notes">
+        <div class="notes-head">
+          <h2>Notes</h2>
+          <button id="notesClose" class="init-close" type="button" title="Close notes" aria-label="Close notes">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+          </button>
+        </div>
+        <div class="notes-tools">
+          <button id="notesAdd" type="button" class="init-add-tokens">Add note</button>
+          <input id="notesSearch" type="search" placeholder="Search notes…" autocomplete="off">
+        </div>
+        <div id="notesList" class="notes-list"></div>
+        <div id="notesEditor" class="notes-editor hidden">
+          <label class="notes-field">
+            Label (shown on the map)
+            <input id="notesLabel" type="text" autocomplete="off">
+          </label>
+          <div class="notes-field">
+            Details (GM only)
+            <div class="notes-rt-toolbar">
+              <button type="button" data-cmd="bold" title="Bold"><b>B</b></button>
+              <button type="button" data-cmd="italic" title="Italic"><i>I</i></button>
+              <button type="button" data-cmd="insertUnorderedList" title="Bulleted list">&bull;</button>
+              <button type="button" data-cmd="insertOrderedList" title="Numbered list">1.</button>
+              <button type="button" data-cmd="createLink" title="Link">&#128279;</button>
+            </div>
+            <div id="notesBody" class="notes-rt" contenteditable="true" role="textbox" aria-multiline="true"></div>
+          </div>
+          <button id="notesDelete" type="button" class="danger-button">Delete note</button>
+        </div>
+      </aside>
       <aside class="initiative-panel" id="initiativePanel" aria-label="Initiative tracker">
         <div class="init-head">
           <h2>Initiative</h2>
