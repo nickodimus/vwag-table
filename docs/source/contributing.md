@@ -67,7 +67,8 @@ learned the hard way:
 ### Offline diagram rendering
 
 By default `sphinxcontrib-mermaid` loads `mermaid.js` from a CDN, so diagrams
-need internet to render. To make them render offline (off-grid / Starlink down):
+need internet to render. To make them render offline (e.g. when the CDN is
+unreachable):
 
 1. Download `mermaid.min.js` into `docs/source/_static/`.
 2. Uncomment the two `mermaid_version` / `html_js_files` lines in
