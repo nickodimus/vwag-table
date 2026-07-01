@@ -91,6 +91,20 @@ Camera loop; imports `state`, `geometry`.
 **Exports:** `tickCamera`, `ensureCameraLoop`, `stopCameraLoop`, `rotateMap`.
 
 ## dtt.js
-Map-import pipeline; imports `state`, `geometry`, `vision`, `rooms-obstacles`.
-See [Data flow](../data-flow.md).
+DTT module reader + normalizer; imports `map-import`. Reads a zipped DungeonDraft
+`.dtt` export in-browser (hand-rolled unzip), then normalizes it (feet → cells)
+into the shared content shape and installs it. See [Data flow](../data-flow.md).
 **Exports:** `readZip`, `parseDtt`, `importDtt`.
+
+## parse-uvtt.js
+Universal VTT parser; imports `map-import`. Turns a `.uvtt` / `.dd2vtt` /
+`.df2vtt` JSON (origin offset applied, grid-square units, `AARRGGBB` colors,
+embedded base64 image) into the shared content shape and installs it.
+**Exports:** `parseUvtt`, `importUvtt`.
+
+## map-import.js
+The shared, format-agnostic map installer; imports `state`, `geometry`,
+`vision`, `rooms-obstacles`. Bakes a normalized content object (obstacles /
+lights / tokens / notes, in cells) to native px and writes the stores. Every
+import format normalizes to this one seam. See [Data flow](../data-flow.md).
+**Exports:** `installParsedMap`.

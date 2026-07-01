@@ -1,7 +1,7 @@
 # Data flow
 
 Three flows carry the app: **load → render → broadcast**, the **map-import
-pipeline**, and the **online relay**.
+pipeline** (DTT + Universal VTT), and the **online relay**.
 
 ## Load → render → broadcast to the player display
 
@@ -21,21 +21,29 @@ graph LR
   relay --> remote["remote players"]
 ```
 
-## Map-import pipeline (DTT)
+## Map-import pipeline (DTT + Universal VTT)
 
-`dtt.js` reads a zipped map export, parses the `.dtt` JSON (six obstacle kinds
-as open polylines in cell coords; light/token radii in feet), and installs it
-into state. Distances are stored in feet, positions in cells — see
-[Coordinate model](coordinate-model.md).
+Two import formats share one installer. `main.js` sniffs the file (a `PK` zip is
+a DTT module; anything else is Universal VTT JSON) and drives the matching
+parser. Each parser normalizes its format into the **same content shape** — a
+plain object of obstacles / lights / tokens / notes in cell coordinates — and
+hands it to `map-import.installParsedMap`, which bakes cells → native px and
+writes state. Format-specific unit quirks (DTT distances in feet, UVTT ranges in
+grid squares; see [Coordinate model](coordinate-model.md)) are resolved inside
+each parser, so the installer is format-agnostic. Adding a format is "write a
+parser that emits the content shape," never "touch the installer."
 
 ```{mermaid}
 graph LR
-  zip["map .zip"] --> readZip["dtt.readZip"]
-  readZip --> parseDtt["dtt.parseDtt<br/>JSON -> obstacles / lights / grid"]
-  parseDtt --> importDtt["dtt.importDtt"]
-  importDtt --> rooms["rooms-obstacles.js<br/>wall segments"]
-  importDtt --> vision["vision.js<br/>LOS input"]
-  importDtt --> state["state.js"]
+  zip["map .zip (DTT)"] --> readZip["dtt.readZip"]
+  readZip --> parseDtt["dtt.parseDtt"]
+  parseDtt --> normDtt["dtt.normalizeDtt<br/>feet -> cells"]
+  uvtt["Universal VTT<br/>.uvtt / .dd2vtt / .df2vtt"] --> parseUvtt["parseUvtt<br/>origin + units + colors"]
+  normDtt --> content["shared content<br/>obstacles / lights /<br/>tokens / notes (cells)"]
+  parseUvtt --> content
+  content --> install["map-import.installParsedMap<br/>bake cells -> native, write stores"]
+  install --> state["state.js"]
+  state --> consumers["vision.js + rooms-obstacles.js<br/>consume state.obstacles"]
 ```
 
 ## Online relay

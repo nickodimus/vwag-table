@@ -349,9 +349,25 @@ the wall segments (<code class="docutils literal notranslate"><span class="pre">
 </section>
 <section id="dtt-js">
 <h2>dtt.js<a class="headerlink" href="#dtt-js" title="Link to this heading">¶</a></h2>
-<p>Map-import pipeline; imports <code class="docutils literal notranslate"><span class="pre">state</span></code>, <code class="docutils literal notranslate"><span class="pre">geometry</span></code>, <code class="docutils literal notranslate"><span class="pre">vision</span></code>, <code class="docutils literal notranslate"><span class="pre">rooms-obstacles</span></code>.
-See <a class="reference internal" href="../data-flow.html"><span class="std std-doc">Data flow</span></a>.
+<p>DTT module reader + normalizer; imports <code class="docutils literal notranslate"><span class="pre">map-import</span></code>. Reads a zipped DungeonDraft
+<code class="docutils literal notranslate"><span class="pre">.dtt</span></code> export in-browser (hand-rolled unzip), then normalizes it (feet → cells)
+into the shared content shape and installs it. See <a class="reference internal" href="../data-flow.html"><span class="std std-doc">Data flow</span></a>.
 <strong>Exports:</strong> <code class="docutils literal notranslate"><span class="pre">readZip</span></code>, <code class="docutils literal notranslate"><span class="pre">parseDtt</span></code>, <code class="docutils literal notranslate"><span class="pre">importDtt</span></code>.</p>
+</section>
+<section id="parse-uvtt-js">
+<h2>parse-uvtt.js<a class="headerlink" href="#parse-uvtt-js" title="Link to this heading">¶</a></h2>
+<p>Universal VTT parser; imports <code class="docutils literal notranslate"><span class="pre">map-import</span></code>. Turns a <code class="docutils literal notranslate"><span class="pre">.uvtt</span></code> / <code class="docutils literal notranslate"><span class="pre">.dd2vtt</span></code> /
+<code class="docutils literal notranslate"><span class="pre">.df2vtt</span></code> JSON (origin offset applied, grid-square units, <code class="docutils literal notranslate"><span class="pre">AARRGGBB</span></code> colors,
+embedded base64 image) into the shared content shape and installs it.
+<strong>Exports:</strong> <code class="docutils literal notranslate"><span class="pre">parseUvtt</span></code>, <code class="docutils literal notranslate"><span class="pre">importUvtt</span></code>.</p>
+</section>
+<section id="map-import-js">
+<h2>map-import.js<a class="headerlink" href="#map-import-js" title="Link to this heading">¶</a></h2>
+<p>The shared, format-agnostic map installer; imports <code class="docutils literal notranslate"><span class="pre">state</span></code>, <code class="docutils literal notranslate"><span class="pre">geometry</span></code>,
+<code class="docutils literal notranslate"><span class="pre">vision</span></code>, <code class="docutils literal notranslate"><span class="pre">rooms-obstacles</span></code>. Bakes a normalized content object (obstacles /
+lights / tokens / notes, in cells) to native px and writes the stores. Every
+import format normalizes to this one seam. See <a class="reference internal" href="../data-flow.html"><span class="std std-doc">Data flow</span></a>.
+<strong>Exports:</strong> <code class="docutils literal notranslate"><span class="pre">installParsedMap</span></code>.</p>
 </section>
 </section>
 
@@ -425,6 +441,8 @@ See <a class="reference internal" href="../data-flow.html"><span class="std std-
 <li><a class="reference internal" href="#rooms-obstacles-js">rooms-obstacles.js</a></li>
 <li><a class="reference internal" href="#view-js">view.js</a></li>
 <li><a class="reference internal" href="#dtt-js">dtt.js</a></li>
+<li><a class="reference internal" href="#parse-uvtt-js">parse-uvtt.js</a></li>
+<li><a class="reference internal" href="#map-import-js">map-import.js</a></li>
 </ul>
 </li>
 </ul>
