@@ -7,17 +7,8 @@
 
 
 import {
-  state, uuid,
-} from "./state.js";
-import {
-  cellsToNative, pxPerCellNative, simplifyPolyline,
-} from "./geometry.js";
-import {
-  invalidateCast,
-} from "./vision.js";
-import {
-  obstacleDefaults,
-} from "./rooms-obstacles.js";
+  installParsedMap,
+} from "./map-import.js";
 // DTT modules are plain .zip archives (data.dtt + save.json + map.webp + fog.webp + thumb).
 // We read them entirely in-browser with no libraries — the play table is an off-grid solar Pi,
 // so a runtime CDN dependency is unacceptable. The browser's built-in DecompressionStream
@@ -100,89 +91,16 @@ function parseDtt(entries) {
 
 
 // ---------------------------------------------------------------------------------------------
-// Apply layer: turn a parsed DTT object into live board state. Parked in app.js since step 3 until
-// geometry + vision existed; now reunited with the reader. importDtt is the public entry; the rest
-// are internal dispatch. loadMapModuleFile (main.js) sniffs format, then drives readZip -> parseDtt -> importDtt -> installMap for DTT.
+// Normalize layer: turn a parsed DTT object into the shared, format-agnostic map "content" (see
+// map-import.js) — all geometry in cells. importDtt is the public entry (main.js drives readZip ->
+// parseDtt -> importDtt); the heavy lifting (bake to native px, write stores) is installParsedMap.
 // ---------------------------------------------------------------------------------------------
 
-// How aggressively imported wall/obstacle polylines are thinned, in CELLS (resolution-independent),
-// via Douglas-Peucker. Kept conservative at 0.2 (~1 ft on a 5 ft grid): higher values (0.4 = ~2 ft)
-// can bow a wall far enough to pinch a 1-cell tunnel shut and make it impassable to a token. This
-// still cuts Caves of Chaos from ~8,600 raw wall points to ~1,900. Performance comes from caching the
-// cast (it rebuilds only on real geometry changes), NOT from crushing geometry — don't raise this to
-// chase speed; reach for cast-cache and viewport culling instead.
-const DTT_SIMPLIFY_TOLERANCE = 0.2;
-// Imported walls arrive as a few enormous single polylines (Caves of Chaos has one 1,000+ point run
-// spanning much of the map). Stored as one obstacle each, a single two-finger erase in Draw mode
-// nukes the whole run. Chunking a long wall into records of at most this many points — sharing the
-// boundary vertex between neighbours so the wall stays continuous — makes an erase delete one modest
-// section instead. This is purely an editing-granularity knob: the cast sees identical segments and
-// the render is unchanged, so it has no performance effect (don't reach for it to chase speed). Walls
-// only; doors/windows/objects stay whole (a door must remain one openable record).
-const DTT_OBSTACLE_MAX_POINTS = 16;
 const DTT_TOKEN_COLORS = {
   red: "#e24a4a", blue: "#3b82f6", green: "#3aa655", yellow: "#d6a94d",
   orange: "#e08a3c", purple: "#8b5cf6", white: "#e8e8e8", black: "#222222",
   cyan: "#3ec6c6", magenta: "#d4537e", gray: "#9aa0a6", grey: "#9aa0a6",
 };
-
-// Split a polyline into consecutive pieces of at most maxPts points each. Neighbouring pieces SHARE
-// their boundary vertex (piece i ends on the same point piece i+1 begins on), so the reassembled wall
-// has no gap and the cast produces exactly the same segments — only the obstacle-record grouping
-// changes. Every returned piece has >= 2 points (the loop stops before it could emit a lone tail
-// vertex). Short polylines (<= maxPts) pass through untouched as a single piece.
-function chunkPolyline(points, maxPts) {
-  if (points.length <= maxPts) return [points];
-  const pieces = [];
-  const step = maxPts - 1; // overlap one vertex so pieces stay joined
-  for (let i = 0; i < points.length - 1; i += step) {
-    pieces.push(points.slice(i, i + maxPts));
-  }
-  return pieces;
-}
-
-// Map a parsed DTT's six obstacle kinds into the obstacle store. DTT polylines are already open
-// polylines in cell coordinates — the exact shape state.obstacles holds — so geometry maps
-// directly; only Douglas-Peucker simplification (simplifyPolyline) thins the dense polylines. Each record draws its blocking rules from obstacleDefaults(kind), identical to a
-// hand-drawn obstacle (so wall/object/ethereal share the default profile, windows pass sight and
-// light, invisibles block but don't render, doors are openable). Replaces the store wholesale: a
-// fresh module import never appends to whatever was on the map before.
-function importObstacles(dtt) {
-  const KINDS = [
-    ["walls", "wall"],
-    ["doors", "door"],
-    ["windows", "window"],
-    ["objects", "object"],
-    ["ethereals", "ethereal"],
-    ["invisibles", "invisible"],
-  ];
-  const obstacles = [];
-  for (const [src, kind] of KINDS) {
-    for (const poly of dtt[src] || []) {
-      if (!Array.isArray(poly) || poly.length < 2) continue;
-      // Simplify in cell space (tolerance is in cells), then bake to native px so geometry is
-      // locked to the image and independent of the display grid (decouple-walls-from-grid).
-      const baked = simplifyPolyline(poly, DTT_SIMPLIFY_TOLERANCE).map((p) => {
-        const n = cellsToNative({ x: p[0], y: p[1] });
-        return [n.x, n.y];
-      });
-      // Only walls fragment into smaller records (giant runs, granular erase matters). Doors stay
-      // whole so each remains a single openable unit; windows/objects/ethereals/invisibles stay
-      // whole too — they're discrete or short and chunking would buy nothing.
-      const pieces = kind === "wall" ? chunkPolyline(baked, DTT_OBSTACLE_MAX_POINTS) : [baked];
-      for (const points of pieces) {
-        obstacles.push({
-          id: uuid(),
-          kind,
-          points,
-          ...obstacleDefaults(kind),
-          defaultOpen: false,
-        });
-      }
-    }
-  }
-  state.obstacles = obstacles;
-}
 
 // DTT token types collapse to vwag's three: player / npc / monster (enemy and anything else read
 // as monster).
@@ -192,39 +110,44 @@ function dttTokenType(t) {
   return "monster";
 }
 
-// Import placed lights. DTT positions are cells and radii are feet (÷5 = cells); both are baked to
-// native px here so lights lock to the image like obstacles. Inactive lights are skipped.
+// Map a parsed DTT into the shared content shape. Geometry stays in cells (installParsedMap bakes
+// it): the six DTT obstacle kinds map straight across, already open polylines in cell coords. Light
+// radii and token size/torch radii are in FEET in this format, so they convert to cells here (÷5)
+// before handoff — the installer is unit-agnostic and expects cells.
 //
-// The ÷5 is CORRECT — it is not a 5x shrink (this was suspected once and cleared). This format keeps
-// positions in cells but distances in feet; the tell is token `size` defaulting to 5, which ÷5 = 1
-// cell (a Medium creature) — a cells default would be 1, not 5. The conversion is unit-consistent
-// end-to-end: the in-app Light tool stores `lightRadius(cells) × pxPerCellNative()` (its slider is
-// labelled "cells"), token torches store `dim_radius ÷ 5` cells and are consumed as `light × ppc`
-// in vision.js, and vision.js reads a placed light's `radius` as native px directly. Don't re-flag.
-function importLights(dtt) {
-  const lights = [];
-  for (const l of (dtt.save && dtt.save.lights) || []) {
-    if (l.active === false) continue;
-    const p = l.position || {};
-    const n = cellsToNative({ x: p.x || 0, y: p.y || 0 });
-    lights.push({ id: uuid(), x: n.x, y: n.y, radius: ((l.radius || 0) / 5) * pxPerCellNative() });
+// The ÷5 is CORRECT — not a 5x shrink (suspected once, cleared). DTT keeps positions in cells but
+// distances in feet; the tell is token `size` defaulting to 5, which ÷5 = 1 cell (a Medium
+// creature) — a cells default would be 1, not 5. Unit-consistent end to end: the in-app Light tool
+// stores cells × pxPerCellNative(), token torches store dim_radius ÷ 5 cells consumed as light × ppc
+// in vision.js, and vision.js reads a placed light's radius as native px. Don't re-flag.
+function normalizeDtt(dtt) {
+  const KINDS = [
+    ["walls", "wall"], ["doors", "door"], ["windows", "window"],
+    ["objects", "object"], ["ethereals", "ethereal"], ["invisibles", "invisible"],
+  ];
+  const obstacles = [];
+  for (const [src, kind] of KINDS) {
+    for (const poly of dtt[src] || []) {
+      if (!Array.isArray(poly) || poly.length < 2) continue;
+      obstacles.push({ kind, points: poly });
+    }
   }
-  state.lights = lights;
-}
 
-// Import tokens. Position converts cells -> native px (vwag tokens carry native coords); size and
-// torch radii are feet -> cells (/5) — the same feet-distance convention documented on importLights.
-// A torch_on token carries a light of dim_radius cells. The token art path is a local file outside
-// the zip, so images import blank — type + color stand in.
-function importTokens(dtt) {
+  const save = dtt.save || {};
+
+  const lights = [];
+  for (const l of save.lights || []) {
+    if (l.active === false) continue; // inactive lights are skipped
+    const p = l.position || {};
+    lights.push({ x: p.x || 0, y: p.y || 0, radiusCells: (l.radius || 0) / 5 });
+  }
+
+  // Token art path is a local file outside the zip, so images import blank — type + color stand in.
   const tokens = [];
-  for (const t of (dtt.save && dtt.save.tokens) || []) {
+  for (const t of save.tokens || []) {
     const p = t.position || {};
-    const n = cellsToNative({ x: p.x || 0, y: p.y || 0 });
     tokens.push({
-      id: uuid(),
-      x: n.x,
-      y: n.y,
+      x: p.x || 0, y: p.y || 0,
       cells: Math.max(1, Math.round((t.size || 5) / 5)),
       color: DTT_TOKEN_COLORS[t.border_color] || "#d6a94d",
       label: "",
@@ -233,39 +156,23 @@ function importTokens(dtt) {
       image: "",
     });
   }
-  state.tokens = tokens;
-}
 
-// Import room labels as GM-only floating notes. Position converts cells -> native px; text is 1:1.
-// (DTT calls these "notes"; they map to vwag's notes feature, not the reserved pins field, which
-// stays for Encounter-Area linkage.)
-function importNotes(dtt) {
+  // DTT room labels become GM-only floating notes (vwag's notes feature, not the reserved pins
+  // field, which stays for Encounter-Area linkage).
   const notes = [];
-  for (const nt of (dtt.save && dtt.save.notes) || []) {
+  for (const nt of save.notes || []) {
     const p = nt.position || {};
-    const n = cellsToNative({ x: p.x || 0, y: p.y || 0 });
-    notes.push({ id: uuid(), x: n.x, y: n.y, text: nt.text || "", scale: 1 });
+    notes.push({ x: p.x || 0, y: p.y || 0, text: nt.text || "", scale: 1 });
   }
-  state.notes = notes;
+
+  const losEnabled = typeof save.line_of_sight === "boolean" ? save.line_of_sight : null;
+
+  return { obstacles, lights, tokens, notes, losEnabled };
 }
 
-// Orchestrate a full DTT import into the live stores: geometry (6b), lights + tokens (6c), room
-// notes (6d), and the line-of-sight flag. A single cast invalidation covers all of them; the LoS
-// checkbox re-syncs when installMap calls refreshFloorUI right after this runs.
+// Public entry: normalize the parsed DTT to shared content, then install it.
 function importDtt(dtt) {
-  importObstacles(dtt);
-  importLights(dtt);
-  importTokens(dtt);
-  importNotes(dtt);
-  if (dtt.save && typeof dtt.save.line_of_sight === "boolean") {
-    state.los.enabled = dtt.save.line_of_sight;
-  }
-  invalidateCast();
+  installParsedMap(normalizeDtt(dtt));
 }
 
-// chunkPolyline + the two obstacle-editing constants are exported so parse-uvtt.js can reuse the
-// exact same wall simplification/chunking behavior without duplicating it (shared helpers, Path A).
-export {
-  readZip, parseDtt, importDtt,
-  chunkPolyline, DTT_SIMPLIFY_TOLERANCE, DTT_OBSTACLE_MAX_POINTS,
-};
+export { readZip, parseDtt, importDtt };
