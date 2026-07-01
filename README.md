@@ -36,7 +36,7 @@ Or just try the hosted sandbox at **[vtt.worhl.net](https://vtt.worhl.net)** —
 - **Initiative** — a turn-order tracker with initiative and HP, linked to the board tokens: the active combatant is highlighted on the board on both the GM and player views. Advance turns and rounds, and import the party roster in one step. A compact order overlay can ride in the corner of the GM screen and/or the player display independently — it stays put when the docked panel is closed and has its own turn arrows, so you can advance the round without reopening the panel.
 - **Area of effect** — drop a persistent zone (circle, square, or cone) in any color and size, name it through a modal, and it commits and mirrors to the player display in real time with its label. Select any placed zone to edit it — rename, recolor, resize, and re-aim a cone (with a direction slider or the mouse wheel); every change mirrors to the players live.
 - **Map images** — add an image to the board (drag a file onto the map, or use *Add image* in View), then move, resize, and rotate it with on-canvas handles and optionally snap it to the grid. Toggle per-image whether players can see it — hidden from players by default.
-- **Notes** — drop GM-only floating notes on the map from View; drag to move, double-click to edit, delete to remove. Notes never appear on the player display.
+- **Notes** — a slide-out notes drawer lists every note on the current floor with a search box and a show/hide checkbox per note (drop a pin off the map without deleting it). Each note has a short label drawn on the map pin plus a rich-text body — bold, italics, lists, links — edited in the drawer; click a note to jump the view straight to it. Notes are GM-only and never appear on the player display.
 - **PDF resources** — open reference PDFs (rules, handouts, stat blocks) in floating windows alongside the board, kept on the GM side.
 - **Grid, measure, and calibration** — toggle and adjust the grid (size, offset, color, opacity, snapping). Calibrate by dragging a square over one cell: that sets the cell size, aligns the overlay to the map's own printed grid, and sets the ruler scale all at once. Measure reports distance in cells and your choice of feet or meters, using the 5e alternating-diagonal rule.
 - **Rotation** — rotate the GM map in 90° steps (fog, tokens, and stairs ride along, and the player follows), or rotate just the player display so it reads right-side up from across a flat table.
@@ -50,7 +50,6 @@ Or just try the hosted sandbox at **[vtt.worhl.net](https://vtt.worhl.net)** —
 Ports in flight from [Lodestar](https://github.com/UnclePlants/Lodestar), the upstream this client forked from — several tuned for the touch table:
 
 - **In-app manual** — a built-in tutorial and help guide covering calibration, maps, fog, light, line-of-sight, tokens, initiative, stairs, area of effect, online play, and the sandbox. Ported from Lodestar's manual and expanded for vwag-table's diverged features.
-- **Rich-text notes** — formatted note bodies (bold, lists, links) on top of the current plain GM notes.
 - **Music & ambient sound** — a built-in ambient/audio player for table atmosphere.
 
 ## Keyboard shortcuts (GM)
