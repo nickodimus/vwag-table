@@ -277,6 +277,8 @@ const controls = {
   notesPanel: document.getElementById("notesPanel"),
   notesClose: document.getElementById("notesClose"),
   notesAdd: document.getElementById("notesAdd"),
+  notesShowAll: document.getElementById("notesShowAll"),
+  notesHideAll: document.getElementById("notesHideAll"),
   notesSearch: document.getElementById("notesSearch"),
   notesList: document.getElementById("notesList"),
   notesEditor: document.getElementById("notesEditor"),
