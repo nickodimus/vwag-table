@@ -33,6 +33,7 @@ import {
   drawAoeTemplate, drawAoes, drawAoeLabels, drawCalibrationDraft, drawMeasureLabel, drawMeasureLine,
 } from "./aoe-measure.js";
 import { syncImageHandles } from "./image-handles.js";
+import { drawTokenStepArrows } from "./token-arrows.js";
 
 function drawStairs() {
   if (!state.stairs.length) return;
@@ -268,6 +269,7 @@ function render() {
   if (!isPlayer) drawNotes();
   if (!isPlayer) drawPlayerFrame();
   if (isPlayer && sel.marquee) drawPlayerMarquee();
+  drawTokenStepArrows(); // octant step arrows ring the selected token (GM + single-select player)
 
   // Keep the caches bounded to origins actually used this frame (~live token + light count).
   for (const k of castCache.keys()) if (!castFrameKeys.has(k)) castCache.delete(k);
