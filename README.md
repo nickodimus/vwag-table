@@ -22,7 +22,7 @@ Serve the folder over HTTP (not `file://`, so the player window and clipboard be
 python3 -m http.server 8000
 ```
 
-Or just try the hosted sandbox at **[vtt.worhl.net](https://vtt.worhl.net)** — no install, no account. Load a map image, click **Open player display**, and move that window to your second screen or the touch table; the player view is also reachable directly at `?view=player`. Drive the players' framing from the GM panel — follow the GM view, fit the map to their screen, set the zoom, or drag the red player frame to pan exactly what the table shows, without leaving your current tool. The two windows stay in sync over `BroadcastChannel` with no server involved. Use **Save map** and **My maps** for the local library, and **Export** / **Import** in the GM panel to back the whole library up to a file.
+Or just try the hosted sandbox at **[vtt.worhl.net](https://vtt.worhl.net)** — no install, no account. Load a map image, click **Open player display**, and move that window to your second screen or the touch table; the player view is also reachable directly at `?view=player`. A full walk-through **[guide](https://vtt.worhl.net/manual.html)** covers every tool, and a Help link in the toolbar opens it any time. Drive the players' framing from the GM panel — follow the GM view, fit the map to their screen, set the zoom, or drag the red player frame to pan exactly what the table shows, without leaving your current tool. The two windows stay in sync over `BroadcastChannel` with no server involved. Use **Save map** and **My maps** for the local library, and **Export** / **Import** in the GM panel to back the whole library up to a file.
 
 ## Features
 
@@ -49,7 +49,6 @@ Or just try the hosted sandbox at **[vtt.worhl.net](https://vtt.worhl.net)** —
 
 Ports in flight from [Lodestar](https://github.com/UnclePlants/Lodestar), the upstream this client forked from — several tuned for the touch table:
 
-- **In-app manual** — a built-in tutorial and help guide covering calibration, maps, fog, light, line-of-sight, tokens, initiative, stairs, area of effect, online play, and the sandbox. Ported from Lodestar's manual and expanded for vwag-table's diverged features.
 - **Music & ambient sound** — a built-in ambient/audio player for table atmosphere.
 
 ## Keyboard shortcuts (GM)

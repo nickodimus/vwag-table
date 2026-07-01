@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>vwag-table — Guide</title>
+<style>
+  :root {
+    --bg: #111313;
+    --panel: #191c1d;
+    --line: #313838;
+    --text: #eef1ef;
+    --muted: #9ba6a4;
+    --brand: #7c3aed;
+    --accent: #a78bfa;
+    --accent-soft: #c4b5fd;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font: 16px/1.7 "Inter", ui-sans-serif, system-ui, sans-serif;
+    margin: 0;
+    padding: 0 20px 80px;
+  }
+  .wrap { margin: 0 auto; max-width: 820px; }
+  header { border-bottom: 1px solid var(--line); margin-bottom: 28px; padding: 40px 0 24px; }
+  h1 { font-size: 2rem; letter-spacing: 0.04em; margin: 0; }
+  h1 .sub { color: var(--accent); }
+  header p { color: var(--muted); margin: 8px 0 0; }
+  h2 {
+    border-bottom: 1px solid var(--line);
+    font-size: 1.35rem;
+    margin: 44px 0 12px;
+    padding-bottom: 6px;
+    scroll-margin-top: 16px;
+  }
+  h3 { color: var(--accent-soft); font-size: 1.05rem; margin: 24px 0 6px; }
+  a { color: var(--accent); }
+  a:hover { color: var(--accent-soft); }
+  p, li { color: var(--text); }
+  strong { color: #fff; }
+  code {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    color: var(--accent-soft);
+    font: 0.85em "JetBrains Mono", ui-monospace, monospace;
+    padding: 1px 5px;
+  }
+  kbd {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-bottom-width: 2px;
+    border-radius: 5px;
+    font: 0.8em ui-monospace, monospace;
+    padding: 1px 6px;
+    white-space: nowrap;
+  }
+  nav.toc {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 18px 22px;
+  }
+  nav.toc h2 {
+    border: 0;
+    color: var(--muted);
+    font-size: 0.75rem;
+    letter-spacing: 0.12em;
+    margin: 0 0 10px;
+    padding: 0;
+    text-transform: uppercase;
+  }
+  nav.toc ol { columns: 2; column-gap: 32px; margin: 0; padding-left: 20px; }
+  nav.toc li { break-inside: avoid; margin: 4px 0; }
+  nav.toc a { text-decoration: none; }
+  table { border-collapse: collapse; margin: 12px 0; width: 100%; }
+  th, td { border: 1px solid var(--line); padding: 7px 12px; text-align: left; vertical-align: top; }
+  th { background: var(--panel); color: var(--muted); font-weight: 500; }
+  td code { background: transparent; border: 0; padding: 0; }
+  .note {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--accent);
+    border-radius: 0 8px 8px 0;
+    margin: 14px 0;
+    padding: 10px 16px;
+  }
+  .note p { margin: 4px 0; }
+  footer { border-top: 1px solid var(--line); color: var(--muted); margin-top: 48px; padding-top: 20px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>vwag-table <span class="sub">· guide</span></h1>
+  <p>A local-first virtual tabletop — run a battlemap for players around a screen, a TV, or the internet. No account needed to start.</p>
+</header>
+
+<nav class="toc">
+  <h2>Contents</h2>
+  <ol>
+    <li><a href="#what">What this is</a></li>
+    <li><a href="#start">Getting started</a></li>
+    <li><a href="#moving">Moving around the map</a></li>
+    <li><a href="#player">The player display</a></li>
+    <li><a href="#grid">Grid &amp; calibration</a></li>
+    <li><a href="#tokens">Tokens</a></li>
+    <li><a href="#fog">Fog of war</a></li>
+    <li><a href="#vision">Vision &amp; light</a></li>
+    <li><a href="#aoe">Area of effect</a></li>
+    <li><a href="#measure">Measure &amp; ping</a></li>
+    <li><a href="#initiative">Initiative tracker</a></li>
+    <li><a href="#notes">Notes</a></li>
+    <li><a href="#images">Map images</a></li>
+    <li><a href="#floors">Floors, stairs &amp; travel</a></li>
+    <li><a href="#rotate">Rotating &amp; the player frame</a></li>
+    <li><a href="#online">Online play</a></li>
+    <li><a href="#saving">Saving &amp; backups</a></li>
+    <li><a href="#shortcuts">Keyboard shortcuts</a></li>
+    <li><a href="#tips">Tips &amp; troubleshooting</a></li>
+  </ol>
+</nav>
+
+<h2 id="what">What this is</h2>
+<p>vwag-table is a virtual tabletop for running tactical maps. You — the game master — drive everything from a private panel: you load a map, hide parts of it behind fog, drop tokens for the party and their foes, track whose turn it is, and reveal the world as the players explore it. The players see a clean version of the map with none of your notes or controls, cast to a second screen, a TV laid flat on the table, or their own browsers over the internet.</p>
+<p>It runs entirely in your browser. There's no software to install and no account to create to try it — the <a href="https://vtt.worhl.net">sandbox</a> is a full copy you can play with right now. Everything you make stays on your own machine unless you deliberately choose to share it.</p>
+
+<h2 id="start">Getting started</h2>
+<p>Open the tool and you'll see three regions: a <strong>control panel</strong> down the left, a <strong>toolbar</strong> of icons, and the <strong>map</strong> filling the middle. Here's the quickest path to a playable table:</p>
+<ol>
+  <li><strong>Load a map.</strong> Use the map upload control in the left panel and pick any image — a dungeon, a town, a world map, a hand-drawn sketch, a photo of a battle mat. It fills the middle.</li>
+  <li><strong>Set the scale.</strong> Tell the tool how big one grid cell is, so distances and movement come out right. See <a href="#grid">Grid &amp; calibration</a> — it's one quick drag, and maps without a printed grid work fine too.</li>
+  <li><strong>Open the player display.</strong> Click <em>Open player display</em>. A second window appears showing only what the players should see. Drag it to your second monitor or TV.</li>
+  <li><strong>Drop some tokens</strong> for the party and their enemies, reveal the first room, and you're running.</li>
+</ol>
+<div class="note"><p><strong>Just trying it?</strong> On the sandbox there's a demo map already loaded, so you can skip straight to dropping tokens and painting fog to get a feel for it.</p></div>
+
+<h2 id="moving">Moving around the map</h2>
+<p>The default tool is <strong>Move</strong> (the arrows icon, shortcut <kbd>V</kbd>). With it selected you can:</p>
+<ul>
+  <li><strong>Pan</strong> — drag any empty part of the map to slide it around.</li>
+  <li><strong>Zoom</strong> — scroll the mouse wheel toward the point you want to look at.</li>
+  <li><strong>Fit</strong> — press <kbd>F</kbd> (or the fit-to-screen button) to frame the whole map at once.</li>
+</ul>
+<p>Move mode is also where you <em>select</em> things — click a token, an image, a note, or a placed area-of-effect to pick it up, drag it, or edit it.</p>
+
+<h2 id="player">The player display</h2>
+<p>Click <em>Open player display</em> and a second browser window opens. This is what your players see: the map, revealed areas, tokens, and any effects you've placed — but never your fog tint, your notes, your controls, or unrevealed rooms. Move that window onto a second monitor, a projector, or a TV lying flat on the table, and press <kbd>F</kbd> in it (or double-click) for fullscreen.</p>
+<p>You decide what fills the players' screen from your panel — you can have them follow your view, fit the whole map to their screen, or frame a specific area (see <a href="#rotate">the player frame</a>). The two windows stay in sync automatically, with no server in between.</p>
+
+<h2 id="grid">Grid &amp; calibration</h2>
+<p>Turn the grid on from the panel and adjust its size, colour, offset, and opacity. Most of the time, though, you don't want to nudge those by hand — you want the tool to know how big a cell is. That's what calibration does, and it works whether or not your map has a grid drawn on it.</p>
+<p>Switch on calibration and <strong>drag out a square</strong>. If your map has a printed grid, drag over exactly one of its cells and the tool matches it. If it doesn't, just size the square to whatever you want one cell to represent — a five-foot space, say. Either way the tool takes that as your cell size, lines its overlay up with the map, and sets the scale for measuring and movement. Now a 30-foot move really covers six squares, and tokens snap where they should.</p>
+<div class="note"><p>Do this each time you load a new map. Maps come in all sizes, and one calibration drag is all it takes to make the rest of the tool accurate.</p></div>
+
+<h2 id="tokens">Tokens</h2>
+<p>Pick the <strong>token tool</strong> (<kbd>T</kbd>) and click the map to drop a token, or drag image files in to make custom ones. Select a token in Move mode to open its panel, where you can rename it, recolour it, resize it, and set its type. A coloured ring marks each type — party members, NPCs, and monsters — so a glance tells you who's who. Tokens can also carry current HP and status markers (poisoned, prone, and the like) right on the board.</p>
+<h3>Moving a token</h3>
+<p>Drag a selected token and a live distance readout follows your cursor. For precise single steps, select a token and eight little arrows appear around it — tap one to step exactly one cell in that direction, diagonals included. The arrow keys do the same four cardinal steps. Every step is wall-aware: it won't walk through a wall you've drawn.</p>
+<h3>Adding a lot at once</h3>
+<p>Select several image files together and each becomes its own token in your palette, ready to drop — handy for a stat block full of goblins.</p>
+
+<h2 id="fog">Fog of war</h2>
+<p>Fog hides the map from players until you reveal it. You see hidden areas as a translucent tint (so you can still plan); the players see solid black. Nothing under unrevealed fog — tokens, images — shows on their screen.</p>
+<p>There are several ways to shape it, all in the fog tools:</p>
+<ul>
+  <li><strong>Trace an area</strong> (<kbd>P</kbd>) — click point to point around a room to reveal or re-hide it.</li>
+  <li><strong>Named area</strong> (<kbd>N</kbd>) — the same, but you give it a GM-only label so you remember what it is.</li>
+  <li><strong>Brush</strong> (<kbd>B</kbd>) — paint fog freehand; adjust the size with <kbd>[</kbd> and <kbd>]</kbd>.</li>
+  <li><strong>Quick shapes</strong> — drag out a rectangle, square, circle, ellipse, or triangle to fill an area fast.</li>
+  <li><strong>Bucket fill</strong> — flood a bounded region in one click.</li>
+  <li><strong>Eraser</strong> (<kbd>E</kbd>) — clear fog back off.</li>
+</ul>
+<p>A common flow: black out the whole map at the start of a session, then reveal each room with the brush or a traced area as the party walks in.</p>
+
+<h2 id="vision">Vision &amp; light</h2>
+<p>Beyond simple fog, vwag-table can compute what each token can actually <em>see</em> from where it stands — line of sight blocked by walls, and darkness that only lifts near a light source.</p>
+<ul>
+  <li><strong>Draw walls</strong> (<kbd>D</kbd>) — trace the walls and obstacles that block sight. (Windows can let light through while still blocking movement.)</li>
+  <li><strong>Place lights</strong> (<kbd>L</kbd>) — click to drop a light and set its radius, in cells, with the slider. Turn on <em>Darkness</em> and the map goes dark except where lights reach.</li>
+  <li>With line of sight on, a player token only reveals what's visible from its position — turn a corner and the next stretch of corridor opens up.</li>
+</ul>
+<p>It's all toggleable per session, so you can run a simple fog-only game or a full dynamic-lighting dungeon crawl from the same map.</p>
+
+<h2 id="aoe">Area of effect</h2>
+<p>Pick the area-of-effect tool (<kbd>A</kbd>), choose a shape — circle, square, or cone — a colour, and a size in feet. Hover to preview, click to drop it, and give it a name. It commits to the map and mirrors to the players in real time, label and all — perfect for a lingering <em>web</em> or a wall of fire.</p>
+<p>A cone points somewhere: aim it with the <strong>direction slider</strong>, or roll the mouse wheel over the map. To adjust a zone you've already placed, click it — the panel lets you rename it, recolour it, resize it, and (for a cone) re-aim it, with every change mirroring live to the players. Right-click a zone to remove it.</p>
+
+<h2 id="measure">Measure &amp; ping</h2>
+<p>The <strong>measure</strong> tool (<kbd>M</kbd>) drags out a line and reports the distance in cells and in feet or metres. Because you calibrated the grid, that distance is honest.</p>
+<p>To point something out to everyone, hold <kbd>Alt</kbd> and click — an animated ping ripples on both your screen and the players' display. Great for "the trap is <em>here</em>."</p>
+
+<h2 id="initiative">Initiative tracker</h2>
+<p>Open the initiative tracker from the toolbar. Add combatants with their initiative and HP — or import the whole party roster in one step — and it sorts the turn order for you. Step through turns and rounds, and the active combatant is highlighted on the board on both your view and the players'. A compact turn-order overlay can ride in the corner of either screen independently, and it keeps its own turn arrows so you can advance the round without reopening the panel.</p>
+
+<h2 id="notes">Notes</h2>
+<p>Notes are your private GM annotations, pinned to points on the map and never shown to players. Open the <strong>notes drawer</strong> from the toolbar and it lists every note on the current floor.</p>
+<ul>
+  <li><strong>Add a note</strong> and type a short <em>label</em> — that's the little pin drawn on the map.</li>
+  <li><strong>Details</strong> holds the full text, with basic formatting (bold, italics, lists, links). This part lives in the drawer only — it never clutters the map.</li>
+  <li><strong>Search</strong> filters the list by label or body as you type — handy when a big module has a hundred of them.</li>
+  <li><strong>Show/hide</strong> — the checkbox on each row drops that pin off the map without deleting the note, and <em>Show all</em> / <em>Hide all</em> clear or restore every pin at once.</li>
+  <li><strong>Click a note</strong> in the list and the view jumps straight to it on the map.</li>
+</ul>
+
+<h2 id="images">Map images</h2>
+<p>You can drop extra images onto the map on top of your base map — a treasure chest, a piece of furniture, a handout. Add one from the View controls or drag a file in, then use the on-canvas handles to move, resize, and rotate it, and snap it to the grid if you like. Each image has a toggle for whether players can see it — hidden from them by default, so you can stage a reveal.</p>
+
+<h2 id="floors">Floors, stairs &amp; travel</h2>
+<p>A location can have several floors, each with its own map, fog, tokens, and stairs. You and the players can even be looking at different floors at once — prep the boss room upstairs while the party explores the cellar. <em>Push to table</em> points the players' display at whichever floor you choose.</p>
+<p>Place <strong>stairs</strong> (<kbd>S</kbd>) and link them between floors; they're invisible to players. When a token stands on a stair, it (and any group you've selected) can traverse to the linked floor together.</p>
+<p><strong>Map-links</strong> (<kbd>G</kbd>) connect whole maps — a world map into a region, a region into a town, a town into a building. Players can follow a link too, and when they do the whole party travels together to the linked map.</p>
+<p>Finally, the <strong>Splash</strong> and <strong>Blackout</strong> checkboxes drop a title image or a plain black screen onto the player display — a clean way to pause between scenes.</p>
+
+<h2 id="rotate">Rotating &amp; the player frame</h2>
+<p>Rotate the map in 90° steps from the panel — fog, tokens, and stairs all come along. You can also rotate <em>just the player display</em>, so a map reads right-side-up to people sitting around a flat table while you keep yours oriented your way.</p>
+<h3>The player frame</h3>
+<p>On your screen a coloured frame shows exactly what the players are currently seeing. You can adjust its colour and opacity, and — the useful part at a table — you can <strong>grab the frame and drag it to pan the players' view</strong>. That lets you steer what the TV shows from across the room without touching the player window. You can also have the players simply follow your view, or fit the whole map to their screen.</p>
+
+<h2 id="online">Online play</h2>
+<p>Beyond a second screen in the same room, vwag-table can host a game for players joining over the internet from their own browsers.</p>
+<p>This needs a relay backend, which isn't part of the tool itself — you either run your own, or connect to a hosted instance by creating an account and logging in. Once you're connected, you mint a <strong>join code</strong>, a player redeems it on a landing page, and they watch the table live and can drag their own token. Each player's device fits your broadcast to its own screen.</p>
+<p>Setting up your own relay or an account is a bigger topic than this guide covers — a dedicated online-play guide is on the way. None of it is needed for in-person play.</p>
+<div class="note"><p>The public <a href="https://vtt.worhl.net">sandbox</a> has no backend, so online play is turned off there — but everything else (maps, fog, tokens, the second-screen display) works fully.</p></div>
+
+<h2 id="saving">Saving &amp; backups</h2>
+<p>Use <strong>Save map</strong> to store a full setup — the image, grid, fog, tokens, floors, view, and calibration — and <strong>My maps</strong> to bring one back. This library lives in your browser's own storage, on your machine. For everyday in-person play nothing is uploaded anywhere.</p>
+<p>Because that storage is tied to a specific browser and web address, a saved library only appears when you reload from the <em>same place</em> you saved it. Maps saved on one address won't show up in a different browser, on another computer, or in a private window, and clearing your browser's site data erases them.</p>
+<p>So for anything you want to keep or move between machines, use <strong>Export</strong> in the GM panel to write your whole library to a single file, and <strong>Import</strong> it wherever you need it. That file is the one copy that doesn't depend on a browser setting — it's the safe way to back up or carry your maps.</p>
+<div class="note"><p><strong>On the sandbox:</strong> treat anything you make as throwaway and export what you want to keep — it's a shared demo address with no account, so there's no server-side save there.</p>
+<p><strong>With a backend</strong> (a login), you can instead <em>publish</em> a map and its live game state to the server and pick the session back up from any machine. That's the one case where your data is stored off-device, and only when you choose to publish it.</p></div>
+
+<h2 id="shortcuts">Keyboard shortcuts</h2>
+<table>
+  <tr><th>Key</th><th>Does</th></tr>
+  <tr><td><kbd>V</kbd></td><td>Move / select</td></tr>
+  <tr><td><kbd>T</kbd></td><td>Tokens</td></tr>
+  <tr><td><kbd>A</kbd></td><td>Area of effect</td></tr>
+  <tr><td><kbd>M</kbd></td><td>Measure</td></tr>
+  <tr><td><kbd>S</kbd></td><td>Stairs</td></tr>
+  <tr><td><kbd>D</kbd></td><td>Draw walls (line of sight)</td></tr>
+  <tr><td><kbd>L</kbd></td><td>Place lights</td></tr>
+  <tr><td><kbd>G</kbd></td><td>Map-links</td></tr>
+  <tr><td><kbd>P</kbd></td><td>Fog area (trace)</td></tr>
+  <tr><td><kbd>N</kbd></td><td>Named fog area</td></tr>
+  <tr><td><kbd>B</kbd></td><td>Fog brush</td></tr>
+  <tr><td><kbd>E</kbd></td><td>Fog eraser</td></tr>
+  <tr><td><kbd>[</kbd> / <kbd>]</kbd></td><td>Brush size down / up</td></tr>
+  <tr><td><kbd>F</kbd></td><td>Fit map to screen</td></tr>
+  <tr><td><kbd>Ctrl</kbd>+<kbd>Z</kbd></td><td>Undo</td></tr>
+  <tr><td><kbd>↑ ↓ ← →</kbd></td><td>Step a selected token one cell</td></tr>
+  <tr><td><kbd>Alt</kbd>+click</td><td>Ping (both displays)</td></tr>
+  <tr><td>Right-click</td><td>Remove a token, zone, stair, or fog area</td></tr>
+</table>
+<p>Shortcuts stand down while you're typing in a text field or a note's Details, so you can write freely without switching tools. Press <kbd>Esc</kbd> to step out of a field.</p>
+
+<h2 id="tips">Tips &amp; troubleshooting</h2>
+<ul>
+  <li><strong>Calibrate first.</strong> If measuring or token snapping feels off, you probably loaded a map without calibrating — one drag over a single cell fixes it.</li>
+  <li><strong>Player window looks out of date?</strong> Refresh the player window. It rejoins your session and re-syncs.</li>
+  <li><strong>Running it yourself?</strong> Serve the folder over a local web server rather than opening the file directly, so the player window and the clipboard behave. Something as simple as <code>python3 -m http.server</code> works.</li>
+  <li><strong>Second screen.</strong> Open the player display, drag it to your monitor or TV, and press <kbd>F</kbd> (or double-click) for fullscreen.</li>
+  <li><strong>Back up before big changes.</strong> Export your library to a file now and then, especially before clearing browser data or moving machines.</li>
+</ul>
+
+<footer>
+  <p>vwag-table is open source and forked from <a href="https://github.com/UnclePlants/Lodestar">Lodestar</a>. Questions and rough edges are expected — it's actively built. Have fun at the table.</p>
+</footer>
+
+</div>
+</body>
+</html>
