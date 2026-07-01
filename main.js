@@ -29,6 +29,7 @@ import {
   getImage,
 } from "./db.js";
 import { readZip, parseDtt, importDtt } from "./dtt.js";
+import { parseUvtt, importUvtt } from "./parse-uvtt.js";
 import {
   simplifyPolyline, distToSegment, pointInPolygon, gridCellNative, pxPerCellNative, cellsToNative, tokenRadius, snapToGrid,
   snapNative, worldDims, activeView, fitScaleFor, viewTransform, clientToCanvasPoint, currentViewRotation, keepUpright,
@@ -576,7 +577,7 @@ function setup() {
 
 function bindControls() {
   controls.mapUpload.addEventListener("change", loadMapFile);
-  controls.dttUpload.addEventListener("change", loadDttFile);
+  controls.dttUpload.addEventListener("change", loadMapModuleFile);
   controls.splashUpload.addEventListener("change", loadSplashFile);
   controls.splashEnabled.addEventListener("input", () => {
     state.splash.enabled = controls.splashEnabled.checked;
@@ -1157,7 +1158,7 @@ function openPlayerWindow() {
 
 // Install a map from image bytes (a data URL) and a display name: reset the per-floor live
 // state the way a fresh map load does, decode the image, capture it into the current floor, and
-// fit it to the view. Shared by the file picker (loadMapFile) and the DTT importer (loadDttFile).
+// fit it to the view. Shared by the file picker (loadMapFile) and the module importer (loadMapModuleFile, DTT + UVTT).
 // gridOpts, when given as { cellsX, cellsY }, sets the cell grid from the module's known
 // cells-across so the overlay lines up with the map's printed grid (step 6a, the DTT "key").
 // onReady, when given, runs once the image is decoded and the grid is set, before the floor is
@@ -1268,25 +1269,41 @@ function resetBoardForImport() {
   updateInitiativeUI(); // reflect the now-empty tracker (docked panel + player overlay)
 }
 
-// Import a DTT module (.zip): read it offline, derive the grid from the DTT key
-// (pxPerCell = imageWidth / size.x), install the map at the right scale, and — via installMap's
-// onReady seam — import the geometry, lights, tokens, and room notes (6b–6d). Only fog (6e) is
-// left, and it's deferred.
-async function loadDttFile(event) {
+// Import a map module: either a DTT module (.dtt/.zip) or a Universal VTT file
+// (.uvtt/.dd2vtt/.df2vtt). Both derive the grid from the file's own key and lay geometry/lights
+// onto a fresh board via installMap's onReady seam. Format is sniffed from the bytes: a zip starts
+// with "PK", everything else is treated as UVTT JSON.
+//   DTT  : readZip -> parseDtt -> (importDtt) — unchanged path.
+//   UVTT : JSON.parse -> parseUvtt -> (importUvtt) — cells map ~1:1; grid auto-calibrates.
+function isZipBuffer(buf) {
+  const b = new Uint8Array(buf, 0, Math.min(2, buf.byteLength));
+  return b[0] === 0x50 && b[1] === 0x4b; // "PK" — local file header of a zip (DTT module)
+}
+
+async function loadMapModuleFile(event) {
   const file = event.target.files[0];
   if (!file) return;
   try {
-    const entries = await readZip(await file.arrayBuffer());
-    const dtt = parseDtt(entries);
-    const cellsX = Math.round(dtt.size.x);
-    const cellsY = Math.round(dtt.size.y);
-    if (!cellsX || !cellsY) throw new Error("module has no grid size");
-    const name = file.name.replace(/\.[^.]+$/, ""); // drop the .zip extension for a clean name
-    const dataURL = await blobToDataURL(new Blob([dtt.mapBytes], { type: "image/webp" }));
-    resetBoardForImport(); // wipe the old board so the module loads onto one fresh floor
-    installMap(dataURL, name, { cellsX, cellsY }, () => importDtt(dtt));
+    const buf = await file.arrayBuffer();
+    const name = file.name.replace(/\.[^.]+$/, ""); // drop the extension for a clean map name
+    if (isZipBuffer(buf)) {
+      // DTT module path (unchanged): grid from the DTT key, geometry/lights/tokens/notes in onReady.
+      const entries = await readZip(buf);
+      const dtt = parseDtt(entries);
+      const cellsX = Math.round(dtt.size.x);
+      const cellsY = Math.round(dtt.size.y);
+      if (!cellsX || !cellsY) throw new Error("module has no grid size");
+      const dataURL = await blobToDataURL(new Blob([dtt.mapBytes], { type: "image/webp" }));
+      resetBoardForImport();
+      installMap(dataURL, name, { cellsX, cellsY }, () => importDtt(dtt));
+    } else {
+      // Universal VTT path: single JSON with the image embedded; grid from resolution.map_size.
+      const parsed = parseUvtt(JSON.parse(new TextDecoder().decode(buf)));
+      resetBoardForImport();
+      installMap(parsed.imageDataURL, name, { cellsX: parsed.cellsX, cellsY: parsed.cellsY }, () => importUvtt(parsed));
+    }
   } catch (err) {
-    window.alert(`Could not import that DTT module: ${err.message}`);
+    window.alert(`Could not import that map module: ${err.message}`);
   } finally {
     event.target.value = ""; // allow re-importing the same file
   }

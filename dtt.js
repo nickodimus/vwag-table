@@ -102,7 +102,7 @@ function parseDtt(entries) {
 // ---------------------------------------------------------------------------------------------
 // Apply layer: turn a parsed DTT object into live board state. Parked in app.js since step 3 until
 // geometry + vision existed; now reunited with the reader. importDtt is the public entry; the rest
-// are internal dispatch. loadDttFile (app.js) drives readZip -> parseDtt -> importDtt -> installMap.
+// are internal dispatch. loadMapModuleFile (main.js) sniffs format, then drives readZip -> parseDtt -> importDtt -> installMap for DTT.
 // ---------------------------------------------------------------------------------------------
 
 // How aggressively imported wall/obstacle polylines are thinned, in CELLS (resolution-independent),
@@ -263,4 +263,9 @@ function importDtt(dtt) {
   invalidateCast();
 }
 
-export { readZip, parseDtt, importDtt };
+// chunkPolyline + the two obstacle-editing constants are exported so parse-uvtt.js can reuse the
+// exact same wall simplification/chunking behavior without duplicating it (shared helpers, Path A).
+export {
+  readZip, parseDtt, importDtt,
+  chunkPolyline, DTT_SIMPLIFY_TOLERANCE, DTT_OBSTACLE_MAX_POINTS,
+};
