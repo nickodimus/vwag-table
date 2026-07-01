@@ -194,6 +194,13 @@ function dttTokenType(t) {
 
 // Import placed lights. DTT positions are cells and radii are feet (÷5 = cells); both are baked to
 // native px here so lights lock to the image like obstacles. Inactive lights are skipped.
+//
+// The ÷5 is CORRECT — it is not a 5x shrink (this was suspected once and cleared). This format keeps
+// positions in cells but distances in feet; the tell is token `size` defaulting to 5, which ÷5 = 1
+// cell (a Medium creature) — a cells default would be 1, not 5. The conversion is unit-consistent
+// end-to-end: the in-app Light tool stores `lightRadius(cells) × pxPerCellNative()` (its slider is
+// labelled "cells"), token torches store `dim_radius ÷ 5` cells and are consumed as `light × ppc`
+// in vision.js, and vision.js reads a placed light's `radius` as native px directly. Don't re-flag.
 function importLights(dtt) {
   const lights = [];
   for (const l of (dtt.save && dtt.save.lights) || []) {
@@ -206,8 +213,9 @@ function importLights(dtt) {
 }
 
 // Import tokens. Position converts cells -> native px (vwag tokens carry native coords); size and
-// torch radii are feet -> cells (/5). A torch_on token carries a light of dim_radius cells. The
-// token art path is a local file outside the zip, so images import blank — type + color stand in.
+// torch radii are feet -> cells (/5) — the same feet-distance convention documented on importLights.
+// A torch_on token carries a light of dim_radius cells. The token art path is a local file outside
+// the zip, so images import blank — type + color stand in.
 function importTokens(dtt) {
   const tokens = [];
   for (const t of (dtt.save && dtt.save.tokens) || []) {
