@@ -1844,7 +1844,7 @@ input:disabled {
 }
 
 .notes-row.selected {
-  background: rgba(177, 195, 1, 0.16);
+  background: color-mix(in srgb, var(--brand-bright) 18%, transparent);
 }
 
 .notes-row.hidden-note .notes-row-label {
@@ -1916,7 +1916,7 @@ input:disabled {
 }
 
 .notes-rt:focus {
-  outline: 1px solid #b1c301;
+  outline: 1px solid var(--accent);
 }
 
 .init-head {
