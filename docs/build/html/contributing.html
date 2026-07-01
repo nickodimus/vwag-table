@@ -309,7 +309,8 @@ learned the hard way:</p>
 <section id="offline-diagram-rendering">
 <h3>Offline diagram rendering<a class="headerlink" href="#offline-diagram-rendering" title="Link to this heading">¶</a></h3>
 <p>By default <code class="docutils literal notranslate"><span class="pre">sphinxcontrib-mermaid</span></code> loads <code class="docutils literal notranslate"><span class="pre">mermaid.js</span></code> from a CDN, so diagrams
-need internet to render. To make them render offline (off-grid / Starlink down):</p>
+need internet to render. To make them render offline (e.g. when the CDN is
+unreachable):</p>
 <ol class="arabic simple">
 <li><p>Download <code class="docutils literal notranslate"><span class="pre">mermaid.min.js</span></code> into <code class="docutils literal notranslate"><span class="pre">docs/source/_static/</span></code>.</p></li>
 <li><p>Uncomment the two <code class="docutils literal notranslate"><span class="pre">mermaid_version</span></code> / <code class="docutils literal notranslate"><span class="pre">html_js_files</span></code> lines in

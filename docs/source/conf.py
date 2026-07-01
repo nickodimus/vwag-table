@@ -47,7 +47,7 @@ def setup(app):
 # --- Mermaid -----------------------------------------------------------------
 # Default: sphinxcontrib-mermaid pulls mermaid.js from a CDN at page-load.
 # That renders fine at a desk with internet. To make the docs render diagrams
-# OFFLINE (off-grid / Starlink down), vendor mermaid locally:
+# OFFLINE (no internet, or the mermaid CDN is blocked), vendor mermaid locally:
 #   1. download mermaid.min.js into docs/source/_static/
 #   2. uncomment the two lines below
 # mermaid_version = ""                       # disable the CDN auto-include
