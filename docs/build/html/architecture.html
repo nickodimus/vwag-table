@@ -251,8 +251,8 @@
 graph of focused ES modules. <code class="docutils literal notranslate"><span class="pre">main.js</span></code> (~5,600 lines) is the orchestrator:
 boot, control wiring, the <code class="docutils literal notranslate"><span class="pre">BroadcastChannel</span></code> message handler, the pointer/key/
 wheel input layer, movement/collision, floor/stairs/map-link management, and the
-app-level actions that cross-cut multiple feature modules. It imports <strong>19</strong>
-modules and is imported by <strong>none</strong>. The other modules total ~6,000 lines and
+app-level actions that cross-cut multiple feature modules. It imports <strong>20</strong>
+modules and is imported by <strong>none</strong>. The other modules total ~6,200 lines and
 form a dependency tree beneath it.</p>
 <p><strong>Is <code class="docutils literal notranslate"><span class="pre">main.js</span></code> bloated?</strong> No. It is large but well-factored. The single biggest
 thing in it is not movement or rendering — it is <strong>control wiring</strong>:
@@ -282,9 +282,13 @@ import each other; they meet only through <code class="docutils literal notransl
   end
   subgraph &quot;Layer 4 — aggregators&quot;
     render[&quot;render.js (draw)&quot;]
-    dtt[&quot;dtt.js (import)&quot;]
+    mapimport[&quot;map-import.js&lt;br/&gt;(shared installer)&quot;]
   end
-  subgraph &quot;Layer 5 — orchestrator&quot;
+  subgraph &quot;Layer 5 — format parsers&quot;
+    dtt[&quot;dtt.js&quot;]
+    uvtt[&quot;parse-uvtt.js&quot;]
+  end
+  subgraph &quot;Layer 6 — orchestrator&quot;
     main[&quot;main.js&quot;]
   end
 
@@ -293,9 +297,12 @@ import each other; they meet only through <code class="docutils literal notransl
   geometry --&gt; features
   db --&gt; features
   features --&gt; render
-  features --&gt; dtt
+  features --&gt; mapimport
+  mapimport --&gt; dtt
+  mapimport --&gt; uvtt
   render --&gt; main
   dtt --&gt; main
+  uvtt --&gt; main
   features --&gt; main
     </pre><p>The thing that keeps this graph acyclic is the <strong><code class="docutils literal notranslate"><span class="pre">hooks</span></code> object</strong> (see
 <a class="reference internal" href="#patterns">Patterns</a>): leaf feature modules call back up to app-level actions

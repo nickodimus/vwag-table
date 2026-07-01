@@ -271,13 +271,24 @@ the current view.</p></li>
 before <code class="docutils literal notranslate"><span class="pre">screenToNative</span></code>).</p></li>
 </ul>
 </section>
-<section id="the-feet-5-convention">
-<h2>The feet ÷ 5 convention<a class="headerlink" href="#the-feet-5-convention" title="Link to this heading">¶</a></h2>
-<p>DTT map data stores <strong>distances in feet</strong> but <strong>positions in cells</strong>. One cell =
-5 feet (<code class="docutils literal notranslate"><span class="pre">FEET_PER_CELL</span></code>), so any radius or distance coming from a <code class="docutils literal notranslate"><span class="pre">.dtt</span></code> file is
-divided by 5 to get cells. This is documented in a comment block in <code class="docutils literal notranslate"><span class="pre">dtt.js</span></code>,
-has been cross-checked, and is <strong>correct</strong> — do not re-investigate it. Light and
-token radii from imported maps follow this rule.</p>
+<section id="per-format-distance-units">
+<h2>Per-format distance units<a class="headerlink" href="#per-format-distance-units" title="Link to this heading">¶</a></h2>
+<p>Imported formats disagree on units, so each parser converts to <strong>cells</strong> before
+handing off to the shared installer (<code class="docutils literal notranslate"><span class="pre">map-import.installParsedMap</span></code>), which is
+unit-agnostic and bakes cells → native px uniformly.</p>
+<p><strong>DTT — feet.</strong> DTT map data stores <strong>distances in feet</strong> but <strong>positions in
+cells</strong>. One cell = 5 feet (<code class="docutils literal notranslate"><span class="pre">FEET_PER_CELL</span></code>), so any radius or distance from a
+<code class="docutils literal notranslate"><span class="pre">.dtt</span></code> file is divided by 5 to get cells, in <code class="docutils literal notranslate"><span class="pre">dtt.normalizeDtt</span></code>. This is
+documented in a comment block in <code class="docutils literal notranslate"><span class="pre">dtt.js</span></code>, has been cross-checked, and is
+<strong>correct</strong> — do not re-investigate it. Light and token radii from DTT maps
+follow this rule.</p>
+<p><strong>Universal VTT — cells.</strong> UVTT (<code class="docutils literal notranslate"><span class="pre">.uvtt</span></code> / <code class="docutils literal notranslate"><span class="pre">.dd2vtt</span></code> / <code class="docutils literal notranslate"><span class="pre">.df2vtt</span></code>) expresses
+everything — wall/portal geometry <em>and</em> light <code class="docutils literal notranslate"><span class="pre">range</span></code> — in grid squares
+(cells). So <code class="docutils literal notranslate"><span class="pre">parse-uvtt.js</span></code> does <strong>no</strong> ÷5: a light <code class="docutils literal notranslate"><span class="pre">range</span></code> of 5 is 5 cells
+directly. Applying the DTT feet rule here would make UVTT lights 5× too small —
+the one unit trap this split is designed to prevent. UVTT also carries a
+<code class="docutils literal notranslate"><span class="pre">map_origin</span></code> offset (subtracted per point so geometry lands on the image) and
+<code class="docutils literal notranslate"><span class="pre">AARRGGBB</span></code> colors (alpha stripped to <code class="docutils literal notranslate"><span class="pre">#RRGGBB</span></code>).</p>
 </section>
 </section>
 
@@ -339,7 +350,7 @@ token radii from imported maps follow this rule.</p>
 <li><a class="reference internal" href="#">Coordinate model</a><ul>
 <li><a class="reference internal" href="#the-three-spaces">The three spaces</a></li>
 <li><a class="reference internal" href="#key-conversions-geometry-js">Key conversions (<code class="docutils literal notranslate"><span class="pre">geometry.js</span></code>)</a></li>
-<li><a class="reference internal" href="#the-feet-5-convention">The feet ÷ 5 convention</a></li>
+<li><a class="reference internal" href="#per-format-distance-units">Per-format distance units</a></li>
 </ul>
 </li>
 </ul>

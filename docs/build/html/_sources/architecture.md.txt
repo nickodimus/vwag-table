@@ -6,8 +6,8 @@
 graph of focused ES modules. `main.js` (~5,600 lines) is the orchestrator:
 boot, control wiring, the `BroadcastChannel` message handler, the pointer/key/
 wheel input layer, movement/collision, floor/stairs/map-link management, and the
-app-level actions that cross-cut multiple feature modules. It imports **19**
-modules and is imported by **none**. The other modules total ~6,000 lines and
+app-level actions that cross-cut multiple feature modules. It imports **20**
+modules and is imported by **none**. The other modules total ~6,200 lines and
 form a dependency tree beneath it.
 
 **Is `main.js` bloated?** No. It is large but well-factored. The single biggest
@@ -39,9 +39,13 @@ graph TD
   end
   subgraph "Layer 4 — aggregators"
     render["render.js (draw)"]
-    dtt["dtt.js (import)"]
+    mapimport["map-import.js<br/>(shared installer)"]
   end
-  subgraph "Layer 5 — orchestrator"
+  subgraph "Layer 5 — format parsers"
+    dtt["dtt.js"]
+    uvtt["parse-uvtt.js"]
+  end
+  subgraph "Layer 6 — orchestrator"
     main["main.js"]
   end
 
@@ -50,9 +54,12 @@ graph TD
   geometry --> features
   db --> features
   features --> render
-  features --> dtt
+  features --> mapimport
+  mapimport --> dtt
+  mapimport --> uvtt
   render --> main
   dtt --> main
+  uvtt --> main
   features --> main
 ```
 

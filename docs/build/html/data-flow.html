@@ -246,7 +246,7 @@
           <section id="data-flow">
 <h1>Data flow<a class="headerlink" href="#data-flow" title="Link to this heading">¶</a></h1>
 <p>Three flows carry the app: <strong>load → render → broadcast</strong>, the <strong>map-import
-pipeline</strong>, and the <strong>online relay</strong>.</p>
+pipeline</strong> (DTT + Universal VTT), and the <strong>online relay</strong>.</p>
 <section id="load-render-broadcast-to-the-player-display">
 <h2>Load → render → broadcast to the player display<a class="headerlink" href="#load-render-broadcast-to-the-player-display" title="Link to this heading">¶</a></h2>
 <p>The GM window is authoritative. It renders locally and broadcasts a sanitized
@@ -263,20 +263,28 @@ relay).</p>
   channel --&gt; player[&quot;player window&lt;br/&gt;(same code, isPlayer)&quot;]
   relay --&gt; remote[&quot;remote players&quot;]
     </pre></section>
-<section id="map-import-pipeline-dtt">
-<h2>Map-import pipeline (DTT)<a class="headerlink" href="#map-import-pipeline-dtt" title="Link to this heading">¶</a></h2>
-<p><code class="docutils literal notranslate"><span class="pre">dtt.js</span></code> reads a zipped map export, parses the <code class="docutils literal notranslate"><span class="pre">.dtt</span></code> JSON (six obstacle kinds
-as open polylines in cell coords; light/token radii in feet), and installs it
-into state. Distances are stored in feet, positions in cells — see
-<a class="reference internal" href="coordinate-model.html"><span class="std std-doc">Coordinate model</span></a>.</p>
+<section id="map-import-pipeline-dtt-universal-vtt">
+<h2>Map-import pipeline (DTT + Universal VTT)<a class="headerlink" href="#map-import-pipeline-dtt-universal-vtt" title="Link to this heading">¶</a></h2>
+<p>Two import formats share one installer. <code class="docutils literal notranslate"><span class="pre">main.js</span></code> sniffs the file (a <code class="docutils literal notranslate"><span class="pre">PK</span></code> zip is
+a DTT module; anything else is Universal VTT JSON) and drives the matching
+parser. Each parser normalizes its format into the <strong>same content shape</strong> — a
+plain object of obstacles / lights / tokens / notes in cell coordinates — and
+hands it to <code class="docutils literal notranslate"><span class="pre">map-import.installParsedMap</span></code>, which bakes cells → native px and
+writes state. Format-specific unit quirks (DTT distances in feet, UVTT ranges in
+grid squares; see <a class="reference internal" href="coordinate-model.html"><span class="std std-doc">Coordinate model</span></a>) are resolved inside
+each parser, so the installer is format-agnostic. Adding a format is “write a
+parser that emits the content shape,” never “touch the installer.”</p>
 <pre  class="mermaid">
         graph LR
-  zip[&quot;map .zip&quot;] --&gt; readZip[&quot;dtt.readZip&quot;]
-  readZip --&gt; parseDtt[&quot;dtt.parseDtt&lt;br/&gt;JSON -&gt; obstacles / lights / grid&quot;]
-  parseDtt --&gt; importDtt[&quot;dtt.importDtt&quot;]
-  importDtt --&gt; rooms[&quot;rooms-obstacles.js&lt;br/&gt;wall segments&quot;]
-  importDtt --&gt; vision[&quot;vision.js&lt;br/&gt;LOS input&quot;]
-  importDtt --&gt; state[&quot;state.js&quot;]
+  zip[&quot;map .zip (DTT)&quot;] --&gt; readZip[&quot;dtt.readZip&quot;]
+  readZip --&gt; parseDtt[&quot;dtt.parseDtt&quot;]
+  parseDtt --&gt; normDtt[&quot;dtt.normalizeDtt&lt;br/&gt;feet -&gt; cells&quot;]
+  uvtt[&quot;Universal VTT&lt;br/&gt;.uvtt / .dd2vtt / .df2vtt&quot;] --&gt; parseUvtt[&quot;parseUvtt&lt;br/&gt;origin + units + colors&quot;]
+  normDtt --&gt; content[&quot;shared content&lt;br/&gt;obstacles / lights /&lt;br/&gt;tokens / notes (cells)&quot;]
+  parseUvtt --&gt; content
+  content --&gt; install[&quot;map-import.installParsedMap&lt;br/&gt;bake cells -&gt; native, write stores&quot;]
+  install --&gt; state[&quot;state.js&quot;]
+  state --&gt; consumers[&quot;vision.js + rooms-obstacles.js&lt;br/&gt;consume state.obstacles&quot;]
     </pre></section>
 <section id="online-relay">
 <h2>Online relay<a class="headerlink" href="#online-relay" title="Link to this heading">¶</a></h2>
@@ -349,7 +357,7 @@ publishes; players redeem an invite and boot into a player view.</p>
             <ul>
 <li><a class="reference internal" href="#">Data flow</a><ul>
 <li><a class="reference internal" href="#load-render-broadcast-to-the-player-display">Load → render → broadcast to the player display</a></li>
-<li><a class="reference internal" href="#map-import-pipeline-dtt">Map-import pipeline (DTT)</a></li>
+<li><a class="reference internal" href="#map-import-pipeline-dtt-universal-vtt">Map-import pipeline (DTT + Universal VTT)</a></li>
 <li><a class="reference internal" href="#online-relay">Online relay</a></li>
 </ul>
 </li>
