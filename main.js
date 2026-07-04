@@ -246,6 +246,22 @@ let lastTokenTap = { token: null, time: 0 }; // tracks the previous player token
 const DOUBLE_TAP_MS = 350; // second tap on the same token within this window = traverse gesture
 let dragMeasureStart = null; // the dragged token's pre-drag position; anchors the live drag-distance line
 
+// Multitouch player-token drag. The IR touch frame reports true simultaneous contacts only on the
+// Touch Events API (Pointer Events collapse it to one contact on this Chromium/X11 stack), so on the
+// player display token movement is driven entirely by the touch* handlers below, not the pointer path.
+// Each physical mini rides its own stable touch.identifier; this map holds one drag entry per finger.
+// Mouse and pen keep the single-pointer path above (marquee, shift-select, formation group-drag).
+const touchDrags = new Map(); // touch.identifier -> { token, grabbed, lastNative:{x,y}, lastMoveAt }
+let touchMoveRaf = 0;         // coalesces active touch-drag streaming to one relay batch per frame
+let touchSettleTimer = 0;     // idle sweep; runs only while at least one finger is actively dragging
+// A physical mini rests on the glass the whole time it is in play, so a held contact is NOT a drag —
+// only MOVEMENT is. A mini that stops moving settles: it commits + snaps and goes silent while still
+// resting, and re-drags if pushed again. Without this, every resting mini would stream forever and peg
+// the CPU. TOUCH_SETTLE_MS = stillness before a moving mini settles; TOUCH_JITTER_CELLS = sub-cell base
+// wobble that must not count as movement (fraction of a cell). Both are feel-tunable.
+const TOUCH_SETTLE_MS = 180;
+const TOUCH_JITTER_CELLS = 0.15;
+
 const undoStack = [];
 const redoStack = [];
 
@@ -535,6 +551,13 @@ function setup() {
   canvas.addEventListener("touchmove", (event) => {
     if (isDragging) event.preventDefault();
   }, { passive: false });
+  // Player display: true multitouch token movement rides the Touch Events API (Pointer Events collapse
+  // the IR frame to a single contact). Non-passive so the handlers can preventDefault the browser's
+  // native scroll/zoom/context gestures. Each handler no-ops unless isPlayer, so the GM tab is untouched.
+  canvas.addEventListener("touchstart", onTouchStart, { passive: false });
+  canvas.addEventListener("touchmove", onTouchMove, { passive: false });
+  canvas.addEventListener("touchend", onTouchEnd, { passive: false });
+  canvas.addEventListener("touchcancel", onTouchEnd, { passive: false });
   canvas.addEventListener("dblclick", onDoubleClick);
   canvas.addEventListener("contextmenu", onContextMenu);
   canvas.addEventListener("wheel", onWheel, { passive: false });
@@ -2613,6 +2636,48 @@ function streamGroupMove() {
   });
 }
 
+// Live-stream every finger's held token to the GM/other displays, coalesced to one batch per frame.
+// Same wire contract as streamGroupMove (token-move per id); the GM stays authoritative and reconciles.
+// Live-stream every actively-dragging finger's token, coalesced to one batch per frame. Settled (resting)
+// entries are silent — that is what keeps a full board of resting minis from streaming continuously.
+function streamTouchMoves() {
+  if (touchMoveRaf || !touchDrags.size) return;
+  touchMoveRaf = requestAnimationFrame(() => {
+    touchMoveRaf = 0;
+    for (const entry of touchDrags.values()) {
+      if (entry.grabbed) relay({ type: "token-move", id: entry.token.id, x: entry.token.x, y: entry.token.y });
+    }
+  });
+}
+
+// Idle watchdog. Any finger that has been still longer than TOUCH_SETTLE_MS settles: its token is
+// committed (token-drop -> GM snaps + clamps + broadcasts) and it goes quiet, though the contact stays
+// on the glass. When nothing is left dragging, the sweep stops itself so it costs nothing at rest.
+function sweepTouchSettle() {
+  const now = performance.now();
+  let anyGrabbed = false;
+  for (const entry of touchDrags.values()) {
+    if (!entry.grabbed) continue;
+    if (now - entry.lastMoveAt > TOUCH_SETTLE_MS) {
+      relay({ type: "token-drop", id: entry.token.id, x: entry.token.x, y: entry.token.y });
+      entry.grabbed = false; // settled: rests silently until pushed again
+    } else {
+      anyGrabbed = true;
+    }
+  }
+  if (!anyGrabbed) {
+    if (touchMoveRaf) { cancelAnimationFrame(touchMoveRaf); touchMoveRaf = 0; }
+    stopTouchSettle();
+    render(); // reflect the settled rest positions
+  }
+}
+function ensureTouchSettleSweep() {
+  if (!touchSettleTimer) touchSettleTimer = setInterval(sweepTouchSettle, 90);
+}
+function stopTouchSettle() {
+  if (touchSettleTimer) { clearInterval(touchSettleTimer); touchSettleTimer = 0; }
+}
+
 
 
 /* ----------------------------- modes / tools ----------------------------- */
@@ -4445,6 +4510,9 @@ function tokenTraverse(token) {
 
 function onPointerDown(event) {
   ui.lastPointer = { clientX: event.clientX, clientY: event.clientY };
+  // On the player display, touch is owned by the Touch Events path (true multitouch). Ignore the
+  // synthetic touch-origin pointer events here so a finger isn't processed twice; mouse/pen still run.
+  if (isPlayer && event.pointerType === "touch") return;
 
   // Octant step arrows win their own hit zone: a tap on a selected token's pop-out arrow steps it
   // one cell and nothing else. Checked before any selection/drag/marquee, on both GM and player.
@@ -4768,6 +4836,7 @@ function onPointerDown(event) {
 
 function onPointerMove(event) {
   ui.lastPointer = { clientX: event.clientX, clientY: event.clientY };
+  if (isPlayer && event.pointerType === "touch") return; // touch is handled by the Touch Events path
 
   // Player display: drag the selected formation locally for feedback, or stretch a marquee.
   if (isPlayer) {
@@ -4914,6 +4983,7 @@ function onPointerMove(event) {
 }
 
 function onPointerUp(event) {
+  if (isPlayer && event.pointerType === "touch") return; // touch is handled by the Touch Events path
   if (isPlayer) {
     if (draggingToken && groupDragOffsets) {
       if (groupMoveRaf) { cancelAnimationFrame(groupMoveRaf); groupMoveRaf = 0; } // drop any queued stream
@@ -5013,6 +5083,100 @@ function onPointerUp(event) {
     broadcastState();
   }
   isDragging = false;
+}
+
+// Player display only. A mini rests on the glass continuously, so movement — not contact — is what
+// drags. onTouchStart arms a resting entry under a player token; onTouchMove promotes it to a drag once
+// it moves past the jitter floor and tracks it; the idle sweep settles it when it stops; lift removes it.
+// Mouse/pen keep the pointer path (skipped for touch on the player display). GM display: all no-op.
+function onTouchStart(event) {
+  if (!isPlayer || !state.imageData) return;
+  let handled = false;
+  for (const touch of event.changedTouches) {
+    // A tap on a selected token's step arrow steps it one cell and nothing else (parity with pointer).
+    const arrowDir = hitTokenStepArrow(clientToCanvasPoint(touch));
+    if (arrowDir) { arrowStep(arrowDir); handled = true; continue; }
+    const native = toNativePoint(touch); // a Touch carries clientX/clientY, so it rides the same transform chain
+    const hit = hitToken(native, (t) => t.type === "player"); // only player tokens are grabbable on the table
+    if (!hit) continue; // empty space, or an NPC/monster mini on a GM-owned token: ignore, stays inert
+    // Double-tap the same token within the window = traverse (stairs / map-link).
+    const now = performance.now();
+    if (lastTokenTap.token === hit && now - lastTokenTap.time < DOUBLE_TAP_MS) {
+      lastTokenTap = { token: null, time: 0 };
+      tokenTraverse(hit); // on a marker -> relays the traverse; otherwise a no-op
+      handled = true;
+      continue;
+    }
+    lastTokenTap = { token: hit, time: now };
+    clearStepRun(); // arming a rest entry ends any running step-distance line
+    // First finger down selects like a fresh pointer press; additional simultaneous fingers add their
+    // token, so every held mini stays highlighted. The entry rests silently until it actually moves.
+    if (touchDrags.size === 0) sel.playerTokens = [hit];
+    else if (!sel.playerTokens.includes(hit)) sel.playerTokens = [...sel.playerTokens, hit];
+    touchDrags.set(touch.identifier, {
+      token: hit, grabbed: false,
+      lastNative: { x: native.x, y: native.y },
+      lastMoveAt: now,
+    });
+    handled = true;
+  }
+  if (handled) { event.preventDefault(); render(); }
+}
+
+function onTouchMove(event) {
+  if (!isPlayer || !touchDrags.size) return;
+  const multi = touchDrags.size > 1; // above one finger, the singleton measure line + follow camera are suppressed
+  const now = performance.now();
+  const jitter = pxPerCellNative() * TOUCH_JITTER_CELLS; // sub-cell base wobble that must NOT read as movement
+  const jitter2 = jitter * jitter;
+  let movedAny = false;
+  for (const touch of event.changedTouches) {
+    const entry = touchDrags.get(touch.identifier);
+    if (!entry) continue;
+    const p = toNativePoint(touch);
+    const dnx = p.x - entry.lastNative.x, dny = p.y - entry.lastNative.y;
+    if (dnx * dnx + dny * dny < jitter2) continue; // a resting mini only jitters: ignore so it can settle
+    const from = { x: entry.token.x, y: entry.token.y };
+    const dest = resolveMove(from, p);
+    entry.lastNative = p;    // advance the anti-jitter reference even when a wall clamps the token
+    entry.lastMoveAt = now;  // refresh the idle clock so the settle sweep holds off
+    if (Math.abs(dest.x - from.x) < 1e-6 && Math.abs(dest.y - from.y) < 1e-6) continue; // blocked by a wall
+    entry.token.x = dest.x;
+    entry.token.y = dest.y;
+    if (!entry.grabbed) {
+      entry.grabbed = true;
+      relay({ type: "token-grab", id: entry.token.id });  // one history snapshot per push
+      ensureTouchSettleSweep();                           // start the idle watchdog while something is dragging
+    }
+    movedAny = true;
+  }
+  if (movedAny) {
+    event.preventDefault();
+    render();
+    streamTouchMoves();
+    if (!multi) ensureCameraLoop(); // follow-camera easing only makes sense tracking a lone drag
+  }
+}
+
+function onTouchEnd(event) {
+  if (!isPlayer) return; // also serves touchcancel; changedTouches = the fingers that lifted / were cancelled
+  let endedAny = false;
+  for (const touch of event.changedTouches) {
+    const entry = touchDrags.get(touch.identifier);
+    if (!entry) continue;
+    // If lifted mid-drag (before the idle sweep settled it), commit the final position now. A settled
+    // entry already dropped, so it just falls away.
+    if (entry.grabbed) relay({ type: "token-drop", id: entry.token.id, x: entry.token.x, y: entry.token.y });
+    touchDrags.delete(touch.identifier);
+    endedAny = true;
+  }
+  if (endedAny) {
+    if (!touchDrags.size) {
+      if (touchMoveRaf) { cancelAnimationFrame(touchMoveRaf); touchMoveRaf = 0; }
+      stopTouchSettle();
+    }
+    render();
+  }
 }
 
 function onWheel(event) {
