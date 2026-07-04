@@ -251,7 +251,7 @@ let dragMeasureStart = null; // the dragged token's pre-drag position; anchors t
 // player display token movement is driven entirely by the touch* handlers below, not the pointer path.
 // Each physical mini rides its own stable touch.identifier; this map holds one drag entry per finger.
 // Mouse and pen keep the single-pointer path above (marquee, shift-select, formation group-drag).
-const touchDrags = new Map(); // touch.identifier -> { token, grabbed, measureStart, lastNative:{x,y}, lastMoveAt }
+const touchDrags = new Map(); // touch.identifier -> { token, grabbed, lastNative:{x,y}, lastMoveAt }
 let touchMoveRaf = 0;         // coalesces active touch-drag streaming to one relay batch per frame
 let touchSettleTimer = 0;     // idle sweep; runs only while at least one finger is actively dragging
 // A physical mini rests on the glass the whole time it is in play, so a held contact is NOT a drag —
@@ -2666,7 +2666,6 @@ function sweepTouchSettle() {
     }
   }
   if (!anyGrabbed) {
-    tools.dragMeasureLine = null; // nothing actively dragging -> drop the live distance line
     if (touchMoveRaf) { cancelAnimationFrame(touchMoveRaf); touchMoveRaf = 0; }
     stopTouchSettle();
     render(); // reflect the settled rest positions
@@ -5116,7 +5115,6 @@ function onTouchStart(event) {
     else if (!sel.playerTokens.includes(hit)) sel.playerTokens = [...sel.playerTokens, hit];
     touchDrags.set(touch.identifier, {
       token: hit, grabbed: false,
-      measureStart: { x: hit.x, y: hit.y },
       lastNative: { x: native.x, y: native.y },
       lastMoveAt: now,
     });
@@ -5147,17 +5145,12 @@ function onTouchMove(event) {
     entry.token.y = dest.y;
     if (!entry.grabbed) {
       entry.grabbed = true;
-      entry.measureStart = from;                          // this push's distance line starts at the settled cell
       relay({ type: "token-grab", id: entry.token.id });  // one history snapshot per push
       ensureTouchSettleSweep();                           // start the idle watchdog while something is dragging
-    }
-    if (!multi && entry.measureStart) {
-      tools.dragMeasureLine = { start: entry.measureStart, end: { x: entry.token.x, y: entry.token.y } };
     }
     movedAny = true;
   }
   if (movedAny) {
-    if (multi) tools.dragMeasureLine = null; // no single meaningful drag line while several minis move at once
     event.preventDefault();
     render();
     streamTouchMoves();
@@ -5181,7 +5174,6 @@ function onTouchEnd(event) {
     if (!touchDrags.size) {
       if (touchMoveRaf) { cancelAnimationFrame(touchMoveRaf); touchMoveRaf = 0; }
       stopTouchSettle();
-      tools.dragMeasureLine = null;
     }
     render();
   }
