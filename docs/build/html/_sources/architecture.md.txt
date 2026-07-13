@@ -35,7 +35,7 @@ graph TD
     db["db.js"]
   end
   subgraph "Layer 2-3 — feature modules"
-    features["vision, fog, tokens, annotations,<br/>rooms-obstacles, aoe-measure, initiative,<br/>content, persistence, api, sync, view,<br/>token-arrows, notes-panel, image-handles"]
+    features["vision, fog, tokens, annotations,<br/>rooms-obstacles, aoe-measure, initiative,<br/>content, persistence, backup, api, sync, view,<br/>token-arrows, notes-panel, image-handles"]
   end
   subgraph "Layer 4 — aggregators"
     render["render.js (draw)"]

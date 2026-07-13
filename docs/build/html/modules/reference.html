@@ -265,7 +265,10 @@ and the leaf modules are covered in <a class="reference internal" href="leaf-mod
 <p>IndexedDB wrapper; imports only <code class="docutils literal notranslate"><span class="pre">state</span></code>.
 <strong>Exports:</strong> <code class="docutils literal notranslate"><span class="pre">openMapDatabase</span></code>, <code class="docutils literal notranslate"><span class="pre">withStore</span></code>, map/module/session/token record CRUD
 (<code class="docutils literal notranslate"><span class="pre">saveMapRecord</span></code>, <code class="docutils literal notranslate"><span class="pre">listMapRecords</span></code>, <code class="docutils literal notranslate"><span class="pre">deleteMapRecord</span></code>, <code class="docutils literal notranslate"><span class="pre">saveModuleRecord</span></code>, …),
-and image helpers (<code class="docutils literal notranslate"><span class="pre">putImage</span></code>, <code class="docutils literal notranslate"><span class="pre">getImageRecord</span></code>, <code class="docutils literal notranslate"><span class="pre">getImage</span></code>).</p>
+image helpers (<code class="docutils literal notranslate"><span class="pre">putImage</span></code>, <code class="docutils literal notranslate"><span class="pre">getImageRecord</span></code>, <code class="docutils literal notranslate"><span class="pre">getImage</span></code>), and the settings
+key/value store (<code class="docutils literal notranslate"><span class="pre">putSetting</span></code>, <code class="docutils literal notranslate"><span class="pre">getSetting</span></code>, <code class="docutils literal notranslate"><span class="pre">deleteSetting</span></code>) — which holds the
+backup folder’s <code class="docutils literal notranslate"><span class="pre">FileSystemDirectoryHandle</span></code>, structured-cloneable but not
+stringifiable, so it cannot live in <code class="docutils literal notranslate"><span class="pre">localStorage</span></code>.</p>
 </section>
 <section id="content-js">
 <h2>content.js<a class="headerlink" href="#content-js" title="Link to this heading">¶</a></h2>
@@ -280,6 +283,24 @@ and image helpers (<code class="docutils literal notranslate"><span class="pre">
 <strong>Exports:</strong> <code class="docutils literal notranslate"><span class="pre">validateSessionData</span></code>, <code class="docutils literal notranslate"><span class="pre">migrateState</span></code>, <code class="docutils literal notranslate"><span class="pre">hydrateFloorImages</span></code>,
 <code class="docutils literal notranslate"><span class="pre">mergeModuleSession</span></code>, <code class="docutils literal notranslate"><span class="pre">migrateMapsToModulesAndSessions</span></code>, <code class="docutils literal notranslate"><span class="pre">captureCurrentFloor</span></code>,
 <code class="docutils literal notranslate"><span class="pre">splitState</span></code>, <code class="docutils literal notranslate"><span class="pre">makeMapId</span></code>, <code class="docutils literal notranslate"><span class="pre">deriveCellGrid</span></code>, <code class="docutils literal notranslate"><span class="pre">snapshotFromLiveState</span></code>.</p>
+</section>
+<section id="backup-js">
+<h2>backup.js<a class="headerlink" href="#backup-js" title="Link to this heading">¶</a></h2>
+<p>Automatic library backup to a folder on disk; imports <code class="docutils literal notranslate"><span class="pre">db</span></code>, <code class="docutils literal notranslate"><span class="pre">state</span></code>.
+<strong>Exports:</strong> <code class="docutils literal notranslate"><span class="pre">initLibraryBackup</span></code>, <code class="docutils literal notranslate"><span class="pre">chooseBackupFolder</span></code>, <code class="docutils literal notranslate"><span class="pre">backupNow</span></code>,
+<code class="docutils literal notranslate"><span class="pre">markLibraryDirty</span></code>, <code class="docutils literal notranslate"><span class="pre">onBackupStatus</span></code>, <code class="docutils literal notranslate"><span class="pre">getBackupStatus</span></code>, <code class="docutils literal notranslate"><span class="pre">buildLibraryPayload</span></code>.</p>
+<p>The library lives in best-effort IndexedDB, which the browser may evict wholesale
+under storage pressure — so a backup kept <em>in</em> IndexedDB would be evicted along
+with the thing it backs up. Only bytes written outside the browser survive, which
+means the File System Access API: the GM grants a folder once (the handle is
+persisted in the settings store) and backups are written to it unprompted, every
+30 minutes, but only when the library has actually changed. The newest 10
+timestamped files are kept; older ones rotate out.</p>
+<p>Chrome drops the folder permission on some restarts. A backup system that quietly
+stops backing up is worse than none, so a revoked or absent grant is a visible
+warning in the Map library panel, never a silent no-op. <code class="docutils literal notranslate"><span class="pre">buildLibraryPayload</span></code> is
+shared with <code class="docutils literal notranslate"><span class="pre">main.js</span></code>’s manual Export, so an export and a backup file are
+identical and either can restore the other.</p>
 </section>
 <section id="api-js">
 <h2>api.js<a class="headerlink" href="#api-js" title="Link to this heading">¶</a></h2>
@@ -431,6 +452,7 @@ import format normalizes to this one seam. See <a class="reference internal" hre
 <li><a class="reference internal" href="#db-js">db.js</a></li>
 <li><a class="reference internal" href="#content-js">content.js</a></li>
 <li><a class="reference internal" href="#persistence-js">persistence.js</a></li>
+<li><a class="reference internal" href="#backup-js">backup.js</a></li>
 <li><a class="reference internal" href="#api-js">api.js</a></li>
 <li><a class="reference internal" href="#sync-js">sync.js</a></li>
 <li><a class="reference internal" href="#fog-js">fog.js</a></li>

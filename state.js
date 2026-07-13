@@ -47,12 +47,16 @@ const APP_NAME = "Battlemap Screen and GM Streaming Tool";
 const LEGACY_APP_NAME = "Fog Table";
 const SAVE_FILE_VERSION = 11;
 const DB_NAME = "fog-table-library";
-const DB_VERSION = 4;
+const DB_VERSION = 5;
 const MAP_STORE = "maps";
 const IMAGE_STORE = "images";
 const MODULE_STORE = "modules";
 const SESSION_STORE = "sessions";
 const TOKEN_STORE = "tokens";
+// Small key/value store for app-level settings that must survive a reload and cannot live in
+// localStorage — currently just the backup folder's FileSystemDirectoryHandle, which is
+// structured-cloneable (so IndexedDB can hold it) but not stringifiable.
+const SETTINGS_STORE = "settings";
 const FOG_MAX_EDGE = 4096; // cap fog raster resolution so huge maps stay within canvas/memory limits
 const HISTORY_LIMIT = 80;
 
@@ -144,6 +148,8 @@ const controls = {
   openPlayer: document.getElementById("openPlayer"),
   exportLibrary: document.getElementById("exportLibrary"),
   importLibrary: document.getElementById("importLibrary"),
+  backupFolder: document.getElementById("backupFolder"),
+  backupStatus: document.getElementById("backupStatus"),
   gridEnabled: document.getElementById("gridEnabled"),
   gridSnap: document.getElementById("gridSnap"),
   gridSize: document.getElementById("gridSize"),
@@ -539,7 +545,7 @@ export {
   canvas, ctx, fogCanvas, fogCtx, liveCanvas, liveCtx, polyCanvas, polyCtx,
   strokeCanvas, strokeCtx, losCanvas, losCtx, darkCanvas, darkCtx, lightCanvas, lightCtx, tintCanvas, tintCtx,
   exploredMasks, lightCache, shell, emptyState, channel, APP_NAME, LEGACY_APP_NAME, SAVE_FILE_VERSION,
-  DB_NAME, DB_VERSION, MAP_STORE, IMAGE_STORE, MODULE_STORE, SESSION_STORE, TOKEN_STORE, FOG_MAX_EDGE,
+  DB_NAME, DB_VERSION, MAP_STORE, IMAGE_STORE, MODULE_STORE, SESSION_STORE, TOKEN_STORE, SETTINGS_STORE, FOG_MAX_EDGE,
   HISTORY_LIMIT, STAIRS_ICON_NEUTRAL, STAIRS_ICON_UP, STAIRS_ICON_DOWN, FEET_PER_CELL, MEASURE_UNITS, PING_DURATION, PLAYER_FRAME_REF, controls,
   MAP_LINK_ICONS, MAP_LINK_ICON_PATHS, MAP_LINK_DEFAULT_ICON, MAP_KIND_CAPS,
   CONDITIONS, EXHAUSTION_ICON,

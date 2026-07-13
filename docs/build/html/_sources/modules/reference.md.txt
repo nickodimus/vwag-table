@@ -19,7 +19,10 @@ Pure coordinate/geometry math; imports only `state`. See
 IndexedDB wrapper; imports only `state`.
 **Exports:** `openMapDatabase`, `withStore`, map/module/session/token record CRUD
 (`saveMapRecord`, `listMapRecords`, `deleteMapRecord`, `saveModuleRecord`, …),
-and image helpers (`putImage`, `getImageRecord`, `getImage`).
+image helpers (`putImage`, `getImageRecord`, `getImage`), and the settings
+key/value store (`putSetting`, `getSetting`, `deleteSetting`) — which holds the
+backup folder's `FileSystemDirectoryHandle`, structured-cloneable but not
+stringifiable, so it cannot live in `localStorage`.
 
 ## content.js
 Remote content resolution + navigation trail + cache; imports `db`.
@@ -32,6 +35,25 @@ Save-file schema + migration; imports `db`, `state`.
 **Exports:** `validateSessionData`, `migrateState`, `hydrateFloorImages`,
 `mergeModuleSession`, `migrateMapsToModulesAndSessions`, `captureCurrentFloor`,
 `splitState`, `makeMapId`, `deriveCellGrid`, `snapshotFromLiveState`.
+
+## backup.js
+Automatic library backup to a folder on disk; imports `db`, `state`.
+**Exports:** `initLibraryBackup`, `chooseBackupFolder`, `backupNow`,
+`markLibraryDirty`, `onBackupStatus`, `getBackupStatus`, `buildLibraryPayload`.
+
+The library lives in best-effort IndexedDB, which the browser may evict wholesale
+under storage pressure — so a backup kept *in* IndexedDB would be evicted along
+with the thing it backs up. Only bytes written outside the browser survive, which
+means the File System Access API: the GM grants a folder once (the handle is
+persisted in the settings store) and backups are written to it unprompted, every
+30 minutes, but only when the library has actually changed. The newest 10
+timestamped files are kept; older ones rotate out.
+
+Chrome drops the folder permission on some restarts. A backup system that quietly
+stops backing up is worse than none, so a revoked or absent grant is a visible
+warning in the Map library panel, never a silent no-op. `buildLibraryPayload` is
+shared with `main.js`'s manual Export, so an export and a backup file are
+identical and either can restore the other.
 
 ## api.js
 Online-tier HTTP client + auth; imports `content`.

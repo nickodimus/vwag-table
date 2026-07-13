@@ -25,7 +25,7 @@ import {
 } from "./state.js";
 import {
   saveMapRecord, listMapRecords, deleteMapRecord, saveModuleRecord, listModuleRecords, getModuleRecord, deleteModuleRecord, saveSessionRecord,
-  listSessionRecords, getSessionRecord, deleteSessionRecord, saveTokenRecord, listTokenRecords, deleteTokenRecord, putImage, getImageRecord,
+  listSessionRecords, getSessionRecord, deleteSessionRecord, saveTokenRecord, listTokenRecords, deleteTokenRecord, putImage,
   getImage,
 } from "./db.js";
 import { readZip, parseDtt, importDtt } from "./dtt.js";
@@ -84,6 +84,9 @@ import {
 import {
   initNotesPanel, refreshNotesPanel,
 } from "./notes-panel.js";
+import {
+  initLibraryBackup, chooseBackupFolder, markLibraryDirty, onBackupStatus, buildLibraryPayload,
+} from "./backup.js";
 async function saveSession() {
   captureCurrentFloor();
   if (!state.floors.some((floor) => floor.imageData)) {
@@ -119,6 +122,7 @@ async function saveSession() {
     Object.assign(session, { id, moduleId: id, app: APP_NAME, version: SAVE_FILE_VERSION, kind: "session", name: mapName, savedAt: now });
     await saveModuleRecord(module);
     await saveSessionRecord(session);
+    markLibraryDirty(); // the next backup tick has something new to write
     bindLibraryRecord(id); // the board now belongs to this record — autosave can safely aim at it
     window.alert(`Saved "${mapName}" to the local map library.`);
     refreshLibraryButtonState();
@@ -190,6 +194,7 @@ function importLibrary(event) {
         await migrateMapsToModulesAndSessions();
         imported += legacyMaps.length;
       }
+      markLibraryDirty(); // an import changes the library as much as a save does
       window.alert(`Imported ${imported} map${imported === 1 ? "" : "s"}.`);
       const updated = await listSessionRecords();
       await renderLibraryGrid(updated);
@@ -500,6 +505,8 @@ function setup() {
     relay({ type: "player-ready" });
   } else {
     requestPersistentStorage(); // the library is irreplaceable; ask the browser not to evict it
+    setupBackupStatus();        // ...and persistence can still be denied, so keep a copy off-origin
+    initLibraryBackup();
     bindControls();
     loadSquareLock();
     loadPaletteThumb();
@@ -681,6 +688,7 @@ function bindControls() {
   controls.saveSession.addEventListener("click", saveSession);
   controls.exportLibrary?.addEventListener("click", exportLibrary);
   controls.importLibrary?.addEventListener("change", importLibrary);
+  controls.backupFolder?.addEventListener("click", chooseBackupFolder);
   controls.openPlayer.addEventListener("click", openPlayerWindow);
 
   const gridBindings = [
@@ -1195,6 +1203,20 @@ async function requestPersistentStorage() {
   } catch (err) {
     console.warn("Storage: could not request persistence:", err);
   }
+}
+
+// Render backup.js's status into the Map library panel. A safety net that has stopped working must
+// look different from one that is working — "needs-permission" and "off" are warnings, not chrome.
+function setupBackupStatus() {
+  if (isPlayer || !controls.backupStatus) return;
+  onBackupStatus(({ state: backupState, detail }) => {
+    controls.backupStatus.textContent = detail;
+    const attention = backupState === "off" || backupState === "needs-permission" || backupState === "error";
+    controls.backupStatus.classList.toggle("warn", attention);
+    if (controls.backupFolder) {
+      controls.backupFolder.textContent = backupState === "ready" ? "Change backup folder…" : "Back up to folder…";
+    }
+  });
 }
 
 /* ------------------------- library record binding ------------------------- */
@@ -1979,19 +2001,9 @@ async function exportLibrary() {
       window.alert("There are no saved maps to export.");
       return;
     }
-    const modules = await listModuleRecords();
-    // Images live in their own store, so gather the blobs referenced by every module and bundle
-    // them with the records — otherwise an exported library would lose its images.
-    const imageIds = new Set();
-    modules.forEach((module) => (module.floors || []).forEach((floor) => {
-      if (floor.imageId) imageIds.add(floor.imageId);
-    }));
-    const images = [];
-    for (const imageId of imageIds) {
-      const record = await getImageRecord(imageId);
-      if (record) images.push(record);
-    }
-    const payload = { app: APP_NAME, version: SAVE_FILE_VERSION, exportedAt: new Date().toISOString(), modules, sessions, images };
+    // Same payload the automatic folder backup writes — one definition, so a manual export and a
+    // backup file are byte-identical and either can restore the other.
+    const payload = await buildLibraryPayload();
     const blob = new Blob([JSON.stringify(payload)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
@@ -2908,6 +2920,7 @@ async function autosaveNow() {
       savedAt: new Date().toISOString(),
     });
     await saveSessionRecord(session);
+    markLibraryDirty(); // play-state moved; the folder backup should carry it on the next tick
   } catch (err) {
     console.debug("autosave skipped:", err); // never interrupt play with a save error
   } finally {
