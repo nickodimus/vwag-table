@@ -406,6 +406,24 @@ input[type="color"] {
   width: 24px;
 }
 
+/* Save carries a dot while the board belongs to no saved record (imported or freshly picked map):
+   it does not autosave until saved, and silence there would be its own trap. Clears on save. */
+.top-action.unsaved {
+  position: relative;
+}
+
+.top-action.unsaved::after {
+  background: var(--danger);
+  border: 2px solid var(--panel);
+  border-radius: 50%;
+  content: "";
+  height: 10px;
+  position: absolute;
+  right: 7px;
+  top: 7px;
+  width: 10px;
+}
+
 .top-action.empty,
 .top-action:disabled {
   background: #3a3f3f;

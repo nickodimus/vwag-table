@@ -119,6 +119,7 @@ async function saveSession() {
     Object.assign(session, { id, moduleId: id, app: APP_NAME, version: SAVE_FILE_VERSION, kind: "session", name: mapName, savedAt: now });
     await saveModuleRecord(module);
     await saveSessionRecord(session);
+    bindLibraryRecord(id); // the board now belongs to this record — autosave can safely aim at it
     window.alert(`Saved "${mapName}" to the local map library.`);
     refreshLibraryButtonState();
   } catch (error) {
@@ -498,6 +499,7 @@ function setup() {
     adoptStoredGuest();   // seat the guest identity if redirected in from the join gate (no-op otherwise)
     relay({ type: "player-ready" });
   } else {
+    requestPersistentStorage(); // the library is irreplaceable; ask the browser not to evict it
     bindControls();
     loadSquareLock();
     loadPaletteThumb();
@@ -1177,6 +1179,63 @@ function openPlayerWindow() {
   // The new window announces itself with "player-ready"; we answer with assets + state then.
 }
 
+/* ---------------------------- storage durability --------------------------- */
+
+// Without a granted persistence request the origin's IndexedDB is "best-effort": the browser may
+// evict the whole map library under storage pressure, with no error and no recovery. Ask once at
+// boot. Chrome may auto-grant on engagement heuristics, so a denial is not fatal — but it IS the
+// signal that the library is evictable, so say so rather than failing silently. GM only: the player
+// window never touches IndexedDB.
+async function requestPersistentStorage() {
+  if (!navigator.storage?.persist) return; // not supported — nothing to ask
+  try {
+    const granted = (await navigator.storage.persisted()) || (await navigator.storage.persist());
+    if (granted) console.info("Storage: persistent — the map library is durable.");
+    else console.warn("Storage: best-effort — the browser may evict the map library. Export regularly.");
+  } catch (err) {
+    console.warn("Storage: could not request persistence:", err);
+  }
+}
+
+/* ------------------------- library record binding ------------------------- */
+
+// Which saved record does live state belong to? The trail's active id answers that, and every
+// writer that persists play-state derives its target id from it: autosaveNow, publishToFallon and
+// pullSessionFromFallon (the latter two fall back to ui.tableMapId, so both facts must move
+// together or the fallback re-opens the hole).
+//
+// Replacing the board without clearing them is what let an import write the NEW map's state over
+// the PREVIOUS map's session record — silently, and unrecoverably, since saveSessionRecord is an
+// unconditional put(). The two ids are the app's claim about what is live; installMap invalidates
+// that claim, saveSession re-establishes it.
+//
+// Unbound means "scratch map": autosaveNow already returns early on a null id, so an imported or
+// picked map simply does not autosave until the GM saves it. That is the semantics the guard there
+// always claimed; nothing put the board into the state before.
+function unbindLibraryRecord() {
+  trailReset(null);
+  ui.tableMapId = null;
+  updateMapNavUI();
+}
+
+function bindLibraryRecord(id) {
+  trailReset(id);
+  if (!ui.roaming) ui.tableMapId = id; // saving while roaming saves the prep map; the table's map is unchanged
+  updateMapNavUI();
+}
+
+// Scratch state is invisible otherwise: the GM would just never be saved, which trades a loud bug
+// for a quiet one. Mark the Save button (and its tooltip) whenever no record owns the board.
+function updateSaveStateUI() {
+  if (isPlayer || !controls.saveSession) return;
+  // An empty board isn't "unsaved" — there is nothing to save. Only a real board with no record is.
+  const unsaved = Boolean(state.imageData) && !trailActiveId();
+  controls.saveSession.classList.toggle("unsaved", unsaved);
+  const label = unsaved ? "Save map — not in your library yet" : "Save map";
+  controls.saveSession.title = label;
+  controls.saveSession.setAttribute("aria-label", label);
+}
+
 /* ----------------------------- file loading ----------------------------- */
 
 // Install a map from image bytes (a data URL) and a display name: reset the per-floor live
@@ -1187,6 +1246,7 @@ function openPlayerWindow() {
 // onReady, when given, runs once the image is decoded and the grid is set, before the floor is
 // captured — the seam the DTT importer uses to layer obstacles/lights/notes (6b–6d) onto the map.
 function installMap(dataURL, name, gridOpts, onReady) {
+  unbindLibraryRecord(); // the board is about to become content no saved record owns — see below
   state.imageData = dataURL;
   state.imageName = name;
   state.imageId = uuid();
@@ -1210,6 +1270,7 @@ function installMap(dataURL, name, gridOpts, onReady) {
     updatePlayerSliderRanges();
     controls.mapScale.value = state.map.scale;
     refreshFloorUI();
+    updateSaveStateUI(); // the board exists now; unbindLibraryRecord ran before imageData was set
     fitMap(false);
     broadcastAssets();
     renderAndSync();
@@ -1522,6 +1583,7 @@ async function jumpToMap(id) {
 
 // Enable the Up control only when there is a parent to return to.
 function updateMapNavUI() {
+  updateSaveStateUI(); // every trail transition routes through here, so the scratch marker rides along
   if (controls.mapUp) controls.mapUp.disabled = trailDepth() <= 1;
   populateMapJump();
 }
