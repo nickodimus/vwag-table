@@ -6,7 +6,7 @@
  */
 
 import {
-  DB_NAME, DB_VERSION, MAP_STORE, IMAGE_STORE, MODULE_STORE, SESSION_STORE, TOKEN_STORE,
+  DB_NAME, DB_VERSION, MAP_STORE, IMAGE_STORE, MODULE_STORE, SESSION_STORE, TOKEN_STORE, SETTINGS_STORE,
 } from "./state.js";
 
 function openMapDatabase() {
@@ -28,6 +28,9 @@ function openMapDatabase() {
       }
       if (!db.objectStoreNames.contains(TOKEN_STORE)) {
         db.createObjectStore(TOKEN_STORE, { keyPath: "id" });
+      }
+      if (!db.objectStoreNames.contains(SETTINGS_STORE)) {
+        db.createObjectStore(SETTINGS_STORE, { keyPath: "id" });
       }
     };
     request.onsuccess = () => resolve(request.result);
@@ -105,6 +108,19 @@ function deleteTokenRecord(id) {
   return withStore(TOKEN_STORE, "readwrite", (store) => store.delete(id));
 }
 
+// Settings store — app-level key/value. Holds the backup folder's FileSystemDirectoryHandle, which
+// IndexedDB can structured-clone but localStorage cannot serialize.
+function putSetting(id, value) {
+  return withStore(SETTINGS_STORE, "readwrite", (store) => store.put({ id, value }));
+}
+async function getSetting(id) {
+  const record = await withStore(SETTINGS_STORE, "readonly", (store) => store.get(id));
+  return record ? record.value : null;
+}
+function deleteSetting(id) {
+  return withStore(SETTINGS_STORE, "readwrite", (store) => store.delete(id));
+}
+
 /* ----------------------------- image store (de-embedded map images) ----------------------------- */
 
 // Map images live once in their own store keyed by imageId, so a record carries only the
@@ -123,5 +139,5 @@ async function getImage(id) {
 export {
   openMapDatabase, withStore, saveMapRecord, listMapRecords, deleteMapRecord, saveModuleRecord, listModuleRecords, getModuleRecord,
   deleteModuleRecord, saveSessionRecord, listSessionRecords, getSessionRecord, deleteSessionRecord, saveTokenRecord, listTokenRecords, deleteTokenRecord,
-  putImage, getImageRecord, getImage,
+  putImage, getImageRecord, getImage, putSetting, getSetting, deleteSetting,
 };

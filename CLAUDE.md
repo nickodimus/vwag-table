@@ -17,6 +17,13 @@ python3 -m http.server 8000
 - GM view: `http://localhost:8000`
 - Player view: `http://localhost:8000/?view=player` (or the **Open player display** button)
 
+**Browse via `localhost`, never `0.0.0.0`.** `http://localhost:8000` is a [secure
+context](https://developer.mozilla.org/en-US/docs/Web/Security/Secure_Contexts); `http://0.0.0.0:8000`
+is not — same server, same browser, same app, but secure-context-gated APIs simply do not exist there.
+`window.showDirectoryPicker` (the automatic library backup in `backup.js`) is absent on `0.0.0.0`, and
+the failure is indistinguishable from an unsupported browser: no error, the feature just reports itself
+unavailable. Check `window.isSecureContext` before blaming the code.
+
 There is **no test suite, no linter, and no build**. The only static check available is an ES-module syntax check — plain `node --check` fails on ES modules, so copy to `.mjs` first:
 
 ```bash

@@ -406,6 +406,11 @@ input[type="color"] {
   width: 24px;
 }
 
+/* A backup safety net that has stopped working must not look like ordinary hint text. */
+.backup-status.warn {
+  color: var(--danger);
+}
+
 /* Save carries a dot while the board belongs to no saved record (imported or freshly picked map):
    it does not autosave until saved, and silence there would be its own trap. Clears on save. */
 .top-action.unsaved {
